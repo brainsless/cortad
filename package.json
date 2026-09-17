@@ -1,0 +1,29 @@
+{
+  "name": "cortad",
+  "version": "0.1.0",
+  "description": "Runs Cortad test conversations against the app on your machine. Env values never leave it. Zero dependencies, no install scripts.",
+  "bin": {
+    "cortad": "local.mjs"
+  },
+  "type": "module",
+  "files": [
+    "local.mjs",
+    "lib/door.mjs",
+    "lib/lock.mjs",
+    "README.md",
+    "lib/identities.mjs",
+    "lib/mint.mjs",
+    "lib/trace.cjs",
+    "lib/replay.mjs",
+    "lib/start.mjs",
+    "lib/pyhook/sitecustomize.py"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "homepage": "https://cortad.com",
+  "publishConfig": {
+    "access": "public"
+  }
+}

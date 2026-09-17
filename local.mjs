@@ -1,0 +1,621 @@
+#!/usr/bin/env node
+// Brainsless on your own machine. Run from your repository's root with the code the connect
+// screen showed:
+//   npx cortad ABCD2345   [--port 3000] [--start "npm run dev"] [--verbose]
+//
+// What it does: signs in with the code, uploads your source files once (never .env, never
+// node_modules) so your code can be read, starts your app the way you start it, then holds one
+// outbound connection open and does what a run asks: a request to your app, a file read, a shell
+// line, an edit. An edit goes through one door (lib/door.mjs) that saves what was there first, so
+// every change can be put back from the browser; the shell is locked by the operating system
+// (lib/lock.mjs) and cannot write your code at all. Nothing here touches git. Your environment
+// never leaves this machine. Ctrl-C ends everything.
+
+import { spawn, execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { createInterface } from "node:readline";
+import { promisify } from "node:util";
+import { openDoor } from "./lib/door.mjs";
+import { lockHolds, makeLock } from "./lib/lock.mjs";
+import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
+import { CAPTURED, makeCapture } from "./lib/replay.mjs";
+import { startPlan } from "./lib/start.mjs";
+
+const argv = process.argv.slice(2);
+const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
+const verbose = argv.includes("--verbose");
+const code = (argv.find((a) => /^[A-Za-z0-9-]{8,9}$/.test(a) && !a.startsWith("-")) ?? "").toUpperCase().replace(/-/g, "");
+const say = (line) => console.log(`cortad  ${line}`);
+const fail = (line) => { console.error(`cortad  ${line}`); process.exit(1); };
+
+const explain = argv.includes("--explain");
+if (!explain && !/^[A-Z0-9]{8}$/.test(code)) fail("usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"]   |   npx cortad --explain");
+// Where Brainsless is. The host is not on the command line: a code cannot point at an impostor.
+const origin = new URL(process.env.CORTAD_ORIGIN || "https://cortad.com");
+// Ours, and only ours. brainsless.com is the same service under its earlier name and stays trusted
+// while people still hold links to it.
+// The last is our own Pages project: its subdomains are our branch deploys, staging among them.
+const OURS = ["cortad.com", "brainsless.com", "brainsless-frontend.pages.dev"];
+const trusted = (origin.protocol === "https:" && OURS.some((host) => origin.hostname === host || origin.hostname.endsWith(`.${host}`)))
+  || origin.hostname === "localhost" || origin.hostname === "127.0.0.1";
+if (!trusted) fail(`refusing: ${origin.host} is not Cortad.`);
+const api = `${origin.origin}/api`;
+
+const root = process.cwd();
+const MANIFEST = ["package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml", "docker-compose.yml", "docker-compose.yaml", "Gemfile", "mix.exs"];
+if (!MANIFEST.some((f) => existsSync(join(root, f)))) fail(`this folder has no package.json or pyproject.toml. Run it from your repository's root: ${root}`);
+
+// ---- what leaves the machine: source files only
+const SKIP_DIR = /^(node_modules|\.git|dist|build|out|coverage|vendor|venv|\.venv|env|target|tmp|\.next|\.nuxt|\.turbo|\.cache|__pycache__|\.terraform|\.wrangler|\.svelte-kit|\.output|\.parcel-cache|\.idea|\.vscode)$/;
+const SKIP_FILE = /^\.env(\..*)?$|\.(pem|key|p12|pfx|jks|keystore|sqlite|sqlite3|db|log|lock|map|zip|tar|gz|tgz|7z|rar|png|jpe?g|gif|webp|ico|svg|mp3|mp4|wav|mov|pdf|woff2?|ttf|otf|eot|bin|exe|dll|so|dylib|wasm|onnx|pt|pth|safetensors|parquet|csv|xlsx?|numbers|DS_Store)$/i;
+const MAX_FILE = 1_000_000;
+const MAX_TOTAL = 80_000_000;
+const ENV_FILE = /^\.env(\.(local|staging|stage|development|dev|test|example|sample))?$/;
+
+function walk(dir, depth, out, envs, total) {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return total; }
+  for (const e of entries) {
+    const full = join(dir, e.name);
+    if (e.isSymbolicLink()) continue;
+    if (e.isDirectory()) { if (depth < 12 && !SKIP_DIR.test(e.name)) total = walk(full, depth + 1, out, envs, total); continue; }
+    if (ENV_FILE.test(e.name)) { envs.push(full); continue; }
+    if (SKIP_FILE.test(e.name)) continue;
+    let size;
+    try { size = statSync(full).size; } catch { continue; }
+    if (size > MAX_FILE || total + size > MAX_TOTAL) continue;
+    out.push(relative(root, full));
+    total += size;
+  }
+  return total;
+}
+
+// Values from your env files, read here and only here, so nothing a command prints can carry one.
+function secretValues(envFiles) {
+  const values = new Set();
+  for (const file of envFiles) {
+    let text = "";
+    try { text = readFileSync(file, "utf8"); } catch { continue; }
+    for (const line of text.split("\n")) {
+      const m = /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/.exec(line);
+      if (!m) continue;
+      const v = m[1].trim().replace(/^(['"])(.*)\1$/, "$2");
+      if (v.length >= 8 && !/^(true|false|localhost|development|production|\d+)$/i.test(v)) values.add(v);
+    }
+  }
+  return [...values].sort((a, b) => b.length - a.length);
+}
+// Origins your environment names (FRONTEND_URL, CORS_ORIGIN, ...): an app that trusts a browser
+// Origin is asked as that browser. Sent as origins only, never the variable's full value.
+function envOrigins(envFiles) {
+  const out = new Set();
+  for (const file of envFiles) {
+    let text = "";
+    try { text = readFileSync(file, "utf8"); } catch { continue; }
+    for (const line of text.split("\n")) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+      if (!m || !/ORIGIN|URL|HOST|DOMAIN|FRONTEND|CLIENT|SITE|WEB/i.test(m[1])) continue;
+      for (const v of m[2].replace(/^(['"])(.*)\1$/, "$2").split(",")) {
+        try { const u = new URL(v.trim()); if (/^https?:$/.test(u.protocol)) out.add(u.origin); } catch { /* not an origin */ }
+      }
+    }
+  }
+  return [...out].slice(0, 8);
+}
+// Your app's own request limits, raised for this session only, the way the sandbox raises them:
+// a run asks in twenty minutes what a person asks in a month, and a limiter that fires answers
+// instead of your AI. Numeric values under a limit-shaped name; switches and guards are left alone.
+const THROUGHPUT = /(RATE_?LIMIT|DAILY_LIMIT|HOURLY_LIMIT|MINUTE_LIMIT|REQUESTS_PER|TOKEN_BUDGET|MAX_SSE|MAX_CONCURRENT|THROTTLE|_RPM$|_RPS$|_QPS$)/;
+const GUARDED = /(AUTH|LOGIN|PASSWORD|BREAKER|LOCKOUT|ATTEMPT|FAIL|BAN|BLOCK)/;
+const SWITCH = /_(?:ENABLED|DISABLED|ENABLE|DISABLE)$|^(?:ENABLE|DISABLE)_/;
+function liftedLimits(envFiles) {
+  const lifted = {};
+  for (const file of envFiles) {
+    let text = "";
+    try { text = readFileSync(file, "utf8"); } catch { continue; }
+    for (const line of text.split("\n")) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+      if (!m) continue;
+      const [, name, raw] = m;
+      const value = raw.trim().replace(/^(['"])(.*)\1$/, "$2");
+      if (THROUGHPUT.test(name) && !GUARDED.test(name) && !SWITCH.test(name) && /^\d+$/.test(value)) lifted[name] = /(TOKEN_BUDGET|TOKENS)/.test(name) ? "1000000000" : "1000000";
+    }
+  }
+  return lifted;
+}
+let secrets = [];
+let identities = null;
+let capture = null;
+// The app's life, shared by the code that starts it, watches it and restarts it.
+let closing = false;
+let restarting = false;
+let appGone = false;
+let lastSaid = "";
+let lastOutputAt = Date.now();
+let forgetTold = null;
+const mask = (text) => { let s = String(text ?? ""); for (const v of secrets) s = s.split(v).join("[masked]"); return s; };
+
+// ---- the wire
+let box = "";
+let key = "";
+async function call(method, path, body, { raw = false, timeoutMs = 60_000 } = {}) {
+  const res = await fetch(`${api}${path}`, {
+    method,
+    headers: { ...(key ? { "x-local-key": key } : {}), "content-type": raw ? "application/octet-stream" : "application/json" },
+    body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { error: text.slice(0, 200) }; }
+  return { status: res.status, ok: res.ok, data };
+}
+
+// ---- the box on this machine: your folder, read where it stands
+const work = join(tmpdir(), `cortad-${process.pid}`);
+mkdirSync(work, { recursive: true });
+const bootLog = join(work, "boot.log");
+writeFileSync(bootLog, "");
+const door = openDoor(root);
+// Files nobody may read through this program: keys, and git's own internals.
+const SECRET_PATH = /(?:^|\/)(?:\.git|\.ssh|\.gnupg|\.aws|\.npmrc|\.netrc|id_(?:rsa|ed25519|ecdsa)[^/]*|[^/]*\.(?:pem|key|p12|pfx|jks|keystore))(?:\/|$)/;
+// The engine's paths, as this machine has them. Its scratch files live in this program's own
+// temp folder, never beside your code.
+const translate = (s) => String(s ?? "").split("/workspace/repo").join(root).split("/tmp/bl-boot.log").join(bootLog).split("/tmp/boot.log").join(bootLog);
+const scratch = (p) => { const r = resolve(translate(p)); return r.startsWith("/tmp/") ? join(work, r.slice(5)) : r.startsWith(work + sep) ? r : null; };
+const readable = (p) => {
+  const r = resolve(translate(p));
+  if (r.startsWith(work + sep)) return r;
+  let landed; try { landed = realpathSync(r); } catch { return null; }
+  const home = realpathSync(root);
+  return (landed === home || landed.startsWith(home + sep)) && !ENV_FILE.test(basename(landed)) && !SECRET_PATH.test(landed) ? landed : null;
+};
+// A shell line runs with a plain environment: the app's own process reads its .env itself, and
+// nothing a world sends inherits this terminal's keys.
+const plainEnv = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: process.env.LANG ?? "C.UTF-8", TMPDIR: work, TERM: "dumb" };
+let lock = null;
+
+let app = null;
+async function verb(job) {
+  const b = job.body ?? {};
+  switch (job.verb) {
+    case "exec": {
+      const cmd = translate(b.cmd);
+      if (verbose) say(`$ ${cmd.slice(0, 160)}`);
+      // No lock, no shell: a world never gets an unlocked one on this machine.
+      if (!lock) return { success: false, exitCode: 126, stdout: "", stderr: "refused: this machine has no sandbox tool (sandbox-exec or bubblewrap), so no shell line is run here" };
+      const { file, args } = lock.wrap(cmd);
+      return new Promise((done) => {
+        const child = spawn(file, args, { cwd: root, env: plainEnv, stdio: ["ignore", "pipe", "pipe"] });
+        let out = "", err = "";
+        const cap = (s, chunk) => (s.length < 20_000_000 ? s + chunk : s);
+        child.stdout.on("data", (d) => { out = cap(out, d.toString()); });
+        child.stderr.on("data", (d) => { err = cap(err, d.toString()); });
+        const timer = setTimeout(() => child.kill("SIGKILL"), Math.min(Number(b.opts?.timeout) || 180_000, 280_000));
+        child.on("close", (code) => { clearTimeout(timer); done({ success: code === 0, exitCode: code ?? 1, stdout: mask(out), stderr: mask(err) }); });
+        child.on("error", (e) => { clearTimeout(timer); done({ success: false, exitCode: 127, stdout: "", stderr: String(e.message) }); });
+      });
+    }
+    case "fetch": {
+      // Only the app's own port: this machine's other services are not the world.
+      const port = Number(b.port) || app?.port;
+      if (!app || port !== app.port) return { error: `refused: port ${port} is not your app` };
+      const path = typeof b.path === "string" && b.path.startsWith("/") ? b.path : "/";
+      const headers = {};
+      for (const [k, v] of Object.entries(b.headers ?? {})) if (!/^(host|content-length|connection)$/i.test(k)) headers[k] = String(v);
+      // A request that speaks as one of your app's own callers carries the role, not the token:
+      // the token was issued on this machine and is put in here, so it never travels.
+      const marker = Object.keys(headers).find((k) => k.toLowerCase() === AS_HEADER);
+      if (marker) {
+        const role = headers[marker];
+        delete headers[marker];
+        if (role === CAPTURED) {
+          // Speaking as the person who sent the message we watched: every header their own client sent.
+          for (const [name, value] of Object.entries(capture?.headers() ?? {})) { for (const k of Object.keys(headers)) if (k.toLowerCase() === name) delete headers[k]; headers[name] = value; }
+        } else {
+          const held = await identities?.headerFor(role);
+          if (held) { for (const k of Object.keys(headers)) if (k.toLowerCase() === held.name) delete headers[k]; headers[held.name] = held.value; }
+        }
+      }
+      const method = String(b.method ?? "GET").toUpperCase();
+      const init = { method, headers, redirect: "manual" };
+      if (b.body !== undefined && method !== "GET" && method !== "HEAD") init.body = typeof b.body === "string" ? b.body : JSON.stringify(b.body);
+      // A dev server restarts when a file is saved, and during a run files are saved: by the agent
+      // working its plan, and by you. For those seconds nothing is listening. A turn that meets a
+      // closed door is held until your app answers again and sent then, once, instead of being
+      // counted against your app as a failure it never had.
+      const ask = async () => {
+        const res = await fetch(`http://127.0.0.1:${port}${path}`, { ...init, signal: AbortSignal.timeout(170_000) });
+        const buf = Buffer.from(await res.arrayBuffer());
+        const LIMIT = 262_144;
+        return { status: res.status, headers: Object.fromEntries(res.headers), body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
+      };
+      try { return await ask(); }
+      catch (e) {
+        const code = String(e.cause?.code ?? e.code ?? "");
+        if (!/ECONNREFUSED|ECONNRESET|EPIPE|UND_ERR_SOCKET/.test(code)) return { error: `nothing answered at port ${port}: ${code || e.message}` };
+        for (let i = 0; i < 45 && !(await answers(port)); i++) await new Promise((r) => setTimeout(r, 1000));
+        try { return { ...(await ask()), heldForRestart: true }; }
+        catch (again) { return { error: `nothing answered at port ${port}: ${String(again.cause?.code ?? again.message)}` }; }
+      }
+    }
+    case "read": {
+      const p = readable(b.path);
+      if (!p) return { error: "bad path" };
+      try { return { content: mask(readFileSync(p, "utf8")) }; } catch (e) { return { error: String(e.code ?? e.message) }; }
+    }
+    case "write": {
+      const bytes = Buffer.from(String(b.b64 ?? ""), "base64");
+      // The engine's own scratch file: this program's temp folder, not your code.
+      const mine = scratch(b.path);
+      if (mine) {
+        try { mkdirSync(dirname(mine), { recursive: true }); if (b.append) appendFileSync(mine, bytes); else writeFileSync(mine, bytes); return { success: true, stderr: "" }; }
+        catch (e) { return { success: false, stderr: String(e.message) }; }
+      }
+      // Your code: the one door, which saves what was there before anything changes.
+      return door.write(translate(b.path), bytes, { checkpoint: typeof b.checkpoint === "string" && b.checkpoint ? b.checkpoint : "manual", append: b.append === true, exclusive: b.exclusive === true });
+    }
+    case "changes": return door.changes();
+    case "diff": return door.diff(String(b.path ?? ""));
+    case "mint": return identities ? identities.mint(b, app?.port) : { identities: [] };
+    case "restore": return door.restore(String(b.checkpoint ?? ""));
+    case "keep": return door.keep(typeof b.checkpoint === "string" && b.checkpoint ? b.checkpoint : undefined);
+    case "restart": return restartApp();
+    case "lock": return { locked: Array.isArray(b.hosts) ? b.hosts.length : 0 };
+    case "usage": return { totals: [], rows: [] };
+    // A world is ended from this terminal, never from the cloud.
+    case "destroy": return { ok: true };
+    default: return { ok: true };
+  }
+}
+
+const exec = promisify(execFile);
+
+// ---- start or attach to the app
+const answers = async (port) => {
+  try { await fetch(`http://127.0.0.1:${port}/`, { method: "GET", signal: AbortSignal.timeout(2500), redirect: "manual" }); return true; }
+  catch { return false; }
+};
+const onPath = (bin) => (process.env.PATH ?? "").split(":").some((dir) => dir && existsSync(join(dir, bin)));
+// Where their app lives inside this repository, and how it starts. Worked out in lib/start.mjs.
+let appDir = root;
+async function ask(question) {
+  if (!process.stdin.isTTY) return null;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const line = await new Promise((r) => rl.question(question, r));
+  rl.close();
+  return line.trim() || null;
+}
+let child = null;
+async function startApp() {
+  const wanted = Number(flag("--port"));
+  if (wanted) {
+    if (!(await answers(wanted))) fail(`nothing is answering on port ${wanted}. Start your app first, then run this again.`);
+    return { port: wanted, cmd: null };
+  }
+  const plan = startPlan({ root, typed: flag("--start"), onPath });
+  const cmd = plan?.cmd ?? await ask("How do you start your app? (for example: npm run dev) ");
+  if (!cmd) fail("tell me how your app starts: --start \"npm run dev\", or --port 3000 if it is already running.");
+  appDir = plan?.cwd ?? root;
+  pinned = pinnedNode();
+  if (plan?.within) say(`your app is in ${plan.within}, started there with: ${cmd}`);
+  const lifted = liftedLimits(envFiles);
+  if (Object.keys(lifted).length) say(`your own request limits are raised for this session: ${Object.keys(lifted).join(", ")}`);
+  launched = { cmd, lifted };
+  const up = await launch(180_000);
+  if (up.port) return { port: up.port, cmd, lifted: Object.keys(lifted) };
+  // Already running: a second start dies on the port the first one holds. The one that is running
+  // is the app, so it is used as it stands rather than treated as a failure.
+  if (up.exited !== null && /EADDRINUSE|address already in use|port.{0,40}(?:in use|already used|is taken|unavailable)/i.test(up.tail)) {
+    const ports = [...up.tail.matchAll(/(?::|port\s*[:=]?\s*)(\d{4,5})\b/gi)].map((m) => Number(m[1]));
+    for (const port of new Set(ports)) {
+      if (await answers(port)) { launched = null; child = null; say(`your app is already running on port ${port}, so that one is used`); return { port, cmd: null }; }
+    }
+  }
+  if (up.tail) console.error(up.tail);
+  const wrongNode = pinned.major && !pinned.bin ? ` This project pins Node ${pinned.major} and this shell runs Node ${shellNode}: switch to ${pinned.major}.` : "";
+  return { port: null, said: up.tail, why: `${up.exited !== null ? "your app stopped before it answered" : "your app did not answer within three minutes"}; what it said is above.${wrongNode}` };
+}
+
+// Your app, started the way you start it, and watched until one of its own ports answers.
+let launched = null;
+// The Node this project pins, when the shell that ran this command has another. Strapi refuses
+// Node 26 outright, and a version manager that never switched in this shell is the usual reason.
+// ponytail: reads .nvmrc and .node-version only; engines ranges when a project pins no other way.
+const shellNode = Number(process.versions.node.split(".")[0]);
+function pinnedNode() {
+  let want = "";
+  for (const f of [".nvmrc", ".node-version"].flatMap((n) => [join(appDir, n), join(root, n)])) { try { want = readFileSync(f, "utf8").trim(); } catch { /* not pinned here */ } if (want) break; }
+  const major = Number(/^v?(\d+)/.exec(want)?.[1]);
+  if (!major || major === shellNode) return { major: null, bin: null };
+  const under = (dir, tail = "bin") => { try { return readdirSync(dir).filter((v) => v.replace(/^v/, "").startsWith(`${major}.`)).sort().reverse().map((v) => join(dir, v, tail)); } catch { return []; } };
+  const bins = [`/opt/homebrew/opt/node@${major}/bin`, `/usr/local/opt/node@${major}/bin`, ...under(join(homedir(), ".nvm/versions/node")), ...under(join(homedir(), ".local/share/fnm/node-versions"), "installation/bin"), ...under(join(homedir(), ".volta/tools/image/node"))];
+  return { major, bin: bins.find((d) => existsSync(join(d, "node"))) ?? null };
+}
+let pinned = { major: null, bin: null };
+
+async function launch(waitMs) {
+  const { cmd, lifted } = launched;
+  child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...process.env, ...lifted, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+  const mine = child;
+  let seen = "";
+  const onData = (d) => { const s = d.toString(); appendFileSync(bootLog, s); seen = (seen + s).slice(-20_000); lastSaid = seen; lastOutputAt = Date.now(); if (verbose) process.stdout.write(s); };
+  mine.stdout.on("data", onData);
+  mine.stderr.on("data", onData);
+  let exited = null;
+  appGone = false;
+  mine.on("exit", (code) => { exited = code ?? 1; if (child === mine) appGone = true; });
+  const started = Date.now();
+  while (Date.now() - started < waitMs) {
+    const tail = () => seen.replace(/\x1b\[[0-9;]*m/g, "").split("\n").filter(Boolean).slice(-25).join("\n");
+    if (exited !== null) return { port: null, exited, tail: tail() };
+    // nodemon and its kind outlive the app they watch: the app is gone, the process is not, and
+    // the wait ran its whole three minutes on planless with the reason sitting in the output.
+    // Also: the port is taken, under a watcher that does not exit when its app cannot listen. The app
+    // that holds the port is theirs and already running, which startApp turns into attaching to it.
+    if (/app crashed - waiting for file changes|waiting for (?:file )?changes before restart|Failed running|EADDRINUSE|address already in use/i.test(seen)) {
+      await stopApp(mine.pid);
+      return { port: null, exited: 1, tail: tail() };
+    }
+    // The port is what the app's own process group listens on. Never a guess: a developer's
+    // machine has other things on 3000 and 8080, and one of them answered for the app once.
+    const ports = await listening(mine.pid);
+    // The socket can open before the server answers; the log line is the tiebreak among several.
+    const plain = seen.replace(/\x1b\[[0-9;]*m/g, "");
+    const said = [...plain.matchAll(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\]):(\d{2,5})\b|\bport\s*[:=]?\s*(\d{4,5})\b/gi)].map((m) => Number(m[1] || m[2]));
+    for (const port of [...new Set([...said.reverse().filter((p) => ports.includes(p)), ...ports])]) {
+      if (await answers(port)) return { port, exited: null, tail: "" };
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return { port: null, exited: null, tail: seen.replace(/\x1b\[[0-9;]*m/g, "").split("\n").filter(Boolean).slice(-12).join("\n") };
+}
+
+// The same command again, for an app that does not reload on save. Only an app this program
+// started: one you started yourself is yours to restart.
+async function restartApp() {
+  restarting = true;
+  try { return await restartNow(); } finally { restarting = false; }
+}
+async function restartNow() {
+  if (!launched || !child) return { error: "You started this app yourself, so restart it in your own terminal. Most dev servers reload on save." };
+  const port = app.port;
+  await stopApp(child.pid);
+  for (let i = 0; i < 25 && (await answers(port)); i++) await new Promise((r) => setTimeout(r, 200));
+  const up = await launch(90_000);
+  if (!up.port) return { error: up.exited !== null ? `Your app exited ${up.exited} on restart.\n${up.tail}` : "Your app was restarted but did not answer within 90 seconds." };
+  if (up.port !== port) return { error: `Your app came back on port ${up.port}, not ${port}. Run the command again to reconnect.` };
+  return { restarted: true, port };
+}
+// TCP ports your app is listening on: every process descended from the one this program started.
+// By descent, not by process group: nodemon, pm2 and concurrently put the real server in a group of
+// its own, and an app started through one of them was never seen to open its port.
+async function familyOf(pid) {
+  const table = (await exec("ps", ["-axo", "pid=,ppid="])).stdout.trim().split("\n").map((l) => l.trim().split(/\s+/).map(Number));
+  const family = new Set([pid]);
+  for (let grew = true; grew;) { grew = false; for (const [p, parent] of table) if (family.has(parent) && !family.has(p)) { family.add(p); grew = true; } }
+  return [...family];
+}
+async function listening(pid) {
+  try {
+    const { stdout } = await exec("lsof", ["-nP", "-a", "-p", (await familyOf(pid)).join(","), "-iTCP", "-sTCP:LISTEN", "-Fn"]);
+    return [...new Set([...stdout.matchAll(/^n.*:(\d+)$/gm)].map((m) => Number(m[1])).filter((p) => p > 0))];
+  } catch { return []; }
+}
+// Your app and everything it started, stopped for certain. A process group is not enough: nodemon
+// gives the real server a group of its own, and planless's server outlived this command as an
+// orphan still holding its port and its production connections. Asked first, then made to.
+async function stopApp(pid) {
+  const family = await familyOf(pid).catch(() => [pid]);
+  const signal = (sig) => { for (const p of family) { try { process.kill(p, sig); } catch { /* already gone */ } } try { process.kill(-pid, sig); } catch { /* no group left */ } };
+  const alive = () => family.some((p) => { try { process.kill(p, 0); return true; } catch { return false; } });
+  signal("SIGTERM");
+  for (let i = 0; i < 15 && alive(); i++) await new Promise((r) => setTimeout(r, 200));
+  if (alive()) signal("SIGKILL");
+}
+
+// ---- go
+const envFiles = [];
+const files = [];
+walk(root, 0, files, envFiles, 0);
+// --explain: what this would send and start, from this folder, and nothing else. No network, no
+// app started, nothing written. For the person (or the agent) who reads before running.
+if (explain) {
+  const bytes = files.reduce((n, f) => { try { return n + statSync(join(root, f)).size; } catch { return n; } }, 0);
+  const plan = startPlan({ root, typed: flag("--start"), onPath });
+  const rel = (f) => relative(root, f) || ".";
+  console.log([
+    `cortad --explain  (nothing is sent or started by this)`,
+    ``,
+    `talks to        ${origin.origin}  and  localhost (your app's port only)`,
+    `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once`,
+    `never sent      .env* (${envFiles.length} found: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, node_modules, .git`,
+    `env files       read on this machine only: to mask their values in your app's replies, and to sign test requests in`,
+    `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan ? `${plan.cmd}   (in ${rel(plan.cwd)})` : "asks you how your app starts"}`,
+    `loads into app  lib/trace.cjs (Node) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
+    `agent edits     in your files, each with an undo kept in ~/.cortad/checkpoints; git is never touched`,
+    `agent shell     sandboxed by the OS: no network but localhost, no writes outside temp and ignored build folders, no .env reads`,
+    ``,
+    `first files     ${files.slice(0, 8).join(", ")}${files.length > 8 ? ", ..." : ""}`,
+  ].join("\n"));
+  process.exit(0);
+}
+secrets = secretValues(envFiles);
+const keepSecret = (v) => { if (v && v.length >= 12 && !secrets.includes(v)) secrets.push(v); };
+identities = makeIdentities({ root, work, envFiles, say, keepSecret, appDir: () => appDir });
+// One message sent in their own app tells us the door for certain. The route and the body go up,
+// masked like everything else; the sign-in that message carried stays here.
+capture = makeCapture({ work, keepSecret, onDoor: (door) => {
+  let body = door.body;
+  try { body = JSON.parse(mask(JSON.stringify(door.body))); } catch { /* sent as it is */ }
+  call("POST", `/local/${box}/captured`, { ...door, body }).catch(() => {});
+} });
+if (!files.length) fail("no source files here to read.");
+
+// Which project this is, as a hash of where it lives: the same folder coming back resumes the same
+// connection, and the path itself never leaves this machine.
+const project = createHash("sha256").update(realpathSync(root)).digest("hex").slice(0, 16);
+const attach = await call("POST", "/local/attach", { code, name: basename(root), project });
+if (!attach.ok) fail(attach.data?.error ?? `could not sign in (${attach.status})`);
+box = attach.data.box;
+key = attach.data.key;
+
+const list = join(work, "files.txt");
+writeFileSync(list, files.join("\n") + "\n");
+const archive = join(work, "tree.tgz");
+await exec("tar", ["-czf", archive, "-C", root, "-T", list]);
+const bytes = readFileSync(archive);
+const PART = 1_500_000;
+let resumed = false;
+for (let off = 0; off < bytes.length; off += PART) {
+  const last = off + PART >= bytes.length;
+  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 });
+  if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
+  if (last) resumed = put.data?.resumed === true;
+}
+// Unchanged code has already been read: coming back says so instead of claiming a second read.
+say(resumed ? "connected · your code is unchanged, picking up where you left off" : `connected · reading your code (${files.length} files, ${Math.round(bytes.length / 1024)} KB)`);
+
+lock = await makeLock({ root, work });
+if (lock && !lockHolds(lock, root)) lock = null;
+if (!lock) say("no sandbox tool on this machine (sandbox-exec or bubblewrap), so no shell line will be run here. Runs and edits still work.");
+
+// A change to their own files, settled: what "I fixed it" looks like from here. Folders an app
+// writes to by itself are not a fix.
+const NOT_A_FIX = /(?:^|[\\/])(?:node_modules|\.git|\.next|\.nuxt|\.turbo|\.cache|dist|build|coverage|logs?|tmp|__pycache__|\.venv|venv)(?:[\\/]|$)|\.log$/;
+function sourceChanged() {
+  return new Promise((resolve) => {
+    let timer = null;
+    let watcher = null;
+    const done = () => { try { watcher?.close(); } catch { /* closed */ } resolve(); };
+    try {
+      watcher = watch(root, { recursive: true }, (_event, file) => {
+        if (!file || NOT_A_FIX.test(String(file))) return;
+        clearTimeout(timer);
+        timer = setTimeout(done, 1200);
+      });
+    } catch { setTimeout(done, 15_000); }
+  });
+}
+// `watching` says whether a message sent to this app can be seen arriving: only an app this command
+// started carries the hook, and only a runtime the hook exists for.
+const announce = () => call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], watching: Boolean(launched && capture?.alive()) });
+
+// Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
+// and starts it again the moment you save a fix, and the browser is told each time it answers, so a
+// world still looking for your chat asks again by itself. Nothing is ever rerun by hand.
+async function appLife() {
+  for (let first = true; ; first = false) {
+    const got = await startApp();
+    if (got.port) { app = got; break; }
+    await call("POST", `/local/${box}/stopped`, { said: mask(got.said ?? "").slice(-2000) }).catch(() => {});
+    say(`${got.why} Fix it and save: it is started again by itself.`);
+    if (first) say("leave this open. Ctrl-C disconnects.");
+    await sourceChanged();
+    say("saw your change, starting your app again");
+  }
+  const told = await announce();
+  if (!told.ok) fail(told.data?.error ?? `could not register your app (${told.status})`);
+  say(`your app is answering on port ${app.port}${app.cmd ? ` · ${app.cmd}` : ""}`);
+  say("leave this open. Go back to the browser; Ctrl-C disconnects.");
+  let downSince = 0;
+  let toldDown = false;
+  let appTold = true;
+  forgetTold = () => { appTold = false; };
+  for (let up = true; !closing;) {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (closing || restarting) continue;
+    const now = await answers(app.port);
+    if (now) {
+      downSince = 0; toldDown = false;
+      // Said until it is heard. Said once, it was lost when their app came back while the network
+      // was down, and the screen went on showing an app that had stopped while it answered turns.
+      if (!up || !appTold) { up = true; appTold = Boolean((await announce().catch(() => null))?.ok); }
+      continue;
+    }
+    if (up) { up = false; downSince = Date.now(); }
+    appTold = false;
+    const downFor = Date.now() - downSince;
+    // Not answering. A dev server restarting on a save is busy and says so in its output: it is
+    // left alone, however long its own startup takes.
+    // A watcher that has said its app crashed is not busy, it is waiting, and says so.
+    const crashed = /app crashed - waiting|Failed running|waiting for (?:file )?changes before restart/i.test(lastSaid.slice(-600));
+    const busy = launched && !appGone && !crashed && Date.now() - lastOutputAt < 15_000;
+    if (busy || downFor < (crashed ? 4_000 : 10_000)) continue;
+    // Down for real. The screen is told, so it never shows an app that is not there.
+    if (!toldDown) toldDown = Boolean((await call("POST", `/local/${box}/stopped`, { said: mask(lastSaid || "your app stopped answering").slice(-2000) }).catch(() => null))?.ok);
+    // An app that went quiet or exited did not stop because of a save (it was killed, it ran out
+    // of memory, it crashed on a request), so waiting for a save would wait forever. It is started
+    // here, whoever started it first: an app this command only attached to (yours, from another
+    // terminal, or one left behind by a terminal that was killed) is gone now, and this command
+    // knows how it starts. Only an app given by --port is left to you, and picked up when it returns.
+    if (launched && !appGone && !crashed && downFor < 25_000) continue;
+    if (!launched && flag("--port")) continue;
+    restarting = true;
+    try {
+      if (child?.pid) await stopApp(child.pid);
+      say("your app stopped answering, starting it again");
+      let back = launched ? await launch(180_000) : await startApp();
+      while (!back.port && !closing) {
+        await call("POST", `/local/${box}/stopped`, { said: mask(back.tail || back.said || lastSaid).slice(-2000) }).catch(() => {});
+        say("your app did not come back. Fix it and save: it is started again by itself.");
+        await sourceChanged();
+        say("saw your change, starting your app again");
+        back = launched ? await launch(180_000) : await startApp();
+      }
+      if (back.port) { app = { ...app, ...(back.cmd !== undefined ? back : {}), port: back.port }; up = true; downSince = 0; toldDown = false; appTold = Boolean((await announce().catch(() => null))?.ok); say(`your app is answering again on port ${app.port}`); }
+    } finally { restarting = false; }
+  }
+}
+void appLife().catch((e) => fail(String(e?.message ?? e)));
+
+// Keep the laptop awake while a world stands on it.
+if (process.platform === "darwin") spawn("caffeinate", ["-i", "-w", String(process.pid)], { stdio: "ignore", detached: true }).unref();
+
+async function close(code = 0) {
+  if (closing) return;
+  closing = true;
+  await call("DELETE", `/local/${box}`).catch(() => {});
+  if (child?.pid) await stopApp(child.pid);
+  const pending = door.pending();
+  if (pending) say(`${pending} file${pending === 1 ? "" : "s"} changed by the agent ${pending === 1 ? "is" : "are"} still in your folder, not yet kept or undone. Run this command again to decide from the browser.`);
+  await exec("rm", ["-rf", work]).catch(() => {});
+  process.exit(code);
+}
+process.on("SIGINT", () => close(0));
+process.on("SIGTERM", () => close(0));
+
+let quiet = 0;
+// Each poll names the jobs the last one brought. A poll's answer can die on the way (the network
+// drops, the lid closes): the server sends again whatever is not named, and a job seen twice is
+// done once.
+let got = [];
+const seenJobs = new Set();
+for (;;) {
+  let res;
+  try { res = await call("GET", `/local/${box}/jobs${got.length ? `?ack=${got.join(",")}` : ""}`, undefined, { timeoutMs: 40_000 }); }
+  catch { quiet += 1; if (quiet === 3) say("reconnecting..."); await new Promise((r) => setTimeout(r, Math.min(quiet, 10) * 1000)); continue; }
+  if (closing) break;
+  if (res.status === 404) {
+    // The server restarted and forgot this terminal. It is the same terminal: it proves so with the
+    // key it was given, its box is opened again, and the app it is holding is announced again.
+    const back = await call("POST", "/local/reattach", { box, name: basename(root), project }).catch(() => null);
+    if (!back?.ok) { say("this session ended on the server. Run the command again for a new one."); await close(1); }
+    if (app?.port) await announce().catch(() => {});
+    forgetTold?.();
+    continue;
+  }
+  if (!res.ok) { quiet += 1; await new Promise((r) => setTimeout(r, 2000)); continue; }
+  if (quiet >= 3) say("connected again");
+  quiet = 0;
+  got = (res.data?.jobs ?? []).map((job) => job.id);
+  for (const job of res.data?.jobs ?? []) {
+    if (seenJobs.has(job.id)) continue;
+    seenJobs.add(job.id);
+    if (seenJobs.size > 2000) seenJobs.delete(seenJobs.values().next().value);
+    verb(job).catch((e) => ({ error: String(e.message) })).then((out) => call("POST", `/local/${box}/jobs/${job.id}`, out).catch(() => {}));
+  }
+}
