@@ -1,6 +1,6 @@
 {
   "name": "cortad",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Runs Cortad test conversations against the app on your machine. Env values never leave it. Zero dependencies, no install scripts.",
   "bin": {
     "cortad": "local.mjs"
@@ -25,5 +25,12 @@
   "homepage": "https://cortad.com",
   "publishConfig": {
     "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brainsless/cortad.git"
+  },
+  "bugs": {
+    "url": "https://github.com/brainsless/cortad/issues"
   }
 }
