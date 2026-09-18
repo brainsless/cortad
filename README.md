@@ -1,45 +1,42 @@
 # cortad
 
-Runs Cortad test conversations against the app on your machine. Your env stays on your machine.
+Connects the AI app on your machine to Cortad, so Cortad can run test conversations against it.
 
 ```
 npx cortad <code>
 ```
 
-Run it in your app's folder. The code comes from the connect screen at cortad.com. Nothing is installed. Ctrl-C disconnects.
+Run it in your app's folder with the code from cortad.com. Nothing is installed. Ctrl-C disconnects.
 
-## Behavior
+## What it does
 
-- Starts your app with its dev script. If it is already running, uses it.
-- Finds the route your AI answers on. Sends requests to that port on `localhost`, nowhere else.
-- If it cannot find the route, the screen asks you to send one message in your app. It reads the route and body from that request.
-- Restarts your app when it stops and you save a fix.
-- The Cortad agent edits your files in place. Every edit can be undone from the screen. Git is never touched: no commit, stage, stash or push.
+- Starts your app with its dev script, or uses it if it is already running.
+- Sends Cortad's test conversations to your app on localhost and returns the replies.
+- Signs in as a test account when your app needs one: an account made for the session, never an existing user and never an admin.
+- Lets the Cortad agent edit files in your project. Every edit can be undone from the browser. Git is left alone.
 
-## Sent to cortad.com
+## What Cortad receives
 
-- Source files, once. Not `.env*`, key files, `node_modules` or `.git`.
-- Your app's replies to the test requests. Values from your env files are masked first.
+- The files git would commit, once. Nothing git ignores, and no env, key or data files.
+- Your app's replies to the test conversations, with values from your env files hidden and cookies removed.
 
-## Never sent
+## What stays on your machine
 
-- Env values.
-- Tokens, cookies, API keys. Signed-in requests get their token attached on your machine.
+- Your env files and their values.
+- Tokens and cookies. A signed-in test request gets its token added here.
 
-## Never done
+## The agent's shell
 
-- Writes to `.env*`, key files, `.git`, `node_modules`.
-- Requests to any port but your app's.
-- Agent shell access to the network or to files outside temp and git-ignored build folders.
+Commands the agent runs are confined by the operating system (Seatbelt on macOS, bubblewrap on Linux). They can read your project and your toolchains, write only to temp and build folders, and reach only localhost.
 
 ## Loaded into your app
 
-When cortad starts your app it preloads one file: `lib/trace.cjs` for Node (`NODE_OPTIONS=--require`), `lib/pyhook/sitecustomize.py` for Python (`PYTHONPATH`). It records the one request during which your app called a model, to a file in cortad's temp folder, mode 0600. It makes no network calls. Read it; it is short.
+When cortad starts your app it preloads one short file, `lib/trace.cjs` for Node or `lib/pyhook/sitecustomize.py` for Python. It notes which request called a model, so Cortad finds your chat route. It writes only to cortad's temp folder.
 
 ## Flags
 
 ```
---explain            print what would be sent and started, then exit; no network
+--explain            show what would be sent and started, then exit
 --port 3000          use an app that is already running
 --start "make dev"   how your app starts
 --verbose            print your app's output
@@ -50,4 +47,4 @@ When cortad starts your app it preloads one file: `lib/trace.cjs` for Node (`NOD
 - `~/.cortad/checkpoints/`  undo data for agent edits
 - `$TMPDIR/cortad-<pid>/`   removed on exit
 
-macOS, Linux. Node 20+.
+macOS and Linux, Node 20+. No dependencies, no install scripts.

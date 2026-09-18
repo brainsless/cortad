@@ -11,7 +11,7 @@
 // (lib/lock.mjs) and cannot write your code at all. Nothing here touches git. Your environment
 // never leaves this machine. Ctrl-C ends everything.
 
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -54,9 +54,10 @@ const root = process.cwd();
 const MANIFEST = ["package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml", "docker-compose.yml", "docker-compose.yaml", "Gemfile", "mix.exs"];
 if (!MANIFEST.some((f) => existsSync(join(root, f)))) fail(`this folder has no package.json or pyproject.toml. Run it from your repository's root: ${root}`);
 
-// ---- what leaves the machine: source files only
-const SKIP_DIR = /^(node_modules|\.git|dist|build|out|coverage|vendor|venv|\.venv|env|target|tmp|\.next|\.nuxt|\.turbo|\.cache|__pycache__|\.terraform|\.wrangler|\.svelte-kit|\.output|\.parcel-cache|\.idea|\.vscode)$/;
-const SKIP_FILE = /^\.env(\..*)?$|\.(pem|key|p12|pfx|jks|keystore|sqlite|sqlite3|db|log|lock|map|zip|tar|gz|tgz|7z|rar|png|jpe?g|gif|webp|ico|svg|mp3|mp4|wav|mov|pdf|woff2?|ttf|otf|eot|bin|exe|dll|so|dylib|wasm|onnx|pt|pth|safetensors|parquet|csv|xlsx?|numbers|DS_Store)$/i;
+// ---- what leaves the machine: the source git would commit, and nothing git is told to ignore
+const SKIP_DIR = /^(node_modules|\.git|dist|build|out|coverage|vendor|venv|\.venv|env|target|tmp|\.next|\.nuxt|\.turbo|\.cache|__pycache__|\.terraform|\.wrangler|\.svelte-kit|\.output|\.parcel-cache|\.idea|\.vscode|secrets?|\.secrets?)$/i;
+// Env files by any name (scripts/books.env is one), keys, and data rather than code.
+const SKIP_FILE = /^\.env(\..*)?$|^\.envrc$|\.env$|\.(pem|key|p12|pfx|jks|keystore|sqlite|sqlite3|db|log|lock|map|zip|tar|gz|tgz|7z|rar|png|jpe?g|gif|webp|ico|svg|mp3|mp4|wav|mov|pdf|woff2?|ttf|otf|eot|bin|exe|dll|so|dylib|wasm|onnx|pt|pth|safetensors|parquet|csv|tsv|jsonl|ndjson|xlsx?|numbers|DS_Store)$/i;
 const MAX_FILE = 1_000_000;
 const MAX_TOTAL = 80_000_000;
 const ENV_FILE = /^\.env(\.(local|staging|stage|development|dev|test|example|sample))?$/;
@@ -73,11 +74,36 @@ function walk(dir, depth, out, envs, total) {
     let size;
     try { size = statSync(full).size; } catch { continue; }
     if (size > MAX_FILE || total + size > MAX_TOTAL) continue;
+    if (!shareable(relative(root, full))) continue;
     out.push(relative(root, full));
     total += size;
   }
   return total;
 }
+
+// What git lists here: tracked files and new ones it would pick up, never an ignored one. A folder
+// that is not a git repository has no such list and is read by the rules above alone.
+function gitListed() {
+  if (!existsSync(join(root, ".git")) && !onPath("git")) return null;
+  let inside = false;
+  try { inside = execFileSync("git", ["-C", root, "rev-parse", "--is-inside-work-tree"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim() === "true"; } catch { /* not a repository */ }
+  if (!inside) return null;
+  // A repository whose list cannot be read is not read by guesswork: it stops here.
+  try {
+    const out = execFileSync("git", ["-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    return new Set(out.toString().split("\0").filter(Boolean));
+  } catch (e) { fail(`could not list this repository's files with git: ${e.message}`); }
+}
+// One rule for every file that could leave: the upload, and a read the engine asks for later.
+function shareable(rel) {
+  const parts = rel.split(sep);
+  if (parts.slice(0, -1).some((d) => SKIP_DIR.test(d)) || SKIP_FILE.test(parts.at(-1))) return false;
+  if (listed === null) return true;
+  if (listed.has(rel)) return true;
+  // A file made after the list was taken (an agent edit) is asked of git directly.
+  try { execFileSync("git", ["-C", root, "check-ignore", "-q", rel], { stdio: "ignore" }); return false; } catch (e) { return e.status === 1; }
+}
+let listed = null;
 
 // Values from your env files, read here and only here, so nothing a command prints can carry one.
 function secretValues(envFiles) {
@@ -177,7 +203,8 @@ const readable = (p) => {
   if (r.startsWith(work + sep)) return r;
   let landed; try { landed = realpathSync(r); } catch { return null; }
   const home = realpathSync(root);
-  return (landed === home || landed.startsWith(home + sep)) && !ENV_FILE.test(basename(landed)) && !SECRET_PATH.test(landed) ? landed : null;
+  if (!landed.startsWith(home + sep) || ENV_FILE.test(basename(landed)) || SECRET_PATH.test(landed)) return null;
+  return shareable(relative(home, landed)) ? landed : null;
 };
 // A shell line runs with a plain environment: the app's own process reads its .env itself, and
 // nothing a world sends inherits this terminal's keys.
@@ -237,7 +264,9 @@ async function verb(job) {
         const res = await fetch(`http://127.0.0.1:${port}${path}`, { ...init, signal: AbortSignal.timeout(170_000) });
         const buf = Buffer.from(await res.arrayBuffer());
         const LIMIT = 262_144;
-        return { status: res.status, headers: Object.fromEntries(res.headers), body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
+        // A session cookie your app sets is its business: it is dropped here, and every other header masked.
+        const headers = Object.fromEntries([...res.headers].filter(([k]) => !/^set-cookie2?$/i.test(k)).map(([k, v]) => [k, mask(v)]));
+        return { status: res.status, headers, body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
       };
       try { return await ask(); }
       catch (e) {
@@ -266,7 +295,7 @@ async function verb(job) {
     }
     case "changes": return door.changes();
     case "diff": return door.diff(String(b.path ?? ""));
-    case "mint": return identities ? identities.mint(b, app?.port) : { identities: [] };
+    case "mint": return identities ? JSON.parse(mask(JSON.stringify(await identities.mint(b, app?.port)))) : { identities: [] };
     case "restore": return door.restore(String(b.checkpoint ?? ""));
     case "keep": return door.keep(typeof b.checkpoint === "string" && b.checkpoint ? b.checkpoint : undefined);
     case "restart": return restartApp();
@@ -309,7 +338,7 @@ async function startApp() {
   pinned = pinnedNode();
   if (plan?.within) say(`your app is in ${plan.within}, started there with: ${cmd}`);
   const lifted = liftedLimits(envFiles);
-  if (Object.keys(lifted).length) say(`your own request limits are raised for this session: ${Object.keys(lifted).join(", ")}`);
+  if (Object.keys(lifted).length) say(`higher request limits for this session: ${Object.keys(lifted).join(", ")}`);
   launched = { cmd, lifted };
   step(`starting your app: ${cmd}`);
   const up = await launch(180_000);
@@ -425,10 +454,11 @@ async function stopApp(pid) {
 }
 
 // ---- go
-say("starting");
-step("reading this folder");
+say("getting ready");
+step("looking at this folder");
 const envFiles = [];
 const files = [];
+listed = gitListed();
 walk(root, 0, files, envFiles, 0);
 // --explain: what this would send and start, from this folder, and nothing else. No network, no
 // app started, nothing written. For the person (or the agent) who reads before running.
@@ -440,13 +470,13 @@ if (explain) {
     `cortad --explain  (nothing is sent or started by this)`,
     ``,
     `talks to        ${origin.origin}  and  localhost (your app's port only)`,
-    `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once`,
-    `never sent      .env* (${envFiles.length} found: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, node_modules, .git`,
-    `env files       read on this machine only: to mask their values in your app's replies, and to sign test requests in`,
+    `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once${listed ? " (what git would commit)" : ""}`,
+    `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, data files, node_modules, .git`,
+    `env files       read here only: to hide their values in replies, and to sign in a test account`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan ? `${plan.cmd}   (in ${rel(plan.cwd)})` : "asks you how your app starts"}`,
     `loads into app  lib/trace.cjs (Node) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
     `agent edits     in your files, each with an undo kept in ~/.cortad/checkpoints; git is never touched`,
-    `agent shell     sandboxed by the OS: no network but localhost, no writes outside temp and ignored build folders, no .env reads`,
+    `agent shell     confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
     ``,
     `first files     ${files.slice(0, 8).join(", ")}${files.length > 8 ? ", ..." : ""}`,
   ].join("\n"));
@@ -454,7 +484,7 @@ if (explain) {
 }
 secrets = secretValues(envFiles);
 const keepSecret = (v) => { if (v && v.length >= 12 && !secrets.includes(v)) secrets.push(v); };
-identities = makeIdentities({ root, work, envFiles, say, keepSecret, appDir: () => appDir });
+identities = makeIdentities({ root, work, envFiles, sourceFiles: () => files, say, keepSecret, appDir: () => appDir });
 // One message sent in their own app tells us the door for certain. The route and the body go up,
 // masked like everything else; the sign-in that message carried stays here.
 capture = makeCapture({ work, keepSecret, onDoor: (door) => {
@@ -487,7 +517,7 @@ const treeDigest = (() => {
   return h.digest("hex");
 })();
 const archive = join(work, "tree.tgz");
-step(`packing ${files.length} files`);
+step("connecting");
 await exec("tar", ["-czf", archive, "-C", root, "-T", list]);
 const bytes = readFileSync(archive);
 const PART = 1_500_000;
@@ -495,17 +525,17 @@ let resumed = false;
 const parts = Math.max(1, Math.ceil(bytes.length / PART));
 for (let off = 0; off < bytes.length; off += PART) {
   const last = off + PART >= bytes.length;
-  step(parts > 1 ? `sending your code, part ${Math.floor(off / PART) + 1} of ${parts}` : "sending your code");
+  step(parts > 1 ? `connecting, ${Math.floor(off / PART) + 1} of ${parts}` : "connecting");
   const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}` : ""}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 });
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
   if (last) resumed = put.data?.resumed === true;
 }
 // Unchanged code has already been read: coming back says so instead of claiming a second read.
-stepDone(resumed ? "connected · your code is unchanged, picking up where you left off" : `connected · reading your code (${files.length} files, ${Math.round(bytes.length / 1024)} KB)`);
+stepDone(resumed ? "connected · nothing changed since last time" : "connected");
 
 lock = await makeLock({ root, work });
 if (lock && !lockHolds(lock, root)) lock = null;
-if (!lock) say("no sandbox tool on this machine (sandbox-exec or bubblewrap), so no shell line will be run here. Runs and edits still work.");
+if (!lock) say("shell commands are off on this machine (no sandbox-exec or bubblewrap). Everything else works.");
 
 // A change to their own files, settled: what "I fixed it" looks like from here. Folders an app
 // writes to by itself are not a fix.
@@ -606,7 +636,7 @@ async function close(code = 0) {
   await call("DELETE", `/local/${box}`).catch(() => {});
   if (child?.pid) await stopApp(child.pid);
   const pending = door.pending();
-  if (pending) say(`${pending} file${pending === 1 ? "" : "s"} changed by the agent ${pending === 1 ? "is" : "are"} still in your folder, not yet kept or undone. Run this command again to decide from the browser.`);
+  if (pending) say(`${pending} agent edit${pending === 1 ? " is" : "s are"} waiting for you to keep or undo. Run the command again to review ${pending === 1 ? "it" : "them"} in the browser.`);
   await exec("rm", ["-rf", work]).catch(() => {});
   process.exit(code);
 }

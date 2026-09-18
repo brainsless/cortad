@@ -1,22 +1,22 @@
 {
   "name": "cortad",
-  "version": "0.1.1",
-  "description": "Runs Cortad test conversations against the app on your machine. Env values never leave it. Zero dependencies, no install scripts.",
+  "version": "0.1.2",
+  "description": "Connects the AI app on your machine to Cortad for test conversations. No dependencies.",
   "bin": {
     "cortad": "local.mjs"
   },
   "type": "module",
   "files": [
-    "local.mjs",
-    "lib/door.mjs",
-    "lib/lock.mjs",
     "README.md",
+    "lib/door.mjs",
     "lib/identities.mjs",
+    "lib/lock.mjs",
     "lib/mint.mjs",
-    "lib/trace.cjs",
+    "lib/pyhook/sitecustomize.py",
     "lib/replay.mjs",
     "lib/start.mjs",
-    "lib/pyhook/sitecustomize.py"
+    "lib/trace.cjs",
+    "local.mjs"
   ],
   "engines": {
     "node": ">=20"
