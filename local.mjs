@@ -474,6 +474,18 @@ key = attach.data.key;
 
 const list = join(work, "files.txt");
 writeFileSync(list, files.join("\n") + "\n");
+// Which code this is, from what the files say rather than from the archive: gzip stamps the time into
+// every archive, so the same folder packed twice never matched and every reconnect bought a whole new
+// read of code that had not changed, emptying the page's counts and its price while it ran.
+const treeDigest = (() => {
+  const h = createHash("sha256");
+  for (const rel of [...files].sort()) {
+    let body = Buffer.alloc(0);
+    try { body = readFileSync(join(root, rel)); } catch { continue; }
+    h.update(rel).update("\0").update(createHash("sha256").update(body).digest("hex")).update("\n");
+  }
+  return h.digest("hex");
+})();
 const archive = join(work, "tree.tgz");
 step(`packing ${files.length} files`);
 await exec("tar", ["-czf", archive, "-C", root, "-T", list]);
@@ -484,7 +496,7 @@ const parts = Math.max(1, Math.ceil(bytes.length / PART));
 for (let off = 0; off < bytes.length; off += PART) {
   const last = off + PART >= bytes.length;
   step(parts > 1 ? `sending your code, part ${Math.floor(off / PART) + 1} of ${parts}` : "sending your code");
-  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 });
+  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}` : ""}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 });
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
   if (last) resumed = put.data?.resumed === true;
 }
