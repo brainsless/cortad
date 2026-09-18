@@ -32,6 +32,12 @@ const say = (line) => console.log(`cortad  ${line}`);
 const fail = (line) => { console.error(`cortad  ${line}`); process.exit(1); };
 
 const explain = argv.includes("--explain");
+// What is happening right now, on one line that rewrites itself. npx spends its own seconds fetching
+// this package before anything here runs, and the first thing we printed used to be after the whole
+// upload: a minute or more of a cursor sitting still, which reads as nothing happening.
+const step = (line) => { if (process.stdout.isTTY) process.stdout.write(`\rcortad  ${line}\x1b[K`); };
+const clearStep = () => { if (process.stdout.isTTY) process.stdout.write("\r\x1b[K"); };
+const stepDone = (line) => { clearStep(); say(line); };
 if (!explain && !/^[A-Z0-9]{8}$/.test(code)) fail("usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"]   |   npx cortad --explain");
 // Where Brainsless is. The host is not on the command line: a code cannot point at an impostor.
 const origin = new URL(process.env.CORTAD_ORIGIN || "https://cortad.com");
@@ -305,6 +311,7 @@ async function startApp() {
   const lifted = liftedLimits(envFiles);
   if (Object.keys(lifted).length) say(`your own request limits are raised for this session: ${Object.keys(lifted).join(", ")}`);
   launched = { cmd, lifted };
+  step(`starting your app: ${cmd}`);
   const up = await launch(180_000);
   if (up.port) return { port: up.port, cmd, lifted: Object.keys(lifted) };
   // Already running: a second start dies on the port the first one holds. The one that is running
@@ -418,6 +425,8 @@ async function stopApp(pid) {
 }
 
 // ---- go
+say("starting");
+step("reading this folder");
 const envFiles = [];
 const files = [];
 walk(root, 0, files, envFiles, 0);
@@ -466,18 +475,21 @@ key = attach.data.key;
 const list = join(work, "files.txt");
 writeFileSync(list, files.join("\n") + "\n");
 const archive = join(work, "tree.tgz");
+step(`packing ${files.length} files`);
 await exec("tar", ["-czf", archive, "-C", root, "-T", list]);
 const bytes = readFileSync(archive);
 const PART = 1_500_000;
 let resumed = false;
+const parts = Math.max(1, Math.ceil(bytes.length / PART));
 for (let off = 0; off < bytes.length; off += PART) {
   const last = off + PART >= bytes.length;
+  step(parts > 1 ? `sending your code, part ${Math.floor(off / PART) + 1} of ${parts}` : "sending your code");
   const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 });
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
   if (last) resumed = put.data?.resumed === true;
 }
 // Unchanged code has already been read: coming back says so instead of claiming a second read.
-say(resumed ? "connected · your code is unchanged, picking up where you left off" : `connected · reading your code (${files.length} files, ${Math.round(bytes.length / 1024)} KB)`);
+stepDone(resumed ? "connected · your code is unchanged, picking up where you left off" : `connected · reading your code (${files.length} files, ${Math.round(bytes.length / 1024)} KB)`);
 
 lock = await makeLock({ root, work });
 if (lock && !lockHolds(lock, root)) lock = null;
@@ -518,6 +530,7 @@ async function appLife() {
     say("saw your change, starting your app again");
   }
   const told = await announce();
+  clearStep();
   if (!told.ok) fail(told.data?.error ?? `could not register your app (${told.status})`);
   say(`your app is answering on port ${app.port}${app.cmd ? ` · ${app.cmd}` : ""}`);
   say("leave this open. Go back to the browser; Ctrl-C disconnects.");
