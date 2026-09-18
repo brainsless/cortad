@@ -1,6 +1,6 @@
 {
   "name": "cortad",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Connects the AI app on your machine to Cortad for test conversations. No dependencies.",
   "bin": {
     "cortad": "local.mjs"

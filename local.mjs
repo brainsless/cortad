@@ -59,6 +59,11 @@ const SKIP_DIR = /^(node_modules|\.git|dist|build|out|coverage|vendor|venv|\.ven
 // Env files by any name (scripts/books.env is one), keys, and data rather than code.
 const SKIP_FILE = /^\.env(\..*)?$|^\.envrc$|\.env$|\.(pem|key|p12|pfx|jks|keystore|sqlite|sqlite3|db|log|lock|map|zip|tar|gz|tgz|7z|rar|png|jpe?g|gif|webp|ico|svg|mp3|mp4|wav|mov|pdf|woff2?|ttf|otf|eot|bin|exe|dll|so|dylib|wasm|onnx|pt|pth|safetensors|parquet|csv|tsv|jsonl|ndjson|xlsx?|numbers|DS_Store)$/i;
 const MAX_FILE = 1_000_000;
+// A JSON or YAML file this large is a dataset (exports, catalogues, fixtures), not code or a prompt,
+// and datasets are where projects keep what they would never paste into a chat.
+const MAX_DATA = 200_000;
+const DATA_FILE = /\.(json|ya?ml)$/i;
+const MANIFEST_FILE = /^(package|tsconfig|composer|app|manifest)\.json$/i;
 const MAX_TOTAL = 80_000_000;
 const ENV_FILE = /^\.env(\.(local|staging|stage|development|dev|test|example|sample))?$/;
 
@@ -74,6 +79,7 @@ function walk(dir, depth, out, envs, total) {
     let size;
     try { size = statSync(full).size; } catch { continue; }
     if (size > MAX_FILE || total + size > MAX_TOTAL) continue;
+    if (size > MAX_DATA && DATA_FILE.test(e.name) && !MANIFEST_FILE.test(e.name)) continue;
     if (!shareable(relative(root, full))) continue;
     out.push(relative(root, full));
     total += size;
