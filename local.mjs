@@ -149,8 +149,13 @@ function envOrigins(envFiles) {
 const THROUGHPUT = /(RATE_?LIMIT|DAILY_LIMIT|HOURLY_LIMIT|MINUTE_LIMIT|REQUESTS_PER|TOKEN_BUDGET|MAX_SSE|MAX_CONCURRENT|THROTTLE|_RPM$|_RPS$|_QPS$)/;
 const GUARDED = /(AUTH|LOGIN|PASSWORD|BREAKER|LOCKOUT|ATTEMPT|FAIL|BAN|BLOCK)/;
 const SWITCH = /_(?:ENABLED|DISABLED|ENABLE|DISABLE)$|^(?:ENABLE|DISABLE)_/;
-function liftedLimits(envFiles) {
-  const lifted = {};
+// Limit-shaped names the code itself reads (process.env.GUEST_DAILY_LIMIT, os.environ.get("RATE_LIMIT_RPM"))
+// count too: a limit with a default in code and no line in .env is the one that closes on a run.
+const ENV_READ = /(?:process\.env(?:\.|\[\s*['"])|os\.(?:environ\.get|getenv)\(\s*['"]|os\.environ\[\s*['"]|\benv\(\s*['"]|Deno\.env\.get\(\s*['"])([A-Z][A-Z0-9_]*)/g;
+const lifted = (name) => (/(TOKEN_BUDGET|TOKENS)/.test(name) ? "1000000000" : "1000000");
+const liftable = (name) => THROUGHPUT.test(name) && !GUARDED.test(name) && !SWITCH.test(name);
+function liftedLimits(envFiles, sources = []) {
+  const out = {};
   for (const file of envFiles) {
     let text = "";
     try { text = readFileSync(file, "utf8"); } catch { continue; }
@@ -159,10 +164,16 @@ function liftedLimits(envFiles) {
       if (!m) continue;
       const [, name, raw] = m;
       const value = raw.trim().replace(/^(['"])(.*)\1$/, "$2");
-      if (THROUGHPUT.test(name) && !GUARDED.test(name) && !SWITCH.test(name) && /^\d+$/.test(value)) lifted[name] = /(TOKEN_BUDGET|TOKENS)/.test(name) ? "1000000000" : "1000000";
+      if (liftable(name) && /^\d+$/.test(value)) out[name] = lifted(name);
     }
   }
-  return lifted;
+  for (const file of sources) {
+    if (!/\.(?:[cm]?[jt]sx?|py|go|rb|php|rs)$/.test(file)) continue;
+    let text = "";
+    try { if (statSync(file).size > 512_000) continue; text = readFileSync(file, "utf8"); } catch { continue; }
+    for (const m of text.matchAll(ENV_READ)) if (liftable(m[1]) && !(m[1] in out)) out[m[1]] = lifted(m[1]);
+  }
+  return out;
 }
 let secrets = [];
 let identities = null;
@@ -335,6 +346,7 @@ async function startApp() {
   const wanted = Number(flag("--port"));
   if (wanted) {
     if (!(await answers(wanted))) fail(`nothing is answering on port ${wanted}. Start your app first, then run this again.`);
+    say("your app was already running, so its request limits stay as they are; if it answers 429, stop it and run this without --port and they are raised for the session");
     return { port: wanted, cmd: null };
   }
   const plan = startPlan({ root, typed: flag("--start"), onPath });
@@ -343,7 +355,7 @@ async function startApp() {
   appDir = plan?.cwd ?? root;
   pinned = pinnedNode();
   if (plan?.within) say(`your app is in ${plan.within}, started there with: ${cmd}`);
-  const lifted = liftedLimits(envFiles);
+  const lifted = liftedLimits(envFiles, files.map((f) => join(root, f)));
   if (Object.keys(lifted).length) say(`higher request limits for this session: ${Object.keys(lifted).join(", ")}`);
   launched = { cmd, lifted };
   step(`starting your app: ${cmd}`);
@@ -480,6 +492,7 @@ if (explain) {
     `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, data files, node_modules, .git`,
     `env files       read here only: to hide their values in replies, and to sign in a test account`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan ? `${plan.cmd}   (in ${rel(plan.cwd)})` : "asks you how your app starts"}`,
+    `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
     `loads into app  lib/trace.cjs (Node) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
     `agent edits     in your files, each with an undo kept in ~/.cortad/checkpoints; git is never touched`,
     `agent shell     confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
