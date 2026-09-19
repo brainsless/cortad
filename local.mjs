@@ -346,6 +346,8 @@ async function startApp() {
   const wanted = Number(flag("--port"));
   if (wanted) {
     if (!(await answers(wanted))) fail(`nothing is answering on port ${wanted}. Start your app first, then run this again.`);
+    const took = await takeOver(wanted);
+    if (took) return took;
     say("your app was already running, so its request limits stay as they are; if it answers 429, stop it and run this without --port and they are raised for the session");
     return { port: wanted, cmd: null };
   }
@@ -366,12 +368,67 @@ async function startApp() {
   if (up.exited !== null && /EADDRINUSE|address already in use|port.{0,40}(?:in use|already used|is taken|unavailable)/i.test(up.tail)) {
     const ports = [...up.tail.matchAll(/(?::|port\s*[:=]?\s*)(\d{4,5})\b/gi)].map((m) => Number(m[1]));
     for (const port of new Set(ports)) {
-      if (await answers(port)) { launched = null; child = null; say(`your app is already running on port ${port}, so that one is used`); return { port, cmd: null }; }
+      if (await answers(port)) {
+        launched = null; child = null;
+        const took = await takeOver(port);
+        if (took) return took;
+        say(`your app is already running on port ${port}, so that one is used; its request limits stay as they are`);
+        return { port, cmd: null };
+      }
     }
   }
   if (up.tail) console.error(up.tail);
   const wrongNode = pinned.major && !pinned.bin ? ` This project pins Node ${pinned.major} and this shell runs Node ${shellNode}: switch to ${pinned.major}.` : "";
   return { port: null, said: up.tail, why: `${up.exited !== null ? "your app stopped before it answered" : "your app did not answer within three minutes"}; what it said is above.${wrongNode}` };
+}
+
+// An app the person started keeps the limits it started with, and a run needs more than a person
+// uses in a month. With their yes, the command stops that app and starts it the way it would have,
+// limits raised for the session. Only in a terminal, only when the code reads a limit, and only
+// when the command knows how to start the app.
+async function takeOver(port) {
+  const lifted = liftedLimits(envFiles, files.map((f) => join(root, f)));
+  const names = Object.keys(lifted);
+  if (!names.length || !process.stdin.isTTY) return null;
+  const plan = startPlan({ root, typed: flag("--start"), onPath });
+  if (!plan?.cmd) return null;
+  const pid = await listenerOn(port);
+  if (!pid) return null;
+  const answer = await ask(`your app is running with its own request limits (${names.join(", ")}). Restart it with them raised for this session? [Y/n] `);
+  if (answer && !/^y(?:es)?$/i.test(answer)) return null;
+  const top = await supervisorOf(pid);
+  step(`stopping your app (pid ${top}) to start it with higher limits`);
+  await stopApp(top);
+  for (let i = 0; i < 50 && (await answers(port)); i++) await new Promise((r) => setTimeout(r, 200));
+  if (await answers(port)) { say("your app did not stop, so it is used as it is"); return null; }
+  appDir = plan.cwd ?? root;
+  pinned = pinnedNode();
+  if (plan.within) say(`your app is in ${plan.within}, started there with: ${plan.cmd}`);
+  say(`higher request limits for this session: ${names.join(", ")}`);
+  launched = { cmd: plan.cmd, lifted };
+  step(`starting your app: ${plan.cmd}`);
+  const up = await launch(180_000);
+  if (up.port) return { port: up.port, cmd: plan.cmd, lifted: names };
+  if (up.tail) console.error(up.tail);
+  fail("your app did not come back after the restart. Start it yourself, then run this again with --port.");
+}
+// The process listening on a port.
+async function listenerOn(port) {
+  try { return Number((await exec("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"])).stdout.trim().split("\n")[0]) || null; } catch { return null; }
+}
+// The top of the chain that runs the app: nodemon, npm, the sh -c under it. Climbs from the listener
+// while the parent is a runner, never into the person's own shell or terminal.
+const RUNNER = /^(?:\S*\/)?(?:node|npm|npx|pnpm|yarn|bun|deno|python[\d.]*|uvicorn|gunicorn|flask|tsx|ts-node|nodemon|concurrently|pm2)(?:\s|$)|^(?:\/bin\/)?sh -c\b/;
+async function supervisorOf(pid) {
+  const rows = (await exec("ps", ["-axo", "pid=,ppid=,args="])).stdout.trim().split("\n").map((l) => l.trim());
+  const table = new Map(rows.map((l) => { const m = /^(\d+)\s+(\d+)\s+(.*)$/.exec(l); return m ? [Number(m[1]), { ppid: Number(m[2]), args: m[3] }] : [0, null]; }));
+  let top = pid;
+  for (let i = 0; i < 8; i++) {
+    const parent = table.get(table.get(top)?.ppid ?? 0);
+    if (!parent || !RUNNER.test(parent.args)) break;
+    top = table.get(top).ppid;
+  }
+  return top;
 }
 
 // Your app, started the way you start it, and watched until one of its own ports answers.
