@@ -22,7 +22,7 @@ import { openDoor } from "./lib/door.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
 import { CAPTURED, makeCapture } from "./lib/replay.mjs";
-import { startPlan } from "./lib/start.mjs";
+import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
 
 const argv = process.argv.slice(2);
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
@@ -52,7 +52,12 @@ const api = `${origin.origin}/api`;
 
 const root = process.cwd();
 const MANIFEST = ["package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml", "docker-compose.yml", "docker-compose.yaml", "Gemfile", "mix.exs"];
-if (!MANIFEST.some((f) => existsSync(join(root, f)))) fail(`this folder has no package.json or pyproject.toml. Run it from your repository's root: ${root}`);
+// A repository whose root carries no manifest of its own is still a repository: crewai-examples
+// keeps one project per folder under crews/, and the whole of it was refused at the door. The root
+// is accepted when a project lives below it.
+if (!MANIFEST.some((f) => existsSync(join(root, f))) && !workspaces(root).length) {
+  fail(`no project here: this folder has no package.json or pyproject.toml, and neither does any folder in it. Run it from your repository's root: ${root}`);
+}
 
 // ---- what leaves the machine: the source git would commit, and nothing git is told to ignore
 const SKIP_DIR = /^(node_modules|\.git|dist|build|out|coverage|vendor|venv|\.venv|env|target|tmp|\.next|\.nuxt|\.turbo|\.cache|__pycache__|\.terraform|\.wrangler|\.svelte-kit|\.output|\.parcel-cache|\.idea|\.vscode|secrets?|\.secrets?)$/i;
@@ -277,13 +282,39 @@ async function verb(job) {
       // working its plan, and by you. For those seconds nothing is listening. A turn that meets a
       // closed door is held until your app answers again and sent then, once, instead of being
       // counted against your app as a failure it never had.
+      // A door behind a guest session answers the first request with a redirect that mints the
+      // session and sends the browser back. A browser reaches it by loading a page first; the same
+      // request pushed down that chain arrives at a page route as a POST and reads as "wrong
+      // method", which is what your chat looked like from the outside. So the chain is walked the
+      // way a browser walks it, one GET with redirects followed, and the request is sent again with
+      // the session your app just handed out. The cookie is kept here and never leaves this machine.
+      const url = `http://127.0.0.1:${port}${path}`;
+      const yours = (to) => { try { const u = new URL(to, url); return u.hostname === "127.0.0.1" && u.port === String(port) ? u.href : null; } catch { return null; } };
+      let jar = "";
+      const sent = (at, over = {}) => fetch(at, {
+        ...init, ...over,
+        headers: { ...headers, ...(over.headers ?? {}), ...(jar ? { cookie: [headers.cookie, jar].filter(Boolean).join("; ") } : {}) },
+        signal: AbortSignal.timeout(170_000),
+      });
+      const keep = (res) => { const set = res.headers.getSetCookie?.() ?? []; if (set.length) jar = [jar, ...set.map((c) => c.split(";")[0])].filter(Boolean).join("; "); };
+      const sentBack = (res) => (res.status >= 300 && res.status < 400 ? yours(res.headers.get("location") ?? "") : null);
+      const warm = async () => {
+        let at = url;
+        for (let hop = 0; hop < 4 && at; hop++) {
+          const res = await sent(at, { method: "GET", body: undefined });
+          keep(res);
+          at = sentBack(res);
+        }
+      };
       const ask = async () => {
-        const res = await fetch(`http://127.0.0.1:${port}${path}`, { ...init, signal: AbortSignal.timeout(170_000) });
+        let res = await sent(url);
+        keep(res);
+        if (method !== "GET" && sentBack(res)) { await warm(); if (jar) res = await sent(url); }
         const buf = Buffer.from(await res.arrayBuffer());
         const LIMIT = 262_144;
         // A session cookie your app sets is its business: it is dropped here, and every other header masked.
-        const headers = Object.fromEntries([...res.headers].filter(([k]) => !/^set-cookie2?$/i.test(k)).map(([k, v]) => [k, mask(v)]));
-        return { status: res.status, headers, body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
+        const said = Object.fromEntries([...res.headers].filter(([k]) => !/^set-cookie2?$/i.test(k)).map(([k, v]) => [k, mask(v)]));
+        return { status: res.status, headers: said, body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
       };
       try { return await ask(); }
       catch (e) {
@@ -345,15 +376,23 @@ let child = null;
 async function startApp() {
   const wanted = Number(flag("--port"));
   if (wanted) {
-    if (!(await answers(wanted))) fail(`nothing is answering on port ${wanted}. Start your app first, then run this again.`);
+    if (!(await answers(wanted))) return { port: null, said: "", why: `nothing is answering on port ${wanted}, so there is nothing to ask.`, noStart: true };
     const took = await takeOver(wanted);
     if (took) return took;
     say("your app was already running, so its request limits stay as they are; if it answers 429, stop it and run this without --port and they are raised for the session");
     return { port: wanted, cmd: null };
   }
   const plan = startPlan({ root, typed: flag("--start"), onPath });
-  const cmd = plan?.cmd ?? await ask("How do you start your app? (for example: npm run dev) ");
-  if (!cmd) fail("tell me how your app starts: --start \"npm run dev\", or --port 3000 if it is already running.");
+  // A package is not a broken app, and asking its owner how it starts is the wrong question.
+  const cmd = plan?.cmd ?? (plan?.noServer ? null : await ask("How do you start your app? (for example: npm run dev) "));
+  // Your code is already here and already being read: quitting now would throw away what you have
+  // paid for. This stays connected, the read finishes, and the browser says what is missing.
+  if (!cmd) {
+    return { port: null, said: "", noStart: true,
+      why: plan?.noServer
+        ? "this repository has no server to run; connect the app that serves it. If it does have one, run this again with --start \"how you start it\"."
+        : "your code is being read, but I could not work out how your app starts, so nothing is running to ask. Run the command again with --start \"how you start it\", or start your app yourself and run it again with --port <the port it answers on>." };
+  }
   appDir = plan?.cwd ?? root;
   pinned = pinnedNode();
   if (plan?.within) say(`your app is in ${plan.within}, started there with: ${cmd}`);
@@ -362,7 +401,7 @@ async function startApp() {
   launched = { cmd, lifted };
   step(`starting your app: ${cmd}`);
   const up = await launch(180_000);
-  if (up.port) return { port: up.port, cmd, lifted: Object.keys(lifted) };
+  if (up.port) return { port: up.port, cmd: launched.cmd, lifted: Object.keys(lifted) };
   // Already running: a second start dies on the port the first one holds. The one that is running
   // is the app, so it is used as it stands rather than treated as a failure.
   if (up.exited !== null && /EADDRINUSE|address already in use|port.{0,40}(?:in use|already used|is taken|unavailable)/i.test(up.tail)) {
@@ -408,9 +447,9 @@ async function takeOver(port) {
   launched = { cmd: plan.cmd, lifted };
   step(`starting your app: ${plan.cmd}`);
   const up = await launch(180_000);
-  if (up.port) return { port: up.port, cmd: plan.cmd, lifted: names };
+  if (up.port) return { port: up.port, cmd: launched.cmd, lifted: names };
   if (up.tail) console.error(up.tail);
-  fail("your app did not come back after the restart. Start it yourself, then run this again with --port.");
+  return { port: null, said: up.tail, why: "your app did not come back after the restart." };
 }
 // The process listening on a port.
 async function listenerOn(port) {
@@ -448,7 +487,56 @@ function pinnedNode() {
 }
 let pinned = { major: null, bin: null };
 
+// Their app could not start because its dependencies are not on this machine. That is an install
+// nobody ran, not a broken app: it is installed once, with the manager the project locked, and the
+// app is started again. Every way the app is started comes through here, so it is fixed in one place.
 async function launch(waitMs) {
+  const up = await start(waitMs);
+  // Only an app that stopped: one still running has not failed to start, whatever it printed.
+  if (up.port || up.exited === null) return up;
+  const ok = await installOnce(up.tail);
+  // An install that failed is the reason their app cannot start, and it goes where the app's own
+  // output goes: the terminal, and the screen that is waiting for the app.
+  const said = (tail) => (installSaid ? `${installSaid}\n${tail}` : tail);
+  if (!ok) return installSaid ? { ...up, tail: said(up.tail) } : up;
+  const back = await start(waitMs);
+  return back.port ? back : { ...back, tail: said(back.tail) };
+}
+let installed = false;
+let installSaid = "";
+async function installOnce(said) {
+  if (installed) return false;
+  const name = missingDependency(said);
+  const cmd = name && installPlan(appDir, onPath);
+  if (!cmd) return false;
+  installed = true;
+  stepDone(`your app needs ${name}, which is not installed here`);
+  const started = Date.now();
+  const secondsSoFar = () => Math.round((Date.now() - started) / 1000);
+  // A line that rewrites itself in a terminal, and every tenth second where there is none.
+  const tick = () => { const n = secondsSoFar(); const line = `installing your app's dependencies, ${n} seconds so far`; if (process.stdout.isTTY) step(line); else if (n % 10 === 0) say(line); };
+  tick();
+  const ticking = setInterval(tick, 1000);
+  const done = await new Promise((r) => {
+    const child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...process.env, CI: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    let tail = "";
+    const keep = (d) => { tail = (tail + d.toString()).slice(-4000); appendFileSync(bootLog, d.toString()); if (verbose) process.stdout.write(d.toString()); };
+    child.stdout.on("data", keep);
+    child.stderr.on("data", keep);
+    const timer = setTimeout(() => child.kill("SIGKILL"), 15 * 60_000);
+    child.on("close", (code) => { clearTimeout(timer); r({ ok: code === 0, tail }); });
+    child.on("error", (e) => { clearTimeout(timer); r({ ok: false, tail: String(e.message) }); });
+  });
+  clearInterval(ticking);
+  if (!done.ok) { installSaid = `installing your app's dependencies failed after ${secondsSoFar()} seconds:\n${done.tail.split("\n").filter(Boolean).slice(-12).join("\n")}`; lastSaid = done.tail; stepDone(`installing your app's dependencies failed after ${secondsSoFar()} seconds`); return false; }
+  stepDone(`installed your app's dependencies in ${secondsSoFar()} seconds`);
+  // A Python project that had no interpreter of its own has one now, and it is the one to start with.
+  const again = startPlan({ root, typed: flag("--start"), onPath });
+  if (again?.cmd && again.cmd !== launched.cmd) { launched = { ...launched, cmd: again.cmd }; say(`starting your app: ${again.cmd}`); }
+  return true;
+}
+
+async function start(waitMs) {
   const { cmd, lifted } = launched;
   child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...process.env, ...lifted, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
   const mine = child;
@@ -548,7 +636,7 @@ if (explain) {
     `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once${listed ? " (what git would commit)" : ""}`,
     `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, data files, node_modules, .git`,
     `env files       read here only: to hide their values in replies, and to sign in a test account`,
-    `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan ? `${plan.cmd}   (in ${rel(plan.cwd)})` : "asks you how your app starts"}`,
+    `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
     `loads into app  lib/trace.cjs (Node) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
     `agent edits     in your files, each with an undo kept in ~/.cortad/checkpoints; git is never touched`,
@@ -641,8 +729,8 @@ async function appLife() {
   for (let first = true; ; first = false) {
     const got = await startApp();
     if (got.port) { app = got; break; }
-    await call("POST", `/local/${box}/stopped`, { said: mask(got.said ?? "").slice(-2000) }).catch(() => {});
-    say(`${got.why} Fix it and save: it is started again by itself.`);
+    await call("POST", `/local/${box}/stopped`, { said: mask(got.said || got.why).slice(-2000) }).catch(() => {});
+    say(got.noStart ? got.why : `${got.why} Fix it and save: it is started again by itself.`);
     if (first) say("leave this open. Ctrl-C disconnects.");
     await sourceChanged();
     say("saw your change, starting your app again");
