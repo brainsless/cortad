@@ -22,6 +22,7 @@ import { openDoor } from "./lib/door.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
 import { CAPTURED, makeCapture } from "./lib/replay.mjs";
+import { sampleHere } from "./lib/sample.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
 
 const argv = process.argv.slice(2);
@@ -179,6 +180,52 @@ function liftedLimits(envFiles, sources = []) {
     for (const m of text.matchAll(ENV_READ)) if (liftable(m[1]) && !(m[1] in out)) out[m[1]] = lifted(m[1]);
   }
   return out;
+}
+
+// Every name your env files set, with its value, read here and used only here. An example file is
+// read first so a real one's value wins: a placeholder key asked for a model listing comes back
+// refused, and that would read as your own key being refused.
+function envValues(envFiles) {
+  const example = /\.(example|sample)$/;
+  const out = {};
+  for (const file of [...envFiles.filter((f) => example.test(f)), ...envFiles.filter((f) => !example.test(f))]) {
+    let text = "";
+    try { text = readFileSync(file, "utf8"); } catch { continue; }
+    for (const line of text.split("\n")) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+      if (m) out[m[1]] = m[2].trim().replace(/^(['"])(.*)\1$/, "$2");
+    }
+  }
+  return out;
+}
+// Switch-shaped names and the word each one reads as. The name and the word travel, never the value.
+const SWITCH_NAME = /(?:_ENABLED|_DISABLED|_MODE|_ON|_OFF|_FLAG)$|^(?:ENABLE|USE|DISABLE|SKIP)_/;
+const switchStates = (values) => Object.fromEntries(Object.entries(values)
+  .filter(([name]) => SWITCH_NAME.test(name))
+  .map(([name, value]) => [name, value === "" ? "unset" : /^(?:1|true|yes|on)$/i.test(value) ? "on" : /^(?:0|false|no|off)$/i.test(value) ? "off" : "set"]));
+
+// What your app can actually reach: each provider key your env files set is asked that provider
+// for its own model listing, from this machine. Your key stays here; what goes back is the name it
+// is set under, the host, what the host answered, the model ids, and which switches are on.
+const MODEL_ID = /^[\w./:@-]{1,160}$/;
+async function inventoryOf(listings) {
+  const values = envValues(envFiles);
+  const providers = await Promise.all(Object.entries(listings)
+    .filter(([name]) => values[name])
+    .map(async ([name, url]) => {
+      let host = "";
+      try { host = new URL(url).host; } catch { return null; }
+      try {
+        const res = await fetch(url, { headers: { authorization: `Bearer ${values[name]}` }, signal: AbortSignal.timeout(20_000) });
+        const body = res.ok ? await res.json().catch(() => null) : null;
+        const models = (Array.isArray(body?.data) ? body.data : [])
+          .map((m) => String(m?.id ?? "")).filter((id) => MODEL_ID.test(id)).slice(0, 1500);
+        return { env: name, host, status: res.status, models };
+      } catch {
+        return { env: name, host, status: 0, models: [] };
+      }
+    }));
+  return { providers: providers.filter(Boolean), flags: switchStates(values) };
 }
 let secrets = [];
 let identities = null;
@@ -347,8 +394,14 @@ async function verb(job) {
     case "restore": return door.restore(String(b.checkpoint ?? ""));
     case "keep": return door.keep(typeof b.checkpoint === "string" && b.checkpoint ? b.checkpoint : undefined);
     case "restart": return restartApp();
+    case "inventory": return inventoryOf(b.probe && typeof b.probe === "object" ? b.probe : {});
+    // Your own pages, read here rather than in a world's shell: that shell is sealed away from
+    // every env file and every host but this one, so inside it no store of yours has an address.
+    case "sample": return { report: JSON.parse(mask(JSON.stringify(await sampleHere(b, envValues(envFiles), root)))) };
     case "lock": return { locked: Array.isArray(b.hosts) ? b.hosts.length : 0 };
-    case "usage": return { totals: [], rows: [] };
+    // What your app spent on its providers, from the hook inside it. An app this command did not
+    // start has no hook, and the empty answer says the meter is absent rather than that nothing was spent.
+    case "usage": return capture?.usage() ?? {};
     // A world is ended from this terminal, never from the cloud.
     case "destroy": return { ok: true };
     default: return { ok: true };
@@ -632,10 +685,10 @@ if (explain) {
   console.log([
     `cortad --explain  (nothing is sent or started by this)`,
     ``,
-    `talks to        ${origin.origin}  and  localhost (your app's port only)`,
+    `talks to        ${origin.origin}, localhost (your app's port only), and your own model providers, to ask each which models your key can use`,
     `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once${listed ? " (what git would commit)" : ""}`,
     `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, data files, node_modules, .git`,
-    `env files       read here only: to hide their values in replies, and to sign in a test account`,
+    `env files       values read here only: to hide them in replies, to sign in a test account, and to ask your providers what your keys reach. Variable names and whether a switch is on or off go up; no value does`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
     `loads into app  lib/trace.cjs (Node) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
@@ -680,6 +733,15 @@ const treeDigest = (() => {
   }
   return h.digest("hex");
 })();
+// The commit this tree is. Your .git is never uploaded -- nothing of your history leaves this
+// machine -- so the one sha the report needs is read here and sent as forty characters. A folder
+// that is not a checkout sends nothing, and the report says so rather than inventing one.
+const head = (() => {
+  try {
+    const sha = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    return /^[a-f0-9]{40}$/.test(sha) ? sha : "";
+  } catch { return ""; }
+})();
 const archive = join(work, "tree.tgz");
 step("connecting");
 await exec("tar", ["-czf", archive, "-C", root, "-T", list]);
@@ -690,7 +752,7 @@ const parts = Math.max(1, Math.ceil(bytes.length / PART));
 for (let off = 0; off < bytes.length; off += PART) {
   const last = off + PART >= bytes.length;
   step(parts > 1 ? `connecting, ${Math.floor(off / PART) + 1} of ${parts}` : "connecting");
-  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}` : ""}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 });
+  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 });
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
   if (last) resumed = put.data?.resumed === true;
 }
