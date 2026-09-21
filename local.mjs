@@ -23,6 +23,7 @@ import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
 import { CAPTURED, makeCapture } from "./lib/replay.mjs";
 import { sampleHere } from "./lib/sample.mjs";
+import { listingUrl } from "./lib/listing.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
 
 const argv = process.argv.slice(2);
@@ -142,6 +143,8 @@ function envOrigins(envFiles) {
     for (const line of text.split("\n")) {
       const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
       if (!m || !/ORIGIN|URL|HOST|DOMAIN|FRONTEND|CLIENT|SITE|WEB/i.test(m[1])) continue;
+      // OPENAI_BASE_URL names where a key is sent, not a page a browser opens the app from.
+      if (/(?:BASE_URL|API_BASE|ENDPOINT)$/i.test(m[1]) && !/ORIGIN|FRONTEND|CLIENT|SITE|WEB|PUBLIC|APP/i.test(m[1])) continue;
       for (const v of m[2].replace(/^(['"])(.*)\1$/, "$2").split(",")) {
         try { const u = new URL(v.trim()); if (/^https?:$/.test(u.protocol)) out.add(u.origin); } catch { /* not an origin */ }
       }
@@ -212,7 +215,8 @@ async function inventoryOf(listings) {
   const values = envValues(envFiles);
   const providers = await Promise.all(Object.entries(listings)
     .filter(([name]) => values[name])
-    .map(async ([name, url]) => {
+    .map(async ([name, canonical]) => {
+      const url = listingUrl(name, canonical, values);
       let host = "";
       try { host = new URL(url).host; } catch { return null; }
       try {
@@ -260,7 +264,8 @@ const work = join(tmpdir(), `cortad-${process.pid}`);
 mkdirSync(work, { recursive: true });
 const bootLog = join(work, "boot.log");
 writeFileSync(bootLog, "");
-const door = openDoor(root);
+// Opened once the server says whose session this is.
+let door = null;
 // Files nobody may read through this program: keys, and git's own internals.
 const SECRET_PATH = /(?:^|\/)(?:\.git|\.ssh|\.gnupg|\.aws|\.npmrc|\.netrc|id_(?:rsa|ed25519|ecdsa)[^/]*|[^/]*\.(?:pem|key|p12|pfx|jks|keystore))(?:\/|$)/;
 // The engine's paths, as this machine has them. Its scratch files live in this program's own
@@ -718,6 +723,8 @@ const attach = await call("POST", "/local/attach", { code, name: basename(root),
 if (!attach.ok) fail(attach.data?.error ?? `could not sign in (${attach.status})`);
 box = attach.data.box;
 key = attach.data.key;
+// A server that names no journal gets one for this session alone: never another account's edits.
+door = openDoor(root, { owner: typeof attach.data.journal === "string" && attach.data.journal ? attach.data.journal : box });
 
 const list = join(work, "files.txt");
 writeFileSync(list, files.join("\n") + "\n");
@@ -861,7 +868,7 @@ async function close(code = 0) {
   closing = true;
   await call("DELETE", `/local/${box}`).catch(() => {});
   if (child?.pid) await stopApp(child.pid);
-  const pending = door.pending();
+  const pending = door?.pending() ?? 0;
   if (pending) say(`${pending} agent edit${pending === 1 ? " is" : "s are"} waiting for you to keep or undo. Run the command again to review ${pending === 1 ? "it" : "them"} in the browser.`);
   await exec("rm", ["-rf", work]).catch(() => {});
   process.exit(code);
