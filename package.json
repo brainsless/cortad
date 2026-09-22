@@ -18,6 +18,7 @@
     "lib/sample.mjs",
     "lib/service.mjs",
     "lib/start.mjs",
+    "lib/switches.mjs",
     "lib/trace.cjs",
     "local.mjs"
   ],

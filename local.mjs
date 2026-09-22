@@ -26,6 +26,7 @@ import { sampleHere } from "./lib/sample.mjs";
 import { mintAcross, originFor, waitForPort } from "./lib/service.mjs";
 import { listingUrl } from "./lib/listing.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
+import { openSwitches } from "./lib/switches.mjs";
 
 const argv = process.argv.slice(2);
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
@@ -510,8 +511,13 @@ async function startApp() {
   appDir = plan?.cwd ?? root;
   pinned = pinnedNode();
   if (plan?.within) say(`your app is in ${plan.within}, started there with: ${cmd}`);
-  const lifted = liftedLimits(envFiles, files.map((f) => join(root, f)));
-  if (Object.keys(lifted).length) say(`higher request limits for this session: ${Object.keys(lifted).join(", ")}`);
+  const sourceFiles = files.map((f) => join(root, f));
+  const lifted = { ...liftedLimits(envFiles, sourceFiles), ...openSwitches(envFiles, sourceFiles) };
+  const raised = Object.keys(liftedLimits(envFiles, sourceFiles));
+  const opened = Object.keys(openSwitches(envFiles, sourceFiles));
+  if (raised.length) say(`higher request limits for this session: ${raised.join(", ")}`);
+  // Said out loud, because it changes who their app lets in for as long as this command runs.
+  if (opened.length) say(`your app's own sign-in switch, for this session only: ${opened.map((n) => `${n}=${lifted[n]}`).join(", ")}`);
   launched = { cmd, lifted };
   step(`starting your app: ${cmd}`);
   const up = await launch(180_000);
