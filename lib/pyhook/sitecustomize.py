@@ -22,7 +22,7 @@ def _install():
     ctx = contextvars.ContextVar("cortad_request", default=None)
     limit = 65536
     said = set()
-    model_host = re.compile(r"(?:^|\.)(?:openai\.com|anthropic\.com|fireworks\.ai|openrouter\.ai|groq\.com|mistral\.ai|together\.xyz|together\.ai|deepseek\.com|cohere\.ai|cohere\.com|perplexity\.ai|x\.ai|openai\.azure\.com|cognitiveservices\.azure\.com|replicate\.com|huggingface\.co|cerebras\.ai|deepinfra\.com|novita\.ai|moonshot\.cn|dashscope\.aliyuncs\.com|bigmodel\.cn)$", re.I)
+    model_host = re.compile(r"(?:^|\.)(?:openai\.com|anthropic\.com|fireworks\.ai|openrouter\.ai|groq\.com|mistral\.ai|together\.xyz|together\.ai|deepseek\.com|cohere\.ai|cohere\.com|perplexity\.ai|x\.ai|openai\.azure\.com|cognitiveservices\.azure\.com|replicate\.com|huggingface\.co|cerebras\.ai|deepinfra\.com|novita\.ai|moonshot\.cn|dashscope\.aliyuncs\.com|bigmodel\.cn|ai-gateway\.vercel\.sh|gateway\.ai\.cloudflare\.com|helicone\.ai|portkey\.ai)$", re.I)
     model_path = re.compile(r"/(?:chat/completions|completions|responses|messages|embeddings)$|:(?:generateContent|streamGenerateContent)|/invoke(?:-with-response-stream)?$|/api/(?:chat|generate)$", re.I)
 
     def write(row):
@@ -257,6 +257,8 @@ def _install():
             out = load(self, *a, **k)
             if not isinstance(self.loaded_app, Asgi):
                 self.loaded_app = Asgi(self.loaded_app)
+            if isinstance(getattr(self, "port", None), int):
+                write({"listen": self.port, "pid": os.getpid()})
             return out
 
         module.Config.load = loaded
@@ -265,6 +267,8 @@ def _install():
         run_simple = module.run_simple
 
         def run(hostname, port, application, *a, **k):
+            if isinstance(port, int):
+                write({"listen": port, "pid": os.getpid()})
             return run_simple(hostname, port, wsgi(application), *a, **k)
 
         module.run_simple = run

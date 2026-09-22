@@ -789,7 +789,7 @@ function sourceChanged() {
 }
 // `watching` says whether a message sent to this app can be seen arriving: only an app this command
 // started carries the hook, and only a runtime the hook exists for.
-const announce = () => call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], watching: Boolean(launched && capture?.alive()) });
+const announce = () => call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], watching: Boolean(launched && capture?.watching(app.port)) });
 
 // Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
 // and starts it again the moment you save a fix, and the browser is told each time it answers, so a
