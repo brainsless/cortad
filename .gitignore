@@ -2,3 +2,5 @@ node_modules
 .scratch
 *.tgz
 .DS_Store
+
+__pycache__/
