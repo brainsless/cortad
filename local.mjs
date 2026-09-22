@@ -23,6 +23,7 @@ import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
 import { CAPTURED, makeCapture } from "./lib/replay.mjs";
 import { sampleHere } from "./lib/sample.mjs";
+import { mintAcross, waitForPort } from "./lib/service.mjs";
 import { listingUrl } from "./lib/listing.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
 
@@ -395,7 +396,10 @@ async function verb(job) {
     }
     case "changes": return door.changes();
     case "diff": return door.diff(String(b.path ?? ""));
-    case "mint": return identities ? JSON.parse(mask(JSON.stringify(await identities.mint(b, app?.port)))) : { identities: [] };
+    case "mint": return identities ? JSON.parse(mask(JSON.stringify(await mintAcross({
+      recipes: b.recipes, root, appDir, onPath, appPort: app?.port, portFor: serviceUp,
+      mint: (recipes, port) => identities.mint({ ...b, recipes }, port),
+    })))) : { identities: [] };
     case "restore": return door.restore(String(b.checkpoint ?? ""));
     case "keep": return door.keep(typeof b.checkpoint === "string" && b.checkpoint ? b.checkpoint : undefined);
     case "restart": return restartApp();
@@ -423,6 +427,58 @@ const answers = async (port) => {
 const onPath = (bin) => (process.env.PATH ?? "").split(":").some((dir) => dir && existsSync(join(dir, bin)));
 // Where their app lives inside this repository, and how it starts. Worked out in lib/start.mjs.
 let appDir = root;
+
+// ---- a sign-in mounted in another workspace
+// databuddy serves its AI from apps/api and mounts sign-in in apps/dashboard: a test account can
+// only be made where the sign-in is, and posting a sign-up at the AI's own port is a 404.
+const PORT_IN_SCRIPT = /(?:^|\s)(?:PORT=|-p[ =]|--port[ =])(\d{2,5})\b/;
+// The port a framework serves on when nobody names one. sveltekit and astro before vite: both bring
+// vite with them and neither uses its port.
+const FRAMEWORK_PORT = [["next", 3000], ["nuxt", 3000], ["@remix-run/serve", 3000], ["@remix-run/dev", 3000], ["@sveltejs/kit", 5173], ["astro", 4321], ["vite", 5173]];
+const COMMON_PORTS = [3000, 3001, 5173, 4321, 8000, 5000, 8080, 4000];
+
+// What that workspace serves on: its own script says so, or the framework it is written in does.
+function servicePort(cwd) {
+  let pkg = null;
+  try { pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")); } catch { /* not a Node workspace */ }
+  const script = ["dev", "develop", "start:dev", "serve", "start"].map((s) => pkg?.scripts?.[s]).find(Boolean) ?? "";
+  const named = Number(PORT_IN_SCRIPT.exec(script)?.[1]);
+  if (named) return named;
+  const deps = Object.keys({ ...pkg?.dependencies, ...pkg?.devDependencies });
+  const framework = FRAMEWORK_PORT.find(([dep]) => deps.includes(dep))?.[1];
+  if (framework) return framework;
+  if (existsSync(join(cwd, "manage.py"))) return 8000;
+  if (existsSync(join(cwd, "Gemfile"))) return 3000;
+  const py = ["requirements.txt", "pyproject.toml"].map((f) => { try { return readFileSync(join(cwd, f), "utf8"); } catch { return ""; } }).join("\n");
+  return /\bdjango\b/i.test(py) ? 8000 : /\bflask\b/i.test(py) ? 5000 : null;
+}
+
+const toldService = new Set();
+const signedInAt = (dir, port) => { if (!toldService.has(dir)) { toldService.add(dir); say(`your sign-in lives in ${dir}, so I signed in there`); } return port; };
+// Everything else this command started, stopped with it.
+const sidecars = [];
+// The port that workspace's sign-in answers on. One it is already serving on comes first: starting
+// a second copy of a dashboard that is already up costs a minute and takes its port.
+async function serviceUp(group) {
+  const named = servicePort(group.cwd);
+  for (const port of [...new Set([named, ...COMMON_PORTS])].filter(Boolean)) {
+    if (port === app?.port) continue;
+    if (await answers(port)) return signedInAt(group.dir, port);
+  }
+  // Its own port taken by the app leaves nothing to wait on: whatever answers there is the app.
+  if (!named || named === app?.port || !group.plan?.cmd) return null;
+  const kid = spawn("/bin/sh", ["-c", group.plan.cmd], {
+    cwd: group.plan.cwd,
+    env: { ...process.env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) },
+    stdio: ["ignore", "pipe", "pipe"], detached: true,
+  });
+  sidecars.push(kid);
+  const keep = (d) => appendFileSync(bootLog, d.toString());
+  kid.stdout.on("data", keep);
+  kid.stderr.on("data", keep);
+  return (await waitForPort(named, 90_000)) ? signedInAt(group.dir, named) : null;
+}
+
 async function ask(question) {
   if (!process.stdin.isTTY) return null;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -871,6 +927,7 @@ async function close(code = 0) {
   closing = true;
   await call("DELETE", `/local/${box}`).catch(() => {});
   if (child?.pid) await stopApp(child.pid);
+  for (const kid of sidecars) if (kid.pid) await stopApp(kid.pid);
   const pending = door?.pending() ?? 0;
   if (pending) say(`${pending} agent edit${pending === 1 ? " is" : "s are"} waiting for you to keep or undo. Run the command again to review ${pending === 1 ? "it" : "them"} in the browser.`);
   await exec("rm", ["-rf", work]).catch(() => {});

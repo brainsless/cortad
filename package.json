@@ -16,6 +16,7 @@
     "lib/pyhook/sitecustomize.py",
     "lib/replay.mjs",
     "lib/sample.mjs",
+    "lib/service.mjs",
     "lib/start.mjs",
     "lib/trace.cjs",
     "local.mjs"
