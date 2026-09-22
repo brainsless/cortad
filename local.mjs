@@ -23,7 +23,7 @@ import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
 import { CAPTURED, makeCapture } from "./lib/replay.mjs";
 import { sampleHere } from "./lib/sample.mjs";
-import { mintAcross, waitForPort } from "./lib/service.mjs";
+import { mintAcross, originFor, waitForPort } from "./lib/service.mjs";
 import { listingUrl } from "./lib/listing.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
 
@@ -398,7 +398,8 @@ async function verb(job) {
     case "diff": return door.diff(String(b.path ?? ""));
     case "mint": return identities ? JSON.parse(mask(JSON.stringify(await mintAcross({
       recipes: b.recipes, root, appDir, onPath, appPort: app?.port, portFor: serviceUp,
-      mint: (recipes, port) => identities.mint({ ...b, recipes }, port),
+      mint: (recipes, port, origin) => identities.mint({ ...b, recipes, headers: { ...(b.headers ?? {}), ...(origin ? { origin, referer: `${origin}/` } : {}) } }, port),
+      originFor: (port) => originFor(port, envOrigins(envFiles)),
     })))) : { identities: [] };
     case "restore": return door.restore(String(b.checkpoint ?? ""));
     case "keep": return door.keep(typeof b.checkpoint === "string" && b.checkpoint ? b.checkpoint : undefined);
