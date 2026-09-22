@@ -621,7 +621,7 @@ let installSaid = "";
 async function installOnce(said) {
   if (installed) return false;
   const name = missingDependency(said);
-  const cmd = name && installPlan(appDir, onPath);
+  const cmd = name && installPlan(appDir, onPath, root);
   if (!cmd) return false;
   installed = true;
   stepDone(`your app needs ${name}, which is not installed here`);
