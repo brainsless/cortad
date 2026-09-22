@@ -696,7 +696,7 @@ if (explain) {
     `env files       values read here only: to hide them in replies, to sign in a test account, and to ask your providers what your keys reach. Variable names and whether a switch is on or off go up; no value does`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
-    `loads into app  lib/trace.cjs (Node) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
+    `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
     `agent edits     in your files, each with an undo kept in ~/.cortad/checkpoints; git is never touched`,
     `agent shell     confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
     ``,
