@@ -1,6 +1,6 @@
 {
   "name": "cortad",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Connects the AI app on your machine to Cortad for test conversations. No dependencies.",
   "bin": {
     "cortad": "local.mjs"
@@ -10,6 +10,7 @@
     "README.md",
     "lib/door.mjs",
     "lib/identities.mjs",
+    "lib/listing.mjs",
     "lib/lock.mjs",
     "lib/mint.mjs",
     "lib/pyhook/sitecustomize.py",
