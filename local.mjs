@@ -524,7 +524,10 @@ async function startApp() {
   if (up.port) return { port: up.port, cmd: launched.cmd, lifted: Object.keys(lifted) };
   // Already running: a second start dies on the port the first one holds. The one that is running
   // is the app, so it is used as it stands rather than treated as a failure.
-  if (up.exited !== null && /EADDRINUSE|address already in use|port.{0,40}(?:in use|already used|is taken|unavailable)/i.test(up.tail)) {
+  // "Another next dev server is already running" is the same fact in a framework's own words: their
+  // app is up, started from the terminal they were already working in, and the port it holds is not
+  // always the one we asked for. Their running app is the app.
+  if (up.exited !== null && /EADDRINUSE|address already in use|port.{0,40}(?:in use|already used|is taken|unavailable)|another .{0,20}(?:dev )?server is already running|already running (?:on|at) (?:http|port)/i.test(up.tail)) {
     const ports = [...up.tail.matchAll(/(?::|port\s*[:=]?\s*)(\d{4,5})\b/gi)].map((m) => Number(m[1]));
     for (const port of new Set(ports)) {
       if (await answers(port)) {
