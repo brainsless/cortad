@@ -719,7 +719,10 @@ if (!files.length) fail("no source files here to read.");
 // Which project this is, as a hash of where it lives: the same folder coming back resumes the same
 // connection, and the path itself never leaves this machine.
 const project = createHash("sha256").update(realpathSync(root)).digest("hex").slice(0, 16);
-const attach = await call("POST", "/local/attach", { code, name: basename(root), project });
+// A network that drops while connecting ends here in a sentence, never a stack trace: running the
+// command again starts a clean connection.
+const unreachable = (err) => fail(`could not reach ${origin.host}: ${err?.name === "TimeoutError" ? "it did not answer in time" : "the connection failed"}. Check your connection and run the command again.`);
+const attach = await call("POST", "/local/attach", { code, name: basename(root), project }).catch(unreachable);
 if (!attach.ok) fail(attach.data?.error ?? `could not sign in (${attach.status})`);
 box = attach.data.box;
 key = attach.data.key;
@@ -759,7 +762,7 @@ const parts = Math.max(1, Math.ceil(bytes.length / PART));
 for (let off = 0; off < bytes.length; off += PART) {
   const last = off + PART >= bytes.length;
   step(parts > 1 ? `connecting, ${Math.floor(off / PART) + 1} of ${parts}` : "connecting");
-  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 });
+  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 }).catch(unreachable);
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
   if (last) resumed = put.data?.resumed === true;
 }
