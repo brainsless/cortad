@@ -435,7 +435,9 @@ const PORT_IN_SCRIPT = /(?:^|\s)(?:PORT=|-p[ =]|--port[ =])(\d{2,5})\b/;
 // The port a framework serves on when nobody names one. sveltekit and astro before vite: both bring
 // vite with them and neither uses its port.
 const FRAMEWORK_PORT = [["next", 3000], ["nuxt", 3000], ["@remix-run/serve", 3000], ["@remix-run/dev", 3000], ["@sveltejs/kit", 5173], ["astro", 4321], ["vite", 5173]];
-const COMMON_PORTS = [3000, 3001, 5173, 4321, 8000, 5000, 8080, 4000];
+// No scan of the usual ports: whatever answers on 3000 or 8080 on this machine is very often not
+// this workspace, and a test account made against somebody else's service is the worst kind of
+// wrong. Only the port this workspace itself names, and if nothing is there, it is started.
 
 // What that workspace serves on: its own script says so, or the framework it is written in does.
 function servicePort(cwd) {
@@ -461,10 +463,7 @@ const sidecars = [];
 // a second copy of a dashboard that is already up costs a minute and takes its port.
 async function serviceUp(group) {
   const named = servicePort(group.cwd);
-  for (const port of [...new Set([named, ...COMMON_PORTS])].filter(Boolean)) {
-    if (port === app?.port) continue;
-    if (await answers(port)) return signedInAt(group.dir, port);
-  }
+  if (named && named !== app?.port && (await answers(named))) return signedInAt(group.dir, named);
   // Its own port taken by the app leaves nothing to wait on: whatever answers there is the app.
   if (!named || named === app?.port || !group.plan?.cmd) return null;
   const kid = spawn("/bin/sh", ["-c", group.plan.cmd], {
