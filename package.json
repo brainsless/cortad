@@ -11,6 +11,7 @@
     "lib/door.mjs",
     "lib/identities.mjs",
     "lib/listing.mjs",
+    "lib/keys.mjs",
     "lib/lock.mjs",
     "lib/mint.mjs",
     "lib/pyhook/sitecustomize.py",

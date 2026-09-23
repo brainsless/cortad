@@ -11,6 +11,7 @@
 // (lib/lock.mjs) and cannot write your code at all. Nothing here touches git. Your environment
 // never leaves this machine. Ctrl-C ends everything.
 
+import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
@@ -119,6 +120,11 @@ function shareable(rel) {
   try { execFileSync("git", ["-C", root, "check-ignore", "-q", rel], { stdio: "ignore" }); return false; } catch (e) { return e.status === 1; }
 }
 let listed = null;
+// Read the same way for the upload and for any read the engine asks for later.
+let envKeys = [];
+function carriesKey(rel) {
+  try { return holdsKeys(readFileSync(join(root, rel), "utf8"), envKeys); } catch { return false; }
+}
 
 // Values from your env files, read here and only here, so nothing a command prints can carry one.
 function secretValues(envFiles) {
@@ -280,7 +286,8 @@ const readable = (p) => {
   let landed; try { landed = realpathSync(r); } catch { return null; }
   const home = realpathSync(root);
   if (!landed.startsWith(home + sep) || ENV_FILE.test(basename(landed)) || SECRET_PATH.test(landed)) return null;
-  return shareable(relative(home, landed)) ? landed : null;
+  const rel = relative(home, landed);
+  return shareable(rel) && !carriesKey(rel) ? landed : null;
 };
 // A shell line runs with a plain environment: the app's own process reads its .env itself, and
 // nothing a world sends inherits this terminal's keys.
@@ -746,6 +753,10 @@ const envFiles = [];
 const files = [];
 listed = gitListed();
 walk(root, 0, files, envFiles, 0);
+secrets = secretValues(envFiles);
+envKeys = secretEnvValues(envFiles, (f) => readFileSync(f, "utf8"));
+const kept = [];
+for (let i = files.length - 1; i >= 0; i -= 1) if (carriesKey(files[i])) kept.unshift(...files.splice(i, 1));
 // --explain: what this would send and start, from this folder, and nothing else. No network, no
 // app started, nothing written. For the person (or the agent) who reads before running.
 if (explain) {
@@ -757,6 +768,7 @@ if (explain) {
     ``,
     `talks to        ${origin.origin}, localhost (your app's port only), and your own model providers, to ask each which models your key can use`,
     `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once${listed ? " (what git would commit)" : ""}`,
+    ...(kept.length ? [`kept here       ${kept.length} file${kept.length === 1 ? " that holds" : "s that hold"} keys: ${kept.slice(0, 6).join(", ")}${kept.length > 6 ? ", ..." : ""}`] : []),
     `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, data files, node_modules, .git`,
     `env files       values read here only: to hide them in replies, to sign in a test account, and to ask your providers what your keys reach. Variable names and whether a switch is on or off go up; no value does`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
@@ -769,7 +781,7 @@ if (explain) {
   ].join("\n"));
   process.exit(0);
 }
-secrets = secretValues(envFiles);
+if (kept.length) say(`kept on this machine, ${kept.length === 1 ? "it holds" : "they hold"} keys: ${kept.join(", ")}`);
 const keepSecret = (v) => { if (v && v.length >= 12 && !secrets.includes(v)) secrets.push(v); };
 identities = makeIdentities({ root, work, envFiles, sourceFiles: () => files, say, keepSecret, appDir: () => appDir });
 // One message sent in their own app tells us the door for certain. The route and the body go up,
