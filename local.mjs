@@ -760,6 +760,8 @@ for (let i = files.length - 1; i >= 0; i -= 1) if (carriesKey(files[i])) kept.un
 // --explain: what this would send and start, from this folder, and nothing else. No network, no
 // app started, nothing written. For the person (or the agent) who reads before running.
 if (explain) {
+  const going = new Set([...files, ...kept]);
+  const left = listed ? [...listed].filter((f) => !going.has(f) && !ENV_FILE.test(basename(f))).sort() : [];
   const bytes = files.reduce((n, f) => { try { return n + statSync(join(root, f)).size; } catch { return n; } }, 0);
   const plan = startPlan({ root, typed: flag("--start"), onPath });
   const rel = (f) => relative(root, f) || ".";
@@ -769,6 +771,7 @@ if (explain) {
     `talks to        ${origin.origin}, localhost (your app's port only), and your own model providers, to ask each which models your key can use`,
     `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once${listed ? " (what git would commit)" : ""}`,
     ...(kept.length ? [`kept here       ${kept.length} file${kept.length === 1 ? " that holds" : "s that hold"} keys: ${kept.slice(0, 6).join(", ")}${kept.length > 6 ? ", ..." : ""}`] : []),
+    ...(left.length ? [`also not sent   ${left.length} tracked data, media or lock file${left.length === 1 ? "" : "s"}: ${left.slice(0, 6).join(", ")}${left.length > 6 ? ", ..." : ""}`] : []),
     `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, data files, node_modules, .git`,
     `env files       values read here only: to hide them in replies, to sign in a test account, and to ask your providers what your keys reach. Variable names and whether a switch is on or off go up; no value does`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
