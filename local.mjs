@@ -1,25 +1,28 @@
 #!/usr/bin/env node
-// Brainsless on your own machine. Run from your repository's root with the code the connect
-// screen showed:
+// Cortad on your own machine. Run from your repository's root with the code the connect screen
+// showed:
 //   npx cortad ABCD2345   [--port 3000] [--start "npm run dev"] [--verbose]
 //
 // What it does: signs in with the code, uploads your source files once (never .env, never
 // node_modules) so your code can be read, starts your app the way you start it, then holds one
 // outbound connection open and does what a run asks: a request to your app, a file read, a shell
-// line, an edit. An edit goes through one door (lib/door.mjs) that saves what was there first, so
-// every change can be put back from the browser; the shell is locked by the operating system
-// (lib/lock.mjs) and cannot write your code at all. Nothing here touches git. Your environment
+// line. The shell is locked by the operating system (lib/lock.mjs) and cannot write your code;
+// nothing here writes your files at all. It also makes Cortad known to the coding agents on this
+// machine (lib/register.mjs): an MCP entry and a skill, so `npx cortad mcp` answers them from then
+// on with the key this connect leaves in ~/.cortad. Nothing here touches git. Your environment
 // never leaves this machine. Ctrl-C ends everything.
 
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { openDoor } from "./lib/door.mjs";
+import { COMMANDS, main as face } from "./lib/cli.mjs";
+import { clearRunner, projectOf, readToken, writeDigest, writeRunner, writeToken } from "./lib/home.mjs";
+import { registerAll } from "./lib/register.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
 import { CAPTURED, makeCapture } from "./lib/replay.mjs";
@@ -30,20 +33,27 @@ import { installPlan, missingDependency, startPlan, workspaces } from "./lib/sta
 import { openSwitches } from "./lib/switches.mjs";
 
 const argv = process.argv.slice(2);
+// The two faces a coding agent uses after the first connect (lib/cli.mjs): the MCP server the
+// client starts on every session, and the same verbs as shell commands. Neither runs the connect
+// below, and `npx cortad findings` is a verb, never a code.
+if (COMMANDS.has(argv[0] ?? "")) process.exit(await face(argv));
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const verbose = argv.includes("--verbose");
-const code = (argv.find((a) => /^[A-Za-z0-9-]{8,9}$/.test(a) && !a.startsWith("-")) ?? "").toUpperCase().replace(/-/g, "");
+// A code is eight characters from the connect screen's alphabet, which has no I, O, 0 or 1.
+const code = (argv.find((a) => /^[A-HJ-NP-Za-hj-np-z2-9-]{8,9}$/.test(a) && !a.startsWith("-")) ?? "").toUpperCase().replace(/-/g, "");
 const say = (line) => console.log(`cortad  ${line}`);
 const fail = (line) => { console.error(`cortad  ${line}`); process.exit(1); };
 
 const explain = argv.includes("--explain");
+// Started by lib/cli.mjs for a run on a later day: no code, the key the first connect left behind.
+const viaToken = argv.includes("--token");
 // What is happening right now, on one line that rewrites itself. npx spends its own seconds fetching
 // this package before anything here runs, and the first thing we printed used to be after the whole
 // upload: a minute or more of a cursor sitting still, which reads as nothing happening.
 const step = (line) => { if (process.stdout.isTTY) process.stdout.write(`\rcortad  ${line}\x1b[K`); };
 const clearStep = () => { if (process.stdout.isTTY) process.stdout.write("\r\x1b[K"); };
 const stepDone = (line) => { clearStep(); say(line); };
-if (!explain && !/^[A-Z0-9]{8}$/.test(code)) fail("usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"]   |   npx cortad --explain");
+if (!explain && !viaToken && !/^[A-Z0-9]{8}$/.test(code)) fail("usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"]   |   npx cortad --explain   |   npx cortad status | run | findings | verify <id>");
 // Where Brainsless is. The host is not on the command line: a code cannot point at an impostor.
 const origin = new URL(process.env.CORTAD_ORIGIN || "https://cortad.com");
 // Ours, and only ours. brainsless.com is the same service under its earlier name and stays trusted
@@ -254,10 +264,10 @@ const mask = (text) => { let s = String(text ?? ""); for (const v of secrets) s 
 // ---- the wire
 let box = "";
 let key = "";
-async function call(method, path, body, { raw = false, timeoutMs = 60_000 } = {}) {
+async function call(method, path, body, { raw = false, timeoutMs = 60_000, headers = {} } = {}) {
   const res = await fetch(`${api}${path}`, {
     method,
-    headers: { ...(key ? { "x-local-key": key } : {}), "content-type": raw ? "application/octet-stream" : "application/json" },
+    headers: { ...(key ? { "x-local-key": key } : {}), "content-type": raw ? "application/octet-stream" : "application/json", ...headers },
     body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -272,8 +282,6 @@ const work = join(tmpdir(), `cortad-${process.pid}`);
 mkdirSync(work, { recursive: true });
 const bootLog = join(work, "boot.log");
 writeFileSync(bootLog, "");
-// Opened once the server says whose session this is.
-let door = null;
 // Files nobody may read through this program: keys, and git's own internals.
 const SECRET_PATH = /(?:^|\/)(?:\.git|\.ssh|\.gnupg|\.aws|\.npmrc|\.netrc|id_(?:rsa|ed25519|ecdsa)[^/]*|[^/]*\.(?:pem|key|p12|pfx|jks|keystore))(?:\/|$)/;
 // The engine's paths, as this machine has them. Its scratch files live in this program's own
@@ -393,24 +401,18 @@ async function verb(job) {
     }
     case "write": {
       const bytes = Buffer.from(String(b.b64 ?? ""), "base64");
-      // The engine's own scratch file: this program's temp folder, not your code.
+      // The engine's own scratch file: this program's temp folder, never your code. Nothing on this
+      // machine writes your files; the agent that edits them is your own.
       const mine = scratch(b.path);
-      if (mine) {
-        try { mkdirSync(dirname(mine), { recursive: true }); if (b.append) appendFileSync(mine, bytes); else writeFileSync(mine, bytes); return { success: true, stderr: "" }; }
-        catch (e) { return { success: false, stderr: String(e.message) }; }
-      }
-      // Your code: the one door, which saves what was there before anything changes.
-      return door.write(translate(b.path), bytes, { checkpoint: typeof b.checkpoint === "string" && b.checkpoint ? b.checkpoint : "manual", append: b.append === true, exclusive: b.exclusive === true });
+      if (!mine) return { success: false, stderr: "this program does not write your files" };
+      try { mkdirSync(dirname(mine), { recursive: true }); if (b.append) appendFileSync(mine, bytes); else writeFileSync(mine, bytes); return { success: true, stderr: "" }; }
+      catch (e) { return { success: false, stderr: String(e.message) }; }
     }
-    case "changes": return door.changes();
-    case "diff": return door.diff(String(b.path ?? ""));
     case "mint": return identities ? JSON.parse(mask(JSON.stringify(await mintAcross({
       recipes: b.recipes, root, appDir, onPath, appPort: app?.port, portFor: serviceUp,
       mint: (recipes, port, origin) => identities.mint({ ...b, recipes, headers: { ...(b.headers ?? {}), ...(origin ? { origin, referer: `${origin}/` } : {}) } }, port),
       originFor: (port) => originFor(port, envOrigins(envFiles)),
     })))) : { identities: [] };
-    case "restore": return door.restore(String(b.checkpoint ?? ""));
-    case "keep": return door.keep(typeof b.checkpoint === "string" && b.checkpoint ? b.checkpoint : undefined);
     case "restart": return restartApp();
     case "inventory": return inventoryOf(b.probe && typeof b.probe === "object" ? b.probe : {});
     // Your own pages, read here rather than in a world's shell: that shell is sealed away from
@@ -777,8 +779,9 @@ if (explain) {
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
     `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
-    `agent edits     in your files, each with an undo kept in ~/.cortad/checkpoints; git is never touched`,
-    `agent shell     confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
+    `your files      never written by this program; your own coding agent edits them`,
+    `test shell      confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
+    `for your agent  an MCP entry and a skill in each coding agent's own home folder (Claude Code, Codex, Cursor), and a key in ~/.cortad for later runs`,
     ``,
     `first files     ${files.slice(0, 8).join(", ")}${files.length > 8 ? ", ..." : ""}`,
   ].join("\n"));
@@ -798,16 +801,22 @@ if (!files.length) fail("no source files here to read.");
 
 // Which project this is, as a hash of where it lives: the same folder coming back resumes the same
 // connection, and the path itself never leaves this machine.
-const project = createHash("sha256").update(realpathSync(root)).digest("hex").slice(0, 16);
+const project = projectOf(root);
+// The key the first connect left for this project, if any: the token face signs in with it, and a
+// connect that already holds one does not ask for another.
+const stored = readToken(project);
+if (viaToken && !stored) fail("this project has no stored key. Run the command from the connect screen once.");
 // A network that drops while connecting ends here in a sentence, never a stack trace: running the
 // command again starts a clean connection.
 const unreachable = (err) => fail(`could not reach ${origin.host}: ${err?.name === "TimeoutError" ? "it did not answer in time" : "the connection failed"}. Check your connection and run the command again.`);
-const attach = await call("POST", "/local/attach", { code, name: basename(root), project }).catch(unreachable);
+const attach = await call("POST", "/local/attach", { ...(viaToken ? {} : { code }), name: basename(root), project },
+  viaToken ? { headers: { authorization: `Bearer ${stored}` } } : {}).catch(unreachable);
 if (!attach.ok) fail(attach.data?.error ?? `could not sign in (${attach.status})`);
 box = attach.data.box;
 key = attach.data.key;
-// A server that names no journal gets one for this session alone: never another account's edits.
-door = openDoor(root, { owner: typeof attach.data.journal === "string" && attach.data.journal ? attach.data.journal : box });
+// This process is the one holding the app up for this project: lib/cli.mjs reads the file before
+// starting another.
+writeRunner(project, { pid: process.pid, startedAt: new Date().toISOString(), by: viaToken ? "token" : "connect" });
 
 const list = join(work, "files.txt");
 writeFileSync(list, files.join("\n") + "\n");
@@ -842,12 +851,25 @@ const parts = Math.max(1, Math.ceil(bytes.length / PART));
 for (let off = 0; off < bytes.length; off += PART) {
   const last = off + PART >= bytes.length;
   step(parts > 1 ? `connecting, ${Math.floor(off / PART) + 1} of ${parts}` : "connecting");
-  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART), { raw: true, timeoutMs: 120_000 }).catch(unreachable);
+  // The last part asks for this machine's key when none is stored yet: minted once the repository
+  // row exists, kept in ~/.cortad for the runs a coding agent asks for on later days.
+  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART),
+    { raw: true, timeoutMs: 120_000, ...(last && !stored ? { headers: { "x-cortad-machine": hostname().slice(0, 80) } } : {}) }).catch(unreachable);
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
-  if (last) resumed = put.data?.resumed === true;
+  if (last) {
+    resumed = put.data?.resumed === true;
+    if (typeof put.data?.machineKey === "string" && put.data.machineKey) writeToken(project, put.data.machineKey);
+    writeDigest(project, treeDigest);
+  }
 }
 // Unchanged code has already been read: coming back says so instead of claiming a second read.
 stepDone(resumed ? "connected · nothing changed since last time" : "connected");
+// The coding agents on this machine learn about Cortad now, once: an MCP entry and a skill in each
+// one's own home folder. A run started by an agent later comes back through lib/cli.mjs.
+if (!viaToken) {
+  const added = await registerAll().catch((err) => { if (verbose) say(`could not register with your coding agents: ${err?.message ?? err}`); return []; });
+  if (added.length) say(`added to ${added.join(", ")} · ask ${added.length === 1 ? "it" : "them"} for cortad any time`);
+}
 
 lock = await makeLock({ root, work });
 if (lock && !lockHolds(lock, root)) lock = null;
@@ -883,7 +905,9 @@ async function appLife() {
     if (got.port) { app = got; break; }
     await call("POST", `/local/${box}/stopped`, { said: mask(got.said || got.why).slice(-2000) }).catch(() => {});
     say(got.noStart ? got.why : `${got.why} Fix it and save: it is started again by itself.`);
-    if (first) say("leave this open. Ctrl-C disconnects.");
+    // Said with the same words the agent prompt waits for, so an agent holding the terminal reports
+    // the failure instead of waiting for a line that never comes.
+    if (first) say("your app did not start. Go back to the browser; it says what stopped it. Ctrl-C disconnects.");
     await sourceChanged();
     say("saw your change, starting your app again");
   }
@@ -946,14 +970,25 @@ void appLife().catch((e) => fail(String(e?.message ?? e)));
 // Keep the laptop awake while a world stands on it.
 if (process.platform === "darwin") spawn("caffeinate", ["-i", "-w", String(process.pid)], { stdio: "ignore", detached: true }).unref();
 
+// Started by a shell verb rather than a person, this process leaves once no run has needed it for
+// a while, so an app is not held up all night for a verify that finished at noon.
+const IDLE_MS = 10 * 60_000;
+if (argv.includes("--until-idle") && stored) {
+  let idleSince = Date.now();
+  setInterval(async () => {
+    const res = await call("GET", "/mcp/status", undefined, { headers: { authorization: `Bearer ${stored}` } }).catch(() => null);
+    if (res?.ok && res.data?.run && !res.data.run.finished) idleSince = Date.now();
+    else if (Date.now() - idleSince > IDLE_MS) { say("no run for ten minutes, leaving"); await close(0); }
+  }, 60_000).unref();
+}
+
 async function close(code = 0) {
   if (closing) return;
   closing = true;
+  clearRunner(project);
   await call("DELETE", `/local/${box}`).catch(() => {});
   if (child?.pid) await stopApp(child.pid);
   for (const kid of sidecars) if (kid.pid) await stopApp(kid.pid);
-  const pending = door?.pending() ?? 0;
-  if (pending) say(`${pending} agent edit${pending === 1 ? " is" : "s are"} waiting for you to keep or undo. Run the command again to review ${pending === 1 ? "it" : "them"} in the browser.`);
   await exec("rm", ["-rf", work]).catch(() => {});
   process.exit(code);
 }
