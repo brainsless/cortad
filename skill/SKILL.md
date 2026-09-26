@@ -29,6 +29,8 @@ The connect command ends with "Go back to the browser". From then on `status` ca
 4. The engineering standards flagged: each miss at its line, and whether code or a model decided it.
 5. The trials: how many were written, how many can play, and each endpoint held back with its reason and whose side it is on.
 
+Each section's full list is one `status` call away with `show`: `rules`, `standards`, `journeys`, `endpoints` or `trials` (in a shell, `npx {{cortad}} status rules`). A long list comes in pages, and the last line names the next page.
+
 Then the findings, then the fixes.
 
 ## Following a run

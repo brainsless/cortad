@@ -44,6 +44,28 @@ For the person: https://cortad.com/lab shows this in the browser.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
+Each section in full, with `show` (`rules`, `standards`, `journeys`, `endpoints` or `trials`). A list longer than one page ends with `page 1 of 3, call status with show rules and page 2`.
+
+```
+Rules in the code: 16, in 5 files.
+  apps/api/src/agent/prompt.ts:41  "Never state a refund policy the product does not publish."
+  apps/api/src/agent/prompt.ts:44  "Point billing questions to the billing page."
+  apps/api/src/agent/system.ts:12  "Answer in the language the student writes in."
+  apps/api/src/agent/system.ts:15  "Keep an answer for a grade 9 student to grade 9 words."
+  apps/api/src/agent/system.ts:19  "Ask which lesson the question is about before answering it."
+  apps/api/src/agent/system.ts:22  "Give the method before the answer on homework."
+  apps/api/src/agent/system.ts:30  "Leave the student's name out of the reply."
+  apps/api/src/tools/search.ts:8  "Cite the lesson a fact comes from."
+  apps/api/src/tools/search.ts:14  "Say so when search finds nothing, rather than answering from memory."
+  apps/api/src/tools/search.ts:17  "Quote at most two sentences from a lesson."
+  apps/api/src/agent/handoff.ts:6  "Hand a refund request to a person."
+  apps/api/src/agent/handoff.ts:9  "Hand an account recovery to a person once the email is confirmed."
+  apps/api/src/agent/billing.ts:21  "Tell a parent what the plan costs only from the pricing page."
+  apps/api/src/agent/billing.ts:27  "Never promise a teacher a feature that is not released."
+  apps/web/src/chat/welcome.ts:3  "Greet a first lesson with what the student can ask."
+  apps/web/src/chat/welcome.ts:11  "End each homework answer with one practice question."
+```
+
 ## run
 
 The app is up:
