@@ -6,9 +6,17 @@ Cortad is connected to this repository. Do not run `npx cortad <code>` again.
 
 If the `cortad` MCP tools are in your tool list, use them. Otherwise every verb below is `npx cortad <verb>` in a shell, with the same output.
 
+## Right after connect
+The first run starts by itself: never call `run` for it. As soon as the command says "Go back to the browser", tell the person, in your own words, all of this:
+- Cortad has started their app on this machine and is reading their code to write realistic users of it, with situations that move.
+- It will play those users through the app and grade every reply against about 100 checks: their own rules, and what a good reply is.
+- The report lands in the browser, with each finding at a file and line, and you can fix and verify from here.
+- They should go back to the browser now and finish the two onboarding questions while it plays; you will report when it is done.
+Then `status` every 30 seconds, quietly, until the latest run is finished. Report the score, the number of findings and the link.
+
 ## The loop
 1. `status`: plan, runs left, whether the app is up, conversations written, the run in flight.
-2. `run`: only when the person asks. The first run is free. After that it returns a checkout link; show it in one sentence and wait for the person.
+2. `run`: only when the person asks. The first run started by itself and was free. After that `run` returns a checkout link; show it in one sentence and wait for the person.
 3. `run_status <jobId>` every 30 seconds; say nothing unless the count moved. When it finishes, say the score, how many findings, and the link.
 4. `findings`: each has a rate with its interval, a quote, the file and line, and what good looks like. Start from the worst rate.
 5. Fix ONE finding: the smallest change in the file it names. Then `verify <findingId>`.
