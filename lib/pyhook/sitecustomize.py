@@ -128,6 +128,50 @@ def _install():
                     add(p["functionResponse"].get("name"), p["functionResponse"].get("response"))
         return out or None
 
+    # A framework that folds its tools' answers into the next prompt as plain text sends no tool
+    # message to find: within one turn, what a later call's prompt carries that the call before did
+    # not, outside the model's own words, is that material. The first call holds the customer's
+    # message and the system prompt, present in every later call, so neither is ever counted.
+    seen_by_turn = {}
+
+    def texts_of(body):
+        out = set()
+
+        def take(v):
+            t = text_of(v).strip()
+            if t:
+                out.add(t[:tool_text])
+        for m in body.get("messages") if isinstance(body.get("messages"), list) else []:
+            if isinstance(m, dict) and m.get("role") != "assistant":
+                take(m.get("content"))
+        for it in body.get("input") if isinstance(body.get("input"), list) else []:
+            if isinstance(it, dict) and it.get("role") != "assistant" and it.get("type") != "function_call":
+                take(it.get("content") if it.get("content") is not None else it.get("output"))
+        if isinstance(body.get("system"), str):
+            take(body["system"])
+        for c in body.get("contents") if isinstance(body.get("contents"), list) else []:
+            if isinstance(c, dict) and c.get("role") != "model":
+                for p in c.get("parts") if isinstance(c.get("parts"), list) else []:
+                    if isinstance(p, dict) and isinstance(p.get("text"), str):
+                        take(p["text"])
+        return out
+
+    def material_in(sent, turn):
+        if not turn:
+            return None
+        body = parsed(sent) if isinstance(sent, str) else None
+        if not isinstance(body, dict):
+            return None
+        now = texts_of(body)
+        before = seen_by_turn.get(turn)
+        seen_by_turn[turn] = now
+        if len(seen_by_turn) > 200:
+            seen_by_turn.pop(next(iter(seen_by_turn)))
+        if before is None:
+            return None
+        fresh = [{"name": "", "text": t} for t in now if t not in before][:tools_max]
+        return fresh or None
+
     def rules_in(sent):
         found = rules_now()
         if found is None:
@@ -276,7 +320,7 @@ def _install():
             found = rules_in(as_text)
             if found is not None:
                 row["rules"] = found
-            tools = tools_in(as_text)
+            tools = tools_in(as_text) or material_in(as_text, turn)
             if tools:
                 row["tools"] = tools
             write({"call": row})
