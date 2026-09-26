@@ -33,6 +33,16 @@ def _install():
         except OSError:
             pass
 
+    # Every other outbound call: the host and what it answered, never a byte of it. A search
+    # provider over its limit for a whole run was invisible until this row existed.
+    def dep(url, status, code=None):
+        try:
+            host = (urlsplit(str(url)).hostname or "").lower()
+            if not host or host in ("localhost", "127.0.0.1", "::1"):
+                return
+            write({"dep": {"at": int(time.time() * 1000), "host": host[:253], "status": int(status or 0), **({"code": str(code)[:40]} if code else {})}})
+        except Exception:
+            pass
     def is_model_call(url):
         try:
             parts = urlsplit(str(url))
@@ -330,6 +340,7 @@ def _install():
 
         def watch(request, response, sent):
             if not is_model_call(request.url):
+                dep(request.url, response.status_code)
                 return response
             kind = response.headers.get("content-type", "")
             if getattr(response, "_content", None) is not None:
@@ -356,9 +367,11 @@ def _install():
                         pass
                     try:
                         response = _send(self, request, *a, **k)
-                    except Exception:
+                    except Exception as err:
                         if is_model_call(request.url):
                             meter(request.url, sent, 0, "", "")
+                        else:
+                            dep(request.url, 0, type(err).__name__)
                         raise
                     try:
                         return watch(request, response, sent)
@@ -374,9 +387,11 @@ def _install():
                         pass
                     try:
                         response = await _send(self, request, *a, **k)
-                    except Exception:
+                    except Exception as err:
                         if is_model_call(request.url):
                             meter(request.url, sent, 0, "", "")
+                        else:
+                            dep(request.url, 0, type(err).__name__)
                         raise
                     try:
                         return watch(request, response, sent)
@@ -392,8 +407,15 @@ def _install():
                 note(request.url, request.body)
             except Exception:
                 pass
-            response = send(self, request, *a, **k)
             try:
+                response = send(self, request, *a, **k)
+            except Exception as err:
+                if not is_model_call(request.url):
+                    dep(request.url, 0, type(err).__name__)
+                raise
+            try:
+                if not is_model_call(request.url):
+                    dep(request.url, response.status_code)
                 if is_model_call(request.url):
                     # A streamed reply is counted as a call whose counts were not read.
                     raw = response.content.decode("utf-8", "replace") if getattr(response, "_content_consumed", False) else ""
@@ -413,9 +435,16 @@ def _install():
                 note(str_or_url, body)
             except Exception:
                 pass
-            response = await request(self, method, str_or_url, *a, **k)
+            try:
+                response = await request(self, method, str_or_url, *a, **k)
+            except Exception as err:
+                if not is_model_call(str_or_url):
+                    dep(str_or_url, 0, type(err).__name__)
+                raise
             if is_model_call(str_or_url):
                 response._cortad = (str_or_url, text(body))
+            else:
+                dep(str_or_url, response.status)
             return response
 
         # Metered when your app reads the reply, or, for one it streams, when the reply is let go.
