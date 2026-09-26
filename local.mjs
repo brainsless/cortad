@@ -434,7 +434,8 @@ async function verb(job) {
     case "lock": return { locked: Array.isArray(b.hosts) ? b.hosts.length : 0 };
     // What your app spent on its providers, from the hook inside it. An app this command did not
     // start has no hook, and the empty answer says the meter is absent rather than that nothing was spent.
-    case "usage": return capture?.usage() ?? {};
+    // Masked like every other reply: a tool's answer can carry a value from their env files.
+    case "usage": return capture ? JSON.parse(mask(JSON.stringify(capture.usage() ?? {}))) : {};
     // A world is ended from this terminal, never from the cloud.
     case "destroy": return { ok: true };
     default: return { ok: true };

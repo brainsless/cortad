@@ -50,7 +50,7 @@ Take the person through them worst first, each with its file and line. A long li
 ## Fixing one finding
 
 1. One change, in the file and near the line the finding names.
-2. `verify <findingId>`. It answers within a second, and `run_status` follows it.
+2. `verify <findingId>`. It answers within a second, and `run_status` follows it. Cortad starts the app again itself before the replay, so the saved edit is what plays.
 3. Read the move on the `Visible trials:` and `Held-out trials:` lines:
    - `improved` without `inside the noise`, with the held-out line improved too or `no pair`: the behavior moved. The change stays.
    - `inside the noise`, `no change` or `unsettled`: the trials cannot tell the change from chance. The file goes back to how it was.

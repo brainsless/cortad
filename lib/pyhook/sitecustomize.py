@@ -7,6 +7,7 @@
 import os
 
 _FILE = os.environ.get("CORTAD_TRACE_FILE")
+_RULES = os.environ.get("CORTAD_RULES_FILE")
 
 
 def _install():
@@ -25,6 +26,115 @@ def _install():
     model_host = re.compile(r"(?:^|\.)(?:openai\.com|anthropic\.com|fireworks\.ai|openrouter\.ai|groq\.com|mistral\.ai|together\.xyz|together\.ai|deepseek\.com|cohere\.ai|cohere\.com|perplexity\.ai|x\.ai|openai\.azure\.com|cognitiveservices\.azure\.com|replicate\.com|huggingface\.co|cerebras\.ai|deepinfra\.com|novita\.ai|moonshot\.cn|dashscope\.aliyuncs\.com|bigmodel\.cn|ai-gateway\.vercel\.sh|gateway\.ai\.cloudflare\.com|helicone\.ai|portkey\.ai)$", re.I)
     model_path = re.compile(r"/(?:chat/completions|completions|responses|messages|embeddings)$|:(?:generateContent|streamGenerateContent)|/invoke(?:-with-response-stream)?$|/api/(?:chat|generate)$", re.I)
 
+    # The turn a message came in under, when the run tagged it (one opaque id per request), so a
+    # model call and its prompt can be pinned to the reply they produced while turns overlap.
+    turn_ok = re.compile(r"^[A-Za-z0-9:_.-]{1,80}$")
+
+    def turn_now():
+        req = ctx.get()
+        return req.get("turn") if req else None
+
+    # The customer's own rule sentences, written beside the trace by the run, so each model call can
+    # say which of them its prompt carried. Absent file, nothing is claimed. Reloaded on change.
+    rules_at = [-1.0]
+    rules = [None]
+    slot = re.compile(r"\{[^}]*\}|\$\{[^}]*\}|%[sd]|<[^>]{1,40}>")
+
+    def norm(s):
+        s = str(s or "")
+        s = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), s)
+        s = re.sub(r"\\[nrt]", " ", s).replace('\\"', '"').replace("\\\\", "\\")
+        return re.sub(r"\s+", " ", s.lower()).strip()
+
+    def rules_now():
+        if not _RULES:
+            return None
+        try:
+            at = os.stat(_RULES).st_mtime
+            if at != rules_at[0]:
+                rules_at[0] = at
+                with open(_RULES, encoding="utf-8") as f:
+                    raw = json.load(f)
+                out = []
+                for r in raw if isinstance(raw, list) else []:
+                    if not isinstance(r, dict) or not isinstance(r.get("id"), str) or not isinstance(r.get("text"), str):
+                        continue
+                    parts = [p for p in (norm(x) for x in slot.split(r["text"])) if len(p) >= 12]
+                    if parts:
+                        out.append((r["id"], parts))
+                rules[0] = out
+        except Exception:
+            pass
+        return rules[0]
+
+    # What the app's tools answered, as the prompt of the next model call carries them (chat tool
+    # messages, responses function outputs, Anthropic tool_result blocks, Gemini functionResponse
+    # parts): the material a reply's facts rest on. Bounded per call.
+    tool_text, tools_max = 3000, 12
+
+    def text_of(v):
+        if isinstance(v, str):
+            return v
+        if isinstance(v, list):
+            return "\n".join(p for p in ((x.get("text") or x.get("content") or "") if isinstance(x, dict) else str(x or "") for x in v) if p)
+        if isinstance(v, dict):
+            try:
+                return json.dumps(v, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return ""
+        return ""
+
+    def tools_in(sent):
+        body = parsed(sent) if isinstance(sent, str) else None
+        if not isinstance(body, dict):
+            return None
+        out, names = [], {}
+
+        def add(name, text):
+            t = text_of(text)[:tool_text]
+            if t.strip() and len(out) < tools_max and all(o["text"] != t for o in out):
+                out.append({"name": str(name or "")[:80], "text": t})
+
+        messages = body.get("messages") if isinstance(body.get("messages"), list) else []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            for c in m.get("tool_calls") or []:
+                if isinstance(c, dict) and c.get("id") and isinstance(c.get("function"), dict):
+                    names[c["id"]] = c["function"].get("name")
+            if isinstance(m.get("content"), list):
+                for c in m["content"]:
+                    if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("id"):
+                        names[c["id"]] = c.get("name")
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            if m.get("role") in ("tool", "function"):
+                add(m.get("name") or names.get(m.get("tool_call_id")), m.get("content"))
+            if isinstance(m.get("content"), list):
+                for c in m["content"]:
+                    if isinstance(c, dict) and c.get("type") == "tool_result":
+                        add(names.get(c.get("tool_use_id")), c.get("content"))
+        items = body.get("input") if isinstance(body.get("input"), list) else []
+        for it in items:
+            if isinstance(it, dict) and it.get("type") == "function_call" and it.get("call_id"):
+                names[it["call_id"]] = it.get("name")
+        for it in items:
+            if isinstance(it, dict) and it.get("type") == "function_call_output":
+                add(names.get(it.get("call_id")), it.get("output"))
+        for c in body.get("contents") if isinstance(body.get("contents"), list) else []:
+            for p in c.get("parts") if isinstance(c, dict) and isinstance(c.get("parts"), list) else []:
+                if isinstance(p, dict) and isinstance(p.get("functionResponse"), dict):
+                    add(p["functionResponse"].get("name"), p["functionResponse"].get("response"))
+        return out or None
+
+    def rules_in(sent):
+        found = rules_now()
+        if found is None:
+            return None
+        body = norm(sent)
+        return [rid for rid, parts in found if all(p in body for p in parts)]
+
     def write(row):
         try:
             fd = os.open(_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -40,7 +150,8 @@ def _install():
             host = (urlsplit(str(url)).hostname or "").lower()
             if not host or host in ("localhost", "127.0.0.1", "::1"):
                 return
-            write({"dep": {"at": int(time.time() * 1000), "host": host[:253], "status": int(status or 0), **({"code": str(code)[:40]} if code else {})}})
+            turn = turn_now()
+            write({"dep": {"at": int(time.time() * 1000), "host": host[:253], "status": int(status or 0), **({"code": str(code)[:40]} if code else {}), **({"turn": turn} if turn else {})}})
         except Exception:
             pass
     def is_model_call(url):
@@ -151,19 +262,31 @@ def _install():
         except Exception:
             return ""
 
-    def meter(url, sent, status, kind, raw):
+    def meter(url, sent, status, kind, raw, turn=None):
         try:
             tokens, model = read_reply(kind, (raw or "")[:reply_max])
             parts = urlsplit(str(url))
             row = {"at": int(time.time() * 1000), "host": parts.netloc.replace(":443", ""), "model": str(asked_for(url, sent) or model or "")[:160],
                    "status": int(status or 0), "usage": tokens is not None}
             row.update(tokens or {"promptTokens": 0, "cachedTokens": 0, "completionTokens": 0})
+            turn = turn or turn_now()
+            if turn:
+                row["turn"] = turn
+            as_text = sent if isinstance(sent, str) else text(sent)
+            found = rules_in(as_text)
+            if found is not None:
+                row["rules"] = found
+            tools = tools_in(as_text)
+            if tools:
+                row["tools"] = tools
             write({"call": row})
         except Exception:
             pass
 
     def started(method, path, headers):
-        return {"method": method, "path": path, "headers": headers, "chunks": [], "size": 0, "noted": False}
+        turn = headers.pop("x-cortad-turn", None)
+        return {"method": method, "path": path, "headers": headers, "chunks": [], "size": 0, "noted": False,
+                "turn": turn if isinstance(turn, str) and turn_ok.match(turn) else None}
 
     def keep(req, chunk):
         if chunk and req["size"] < limit:
@@ -442,7 +565,7 @@ def _install():
                     dep(str_or_url, 0, type(err).__name__)
                 raise
             if is_model_call(str_or_url):
-                response._cortad = (str_or_url, text(body))
+                response._cortad = (str_or_url, text(body), turn_now())
             else:
                 dep(str_or_url, response.status)
             return response
@@ -455,14 +578,14 @@ def _install():
             call = getattr(self, "_cortad", None)
             if call:
                 self._cortad = None
-                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), (raw or b"").decode("utf-8", "replace"))
+                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), (raw or b"").decode("utf-8", "replace"), call[2])
             return raw
 
         def release_kept(self, *a, **k):
             call = getattr(self, "_cortad", None)
             if call:
                 self._cortad = None
-                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), "")
+                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), "", call[2])
             return release(self, *a, **k)
 
         module.ClientSession._request = requested
