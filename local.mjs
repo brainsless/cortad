@@ -687,14 +687,17 @@ async function installOnce(said) {
 
 // The port their start command names, moved when something else already holds it: two apps on one
 // laptop both said --port 8000, and the second attached to the first's server as its own.
+// Ports this program tried and lost: two connects on one machine can pick the same free port in
+// the same second, and the one that binds second sees "address already in use".
+const lost = new Set();
 async function freePortAbove(port) {
-  for (let next = port + 1; next < port + 30; next++) if (!(await listenerOn(next))) return next;
+  for (let next = port + 1; next < port + 30; next++) if (!lost.has(next) && !(await listenerOn(next))) return next;
   return null;
 }
 async function freed(cmd, lifted) {
   const m = /(--port[= ]|-p |\bPORT=)(\d{4,5})\b/.exec(cmd);
   const named = m ? Number(m[2]) : Number(lifted.PORT) || 0;
-  if (!named || !(await listenerOn(named))) return { cmd, lifted };
+  if (!named || (!lost.has(named) && !(await listenerOn(named)))) return { cmd, lifted };
   const port = await freePortAbove(named);
   if (!port) return { cmd, lifted };
   say(`port ${named} is taken on this machine, so your app starts on ${port}`);
@@ -723,6 +726,10 @@ async function start(waitMs) {
     // that holds the port is theirs and already running, which startApp turns into attaching to it.
     if (/app crashed - waiting for file changes|waiting for (?:file )?changes before restart|Failed running|EADDRINUSE|address already in use/i.test(seen)) {
       await stopApp(mine.pid);
+      // The port this start named was taken between the check and the bind: the next free one, at
+      // most three times, before the failure is theirs to read.
+      const named = /(?:--port[= ]|-p |\bPORT=)(\d{4,5})\b/.exec(cmd)?.[1] ?? lifted.PORT;
+      if (/EADDRINUSE|address already in use/i.test(seen) && named && lost.size < 3) { lost.add(Number(named)); return start(waitMs); }
       return { port: null, exited: 1, tail: tail() };
     }
     // The port is what the app's own process group listens on. Never a guess: a developer's
