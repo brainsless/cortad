@@ -182,6 +182,15 @@ const ENV_READ = /(?:process\.env(?:\.|\[\s*['"])|os\.(?:environ\.get|getenv)\(\
 const lifted = (name) => (/(TOKEN_BUDGET|TOKENS)/.test(name) ? "1000000000" : "1000000");
 const liftable = (name) => THROUGHPUT.test(name) && !GUARDED.test(name) && !SWITCH.test(name);
 function liftedLimits(envFiles, sources = []) {
+  // Only a limit the code reads is raised: a line in .env that nothing reads is not a limit, and
+  // naming it as one raised was the tell an engineer caught first.
+  const read = new Set();
+  for (const file of sources) {
+    if (!/\.(?:[cm]?[jt]sx?|py|go|rb|php|rs)$/.test(file)) continue;
+    let text = "";
+    try { if (statSync(file).size > 512_000) continue; text = readFileSync(file, "utf8"); } catch { continue; }
+    for (const m of text.matchAll(ENV_READ)) if (liftable(m[1])) read.add(m[1]);
+  }
   const out = {};
   for (const file of envFiles) {
     let text = "";
@@ -191,15 +200,10 @@ function liftedLimits(envFiles, sources = []) {
       if (!m) continue;
       const [, name, raw] = m;
       const value = raw.trim().replace(/^(['"])(.*)\1$/, "$2");
-      if (liftable(name) && /^\d+$/.test(value)) out[name] = lifted(name);
+      if (liftable(name) && /^\d+$/.test(value) && (!sources.length || read.has(name))) out[name] = lifted(name);
     }
   }
-  for (const file of sources) {
-    if (!/\.(?:[cm]?[jt]sx?|py|go|rb|php|rs)$/.test(file)) continue;
-    let text = "";
-    try { if (statSync(file).size > 512_000) continue; text = readFileSync(file, "utf8"); } catch { continue; }
-    for (const m of text.matchAll(ENV_READ)) if (liftable(m[1]) && !(m[1] in out)) out[m[1]] = lifted(m[1]);
-  }
+  for (const name of read) if (!(name in out)) out[name] = lifted(name);
   return out;
 }
 
