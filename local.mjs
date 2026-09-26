@@ -50,7 +50,13 @@ const viaToken = argv.includes("--token");
 // What is happening right now, on one line that rewrites itself. npx spends its own seconds fetching
 // this package before anything here runs, and the first thing we printed used to be after the whole
 // upload: a minute or more of a cursor sitting still, which reads as nothing happening.
-const step = (line) => { if (process.stdout.isTTY) process.stdout.write(`\rcortad  ${line}\x1b[K`); };
+// Without a terminal (a coding agent's shell) each new step is its own line, so the agent reading
+// the output sees the folder being looked at and the upload counting up, not a two-minute blank.
+let lastStep = "";
+const step = (line) => {
+  if (process.stdout.isTTY) { process.stdout.write(`\rcortad  ${line}\x1b[K`); return; }
+  if (line !== lastStep) { lastStep = line; say(line); }
+};
 const clearStep = () => { if (process.stdout.isTTY) process.stdout.write("\r\x1b[K"); };
 const stepDone = (line) => { clearStep(); say(line); };
 if (!explain && !viaToken && !/^[A-Z0-9]{8}$/.test(code)) fail("usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"]   |   npx cortad --explain   |   npx cortad status | run | findings | verify <id>");
@@ -100,7 +106,7 @@ function walk(dir, depth, out, envs, total) {
     try { size = statSync(full).size; } catch { continue; }
     if (size > MAX_FILE || total + size > MAX_TOTAL) continue;
     if (size > MAX_DATA && DATA_FILE.test(e.name) && !MANIFEST_FILE.test(e.name)) continue;
-    if (!shareable(relative(root, full))) continue;
+    if (!shareable(relative(root, full), false)) continue;
     out.push(relative(root, full));
     total += size;
   }
@@ -121,12 +127,14 @@ function gitListed() {
   } catch (e) { fail(`could not list this repository's files with git: ${e.message}`); }
 }
 // One rule for every file that could leave: the upload, and a read the engine asks for later.
-function shareable(rel) {
+function shareable(rel, askGit = true) {
   const parts = rel.split(sep);
   if (parts.slice(0, -1).some((d) => SKIP_DIR.test(d)) || SKIP_FILE.test(parts.at(-1))) return false;
-  if (listed === null) return true;
-  if (listed.has(rel)) return true;
-  // A file made after the list was taken (an agent edit) is asked of git directly.
+  if (listed === null || listed.has(rel)) return true;
+  // Off the list git gave a moment ago: ignored, or inside a nested checkout. The walk takes git's
+  // word for it; asking per file was one process each, two minutes on a repository with a worktree
+  // inside it. A read asked later, of a file made after the list was taken (an agent edit), asks.
+  if (!askGit) return false;
   try { execFileSync("git", ["-C", root, "check-ignore", "-q", rel], { stdio: "ignore" }); return false; } catch (e) { return e.status === 1; }
 }
 let listed = null;
