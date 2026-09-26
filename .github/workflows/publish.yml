@@ -26,4 +26,5 @@ jobs:
       - run: npm test
       # A prerelease (0.3.0-rc.1) goes out under the next tag, so a stack can walk it before a
       # customer's `npx cortad` resolves to it.
-      - run: npm publish --access public $(node -p "require('./package.json').version.includes('-') ? '--tag next' : ''")
+      - run: |
+          if node -p "require('./package.json').version" | grep -q -- -; then npm publish --access public --tag next; else npm publish --access public; fi
