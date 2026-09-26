@@ -6,7 +6,7 @@ Runs Cortad's test conversations against the AI app on your machine, and gives y
 npx cortad <code>
 ```
 
-Run it in your app's folder with the code from cortad.com. It starts your app, connects it to Cortad, and adds Cortad to Claude Code, Codex and Cursor on this machine. The first run starts on its own. Ctrl-C disconnects.
+Run it in your app's folder with the code from cortad.com. It starts your app, connects it to Cortad, and adds Cortad to Claude Code, Codex, Cursor and Copilot on this machine. The first run starts on its own. Ctrl-C disconnects.
 
 ## Your coding agent
 
@@ -21,6 +21,15 @@ npx cortad verify <findingId>
 
 A run needs your app up. If nothing on this machine is holding it, the command starts it with the key in `~/.cortad` and stops it ten minutes after the last run.
 
+To make checking with Cortad part of the repository:
+
+```
+npx cortad stick     one line in AGENTS.md, CLAUDE.md, .cursor/rules and .github/copilot-instructions.md, and an after-edit hook for Claude Code and Codex
+npx cortad unstick   takes them out
+```
+
+Both print every file they changed. Neither touches git.
+
 ## Flags
 
 ```
@@ -32,7 +41,7 @@ A run needs your app up. If nothing on this machine is holding it, the command s
 
 ## Files it creates
 
-- `~/.cortad/<project>/`     the key, the last tree digest, which process holds your app up
+- `~/.cortad/<project>/`     the key, the last tree digest, which process holds your app up, the run it asked for last
 - `~/.cortad/identity.key`   the seed for the session's test accounts
 - `$TMPDIR/cortad-<pid>/`    removed on exit
 

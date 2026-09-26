@@ -23,6 +23,7 @@ import { promisify } from "node:util";
 import { COMMANDS, main as face } from "./lib/cli.mjs";
 import { clearRunner, projectOf, readToken, writeDigest, writeRunner, writeToken } from "./lib/home.mjs";
 import { registerAll } from "./lib/register.mjs";
+import { finished } from "./lib/text.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
 import { CAPTURED, makeCapture } from "./lib/replay.mjs";
@@ -989,7 +990,7 @@ if (argv.includes("--until-idle") && stored) {
   let idleSince = Date.now();
   setInterval(async () => {
     const res = await call("GET", "/mcp/status", undefined, { headers: { authorization: `Bearer ${stored}` } }).catch(() => null);
-    if (res?.ok && res.data?.run && !res.data.run.finished) idleSince = Date.now();
+    if (res?.ok && res.data?.run && !finished(res.data.run)) idleSince = Date.now();
     else if (Date.now() - idleSince > IDLE_MS) { say("no run for ten minutes, leaving"); await close(0); }
   }, 60_000).unref();
 }
