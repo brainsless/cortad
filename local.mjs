@@ -393,7 +393,8 @@ async function verb(job) {
         keep(res);
         if (method !== "GET" && sentBack(res)) { await warm(); if (jar) res = await sent(url); }
         const buf = Buffer.from(await res.arrayBuffer());
-        const LIMIT = 262_144;
+        // An OpenAPI document can run to megabytes; the caller asks for it whole.
+        const LIMIT = Number.isInteger(b.limit) && b.limit > 0 ? Math.min(b.limit, 8 * 1024 * 1024) : 262_144;
         // A session cookie your app sets is its business: it is dropped here, and every other header masked.
         const said = Object.fromEntries([...res.headers].filter(([k]) => !/^set-cookie2?$/i.test(k)).map(([k, v]) => [k, mask(v)]));
         return { status: res.status, headers: said, body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
@@ -436,6 +437,8 @@ async function verb(job) {
     // start has no hook, and the empty answer says the meter is absent rather than that nothing was spent.
     // Masked like every other reply: a tool's answer can carry a value from their env files.
     case "usage": return capture ? JSON.parse(mask(JSON.stringify(capture.usage() ?? {}))) : {};
+    // Every route your app holds, read by the hook off the app itself, masked like the meter.
+    case "routes": return capture ? JSON.parse(mask(JSON.stringify(capture.registry(app?.port)))) : {};
     // A world is ended from this terminal, never from the cloud.
     case "destroy": return { ok: true };
     default: return { ok: true };

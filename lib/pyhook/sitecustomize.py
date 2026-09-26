@@ -426,16 +426,154 @@ def _install():
         wrapped._brainsless = True
         return wrapped
 
+    # The app's own route table, read off the app object the server was handed, so the run knows
+    # every door the app has before a message is sent. Read only: nothing here changes the app.
+    route_max, openapi_max = 400, 8 * 1024 * 1024
+    verbs = ("GET", "POST", "PUT", "PATCH", "DELETE")
+    served_port = [None]
+
+    def template(path):
+        # One syntax for every framework's path parameters: OpenAPI's {name}.
+        p = re.sub(r"\(\?P<(\w+)>(?:[^()]|\([^()]*\))*\)", r"{\1}", str(path))
+        p = re.sub(r"<(?:[^<>:]+:)?(\w+)>", r"{\1}", p)
+        p = re.sub(r"\{(\w+):[^{}]*\}", r"{\1}", p)
+        p = re.sub(r"(?:\$|\\Z)$", "", re.sub(r"^\^", "", p))
+        return p.replace("\\.", ".").replace("/?", "/")
+
+    def source_of(fn):
+        import inspect
+        try:
+            fn = inspect.unwrap(fn)
+        except Exception:
+            pass
+        code = getattr(fn, "__code__", None)
+        path = code.co_filename if code else getattr(sys.modules.get(getattr(fn, "__module__", None) or ""), "__file__", None) or ""
+        rel = os.path.relpath(path, os.getcwd()) if path else ""
+        theirs = rel and not rel.startswith("..") and "site-packages" not in rel and "dist-packages" not in rel
+        return (rel if theirs else ""), str(getattr(fn, "__name__", "") or "")
+
+    def add(out, methods, path, fn):
+        # Methods unknown: the two a door is asked with.
+        file, handler = source_of(fn) if fn is not None else ("", "")
+        for m in ("POST", "GET") if methods is None else methods:
+            m = str(m).upper()
+            if m not in ("HEAD", "OPTIONS") and len(out) < route_max:
+                out.append({"method": m, "path": ("/" + template(path).lstrip("/"))[:1024], "file": file[:512], "handler": handler[:200]})
+
+    def class_methods(cls):
+        return [m for m in verbs if callable(getattr(cls, m.lower(), None))]
+
+    def starlette_routes(routes, prefix, out):
+        for r in routes or []:
+            path = prefix + (getattr(r, "path", "") or "")
+            sub = getattr(r, "routes", None)
+            # FastAPI 0.14x keeps an included router whole and resolves its routes on demand.
+            if callable(getattr(r, "effective_route_contexts", None)):
+                for c in r.effective_route_contexts():
+                    if c.starlette_route is not None:
+                        starlette_routes([c.starlette_route], prefix, out)
+                    else:
+                        add(out, c.methods, prefix + c.path, c.endpoint)
+            elif sub is not None:
+                starlette_routes(sub, path, out)
+            elif getattr(r, "endpoint", None) is not None and "WebSocket" not in type(r).__name__:
+                fn = r.endpoint
+                add(out, getattr(r, "methods", None) or (class_methods(fn) if isinstance(fn, type) else None), path, fn)
+
+    def flask_routes(app, out):
+        for rule in app.url_map.iter_rules():
+            if rule.endpoint != "static" and not rule.endpoint.endswith(".static"):
+                add(out, rule.methods, rule.rule, app.view_functions.get(rule.endpoint))
+
+    def django_routes(_app, out):
+        from django.urls import URLResolver, get_resolver
+
+        def walk(patterns, prefix):
+            for p in patterns:
+                path = prefix + template(str(p.pattern))
+                if isinstance(p, URLResolver):
+                    walk(p.url_patterns, path)
+                    continue
+                cb = p.callback
+                actions = getattr(cb, "actions", None)
+                cls = getattr(cb, "cls", None) or getattr(cb, "view_class", None)
+                add(out, list(actions) if isinstance(actions, dict) else class_methods(cls) if cls else None, path, cls or cb)
+
+        walk(get_resolver().url_patterns, "/")
+
+    def litestar_routes(app, out):
+        for r in app.routes:
+            for h in getattr(r, "route_handlers", None) or []:
+                methods = [m for m in getattr(h, "http_methods", ()) if str(m).upper() in verbs]
+                if methods:
+                    add(out, methods, r.path, getattr(h, "fn", None))
+
+    def aiohttp_routes(app, out):
+        for r in app.router.routes():
+            add(out, None if r.method == "*" else [r.method], r.resource.canonical if r.resource else "", r.handler)
+
+    def asgi_routes(app, out):
+        starlette_routes(app.routes, "", out)
+
+    walkers = (("fastapi", "routes", asgi_routes), ("starlette", "routes", asgi_routes),
+               ("quart", "url_map", flask_routes), ("flask", "url_map", flask_routes),
+               ("litestar", "routes", litestar_routes), ("aiohttp", "router", aiohttp_routes),
+               ("django", None, django_routes))
+
+    def app_in(obj):
+        # Servers hand the app over inside their own middleware, and each layer keeps the next.
+        for _ in range(12):
+            if obj is None:
+                break
+            tops = {c.__module__.split(".")[0] for c in type(obj).__mro__}
+            for name, attr, walk in walkers:
+                if name in tops and (attr is None or hasattr(obj, attr)):
+                    return name, obj, walk
+            inner = getattr(obj, "app", None)
+            obj = inner if inner is not None else getattr(obj, "application", None)
+        return None, None, None
+
+    def openapi_of(name, app):
+        try:
+            if name == "fastapi":
+                # openapi() caches what it builds; the app's own cache is put back as it was.
+                kept = app.openapi_schema
+                try:
+                    doc = app.openapi()
+                finally:
+                    app.openapi_schema = kept
+            elif name == "litestar":
+                doc = app.openapi_schema.to_schema()
+            else:
+                return None
+            return doc if isinstance(doc, dict) and len(json.dumps(doc)) <= openapi_max else None
+        except Exception:
+            return None
+
+    def publish_routes(app, port):
+        name, found, out = None, None, []
+        try:
+            name, found, walk = app_in(app)
+            if walk:
+                walk(found, out)
+        except Exception:
+            pass
+        port = port if isinstance(port, int) and not isinstance(port, bool) else None
+        write({"routes": {"framework": name or "unknown", "port": port, "routes": out, "openapi": openapi_of(name, found)}})
+
     # What is patched, once the module it lives in has been imported by the app itself.
     def patch_uvicorn(module):
         load = module.Config.load
 
         def loaded(self, *a, **k):
             out = load(self, *a, **k)
+            # Under gunicorn, uvicorn's own port is its default and the socket is gunicorn's.
+            port = served_port[0] or getattr(self, "port", None)
+            publish_routes(self.loaded_app, port)
             if not isinstance(self.loaded_app, Asgi):
                 self.loaded_app = Asgi(self.loaded_app)
-            if isinstance(getattr(self, "port", None), int):
-                write({"listen": self.port, "pid": os.getpid()})
+            if isinstance(port, int):
+                write({"listen": port, "pid": os.getpid()})
             return out
 
         module.Config.load = loaded
@@ -446,6 +584,7 @@ def _install():
         def run(hostname, port, application, *a, **k):
             if isinstance(port, int):
                 write({"listen": port, "pid": os.getpid()})
+            publish_routes(application, port)
             return run_simple(hostname, port, wsgi(application), *a, **k)
 
         module.run_simple = run
@@ -457,6 +596,54 @@ def _install():
             return wsgi(lambda e, s: call(self, e, s))(environ, start_response)
 
         module.WSGIHandler.__call__ = called
+
+    def patch_django_server(module):
+        run = module.run
+
+        def running(addr, port, wsgi_handler, *a, **k):
+            publish_routes(wsgi_handler, port)
+            return run(addr, port, wsgi_handler, *a, **k)
+
+        module.run = running
+
+    def patch_gunicorn(module):
+        load = module.Worker.load_wsgi
+
+        def loaded(self):
+            out = load(self)
+            try:
+                bound = [s.getsockname() for s in self.sockets]
+                served_port[0] = next((at[1] for at in bound if isinstance(at, tuple)), None)
+            except Exception:
+                pass
+            publish_routes(self.wsgi, served_port[0])
+            return out
+
+        module.Worker.load_wsgi = loaded
+
+    def patch_hypercorn(module):
+        serve = module.worker_serve
+
+        def serving(app, config, *a, **k):
+            port = None
+            try:
+                port = int(str(config.bind[0]).rsplit(":", 1)[1])
+            except Exception:
+                pass
+            publish_routes(app, port)
+            return serve(app, config, *a, **k)
+
+        module.worker_serve = serving
+
+    def patch_aiohttp_web(module):
+        run_app = module.run_app
+
+        def run(app, *a, **k):
+            if isinstance(app, module.Application):
+                publish_routes(app, k.get("port") or 8080)
+            return run_app(app, *a, **k)
+
+        module.run_app = run
 
     def sent_of(request):
         try:
@@ -637,6 +824,8 @@ def _install():
         module.ClientResponse.release = release_kept
 
     exact = {"uvicorn.config": patch_uvicorn, "werkzeug.serving": patch_werkzeug, "django.core.handlers.wsgi": patch_django,
+             "django.core.servers.basehttp": patch_django_server, "gunicorn.workers.base": patch_gunicorn,
+             "hypercorn.asyncio.run": patch_hypercorn, "hypercorn.trio.run": patch_hypercorn, "aiohttp.web": patch_aiohttp_web,
              "requests.sessions": patch_requests, "aiohttp.client": patch_aiohttp}
     # By family, not by name: the OpenAI SDK moved to a renamed copy of httpx (httpx2), and a patch
     # keyed on "httpx" alone saw none of its calls.
