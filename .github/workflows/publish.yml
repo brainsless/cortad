@@ -24,4 +24,6 @@ jobs:
       - name: The tag is the version in package.json
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
       - run: npm test
-      - run: npm publish --access public
+      # A prerelease (0.3.0-rc.1) goes out under the next tag, so a stack can walk it before a
+      # customer's `npx cortad` resolves to it.
+      - run: npm publish --access public $(node -p "require('./package.json').version.includes('-') ? '--tag next' : ''")
