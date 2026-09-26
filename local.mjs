@@ -802,8 +802,8 @@ if (!files.length) fail("no source files here to read.");
 // Which project this is, as a hash of where it lives: the same folder coming back resumes the same
 // connection, and the path itself never leaves this machine.
 const project = projectOf(root);
-// The key the first connect left for this project, if any: the token face signs in with it, and a
-// connect that already holds one does not ask for another.
+// The key the last connect left for this project, if any: the token face signs in with it. A connect
+// from the screen always asks for a fresh one, since the code may belong to another account or site.
 const stored = readToken(project);
 if (viaToken && !stored) fail("this project has no stored key. Run the command from the connect screen once.");
 // A network that drops while connecting ends here in a sentence, never a stack trace: running the
@@ -854,7 +854,7 @@ for (let off = 0; off < bytes.length; off += PART) {
   // The last part asks for this machine's key when none is stored yet: minted once the repository
   // row exists, kept in ~/.cortad for the runs a coding agent asks for on later days.
   const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART),
-    { raw: true, timeoutMs: 120_000, ...(last && !stored ? { headers: { "x-cortad-machine": hostname().slice(0, 80) } } : {}) }).catch(unreachable);
+    { raw: true, timeoutMs: 120_000, ...(last && !viaToken ? { headers: { "x-cortad-machine": hostname().slice(0, 80) } } : {}) }).catch(unreachable);
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
   if (last) {
     resumed = put.data?.resumed === true;
