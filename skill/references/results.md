@@ -5,7 +5,7 @@ One result per verb, as the tool returns it. The numbers are from a walk of a tu
 ## status
 
 ```
-Cortad · ulaim · Free: 0 of 1 run left this month, 60 of 60 verify trials.
+Cortad · your-app · Free: 0 of 1 run left this month, 60 of 60 verify trials.
 App: Your app answered during startup on port 3100. This is the last recorded state, not a new health check.
 Conversations written: 51. A run can start.
 Latest run 8f2a1c4e-... succeeded: played 51 of 51. Score 71 of 100. 7 findings; call findings. https://cortad.com/lab

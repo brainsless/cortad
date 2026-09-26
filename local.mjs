@@ -440,7 +440,7 @@ const onPath = (bin) => (process.env.PATH ?? "").split(":").some((dir) => dir &&
 let appDir = root;
 
 // ---- a sign-in mounted in another workspace
-// databuddy serves its AI from apps/api and mounts sign-in in apps/dashboard: a test account can
+// One app served its AI from apps/api and mounted sign-in in apps/dashboard: a test account can
 // only be made where the sign-in is, and posting a sign-up at the AI's own port is a 404.
 const PORT_IN_SCRIPT = /(?:^|\s)(?:PORT=|-p[ =]|--port[ =])(\d{2,5})\b/;
 // The port a framework serves on when nobody names one. sveltekit and astro before vite: both bring
@@ -684,7 +684,7 @@ async function start(waitMs) {
     const tail = () => seen.replace(/\x1b\[[0-9;]*m/g, "").split("\n").filter(Boolean).slice(-25).join("\n");
     if (exited !== null) return { port: null, exited, tail: tail() };
     // nodemon and its kind outlive the app they watch: the app is gone, the process is not, and
-    // the wait ran its whole three minutes on planless with the reason sitting in the output.
+    // the wait ran its whole three minutes on one app with the reason sitting in the output.
     // Also: the port is taken, under a watcher that does not exit when its app cannot listen. The app
     // that holds the port is theirs and already running, which startApp turns into attaching to it.
     if (/app crashed - waiting for file changes|waiting for (?:file )?changes before restart|Failed running|EADDRINUSE|address already in use/i.test(seen)) {
@@ -737,7 +737,7 @@ async function listening(pid) {
   } catch { return []; }
 }
 // Your app and everything it started, stopped for certain. A process group is not enough: nodemon
-// gives the real server a group of its own, and planless's server outlived this command as an
+// gives the real server a group of its own, and one app's server outlived this command as an
 // orphan still holding its port and its production connections. Asked first, then made to.
 async function stopApp(pid) {
   const family = await familyOf(pid).catch(() => [pid]);
