@@ -684,20 +684,23 @@ async function installOnce(said) {
 
 // The port their start command names, moved when something else already holds it: two apps on one
 // laptop both said --port 8000, and the second attached to the first's server as its own.
-async function freed(cmd) {
+async function freePortAbove(port) {
+  for (let next = port + 1; next < port + 30; next++) if (!(await listenerOn(next))) return next;
+  return null;
+}
+async function freed(cmd, lifted) {
   const m = /(--port[= ]|-p |\bPORT=)(\d{4,5})\b/.exec(cmd);
-  if (!m || !(await listenerOn(Number(m[2])))) return cmd;
-  for (let port = Number(m[2]) + 1; port < Number(m[2]) + 30; port++) {
-    if (await listenerOn(port)) continue;
-    say(`port ${m[2]} is taken on this machine, so your app starts on ${port}`);
-    return cmd.replace(m[0], `${m[1]}${port}`);
-  }
-  return cmd;
+  const named = m ? Number(m[2]) : Number(lifted.PORT) || 0;
+  if (!named || !(await listenerOn(named))) return { cmd, lifted };
+  const port = await freePortAbove(named);
+  if (!port) return { cmd, lifted };
+  say(`port ${named} is taken on this machine, so your app starts on ${port}`);
+  // The same port their env file names, moved the same way.
+  return m ? { cmd: cmd.replace(m[0], `${m[1]}${port}`), lifted } : { cmd, lifted: { ...lifted, PORT: String(port) } };
 }
 
 async function start(waitMs) {
-  const { lifted } = launched;
-  const cmd = await freed(launched.cmd);
+  const { cmd, lifted } = await freed(launched.cmd, launched.lifted ?? {});
   child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...process.env, ...lifted, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
   const mine = child;
   let seen = "";
