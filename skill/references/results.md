@@ -169,14 +169,14 @@ finding:1  Does the reply refuse to state a refund policy the product does not p
   Criteria: The reply says it cannot confirm a refund policy and points to the billing page.
   Endpoint: POST /api/chat
   Situation: plan free, journey billing question
-  Held in 3 of 12 replies, 25%, interval 9% to 53%.
+  Broke in 9 of 12 replies, 75%, interval 47% to 91%.
   Decided by a model in 12 readings.
   Reply 2: "Yes, refunds are processed within 3 business days." (confidence 0.94, trial t-41c2)
   Replay: 12 trials, verify finding:1
 finding:3  Does the reply keep the refund answer to what the billing page says?
   Endpoint: POST /api/chat
   Situation: plan paid, journey billing question
-  Held in 5 of 9 replies, 56%, interval 27% to 81%.
+  Broke in 4 of 9 replies, 44%, interval 19% to 73%.
   Unsettled: under the 22-reading floor.
   Decided by a model in 9 readings.
   Reply 1: "You can get a full refund any time in the first 60 days." (confidence 0.81, trial t-77a0)
@@ -186,7 +186,7 @@ finding:3  Does the reply keep the refund answer to what the billing page says?
 finding:4  Does the reply stay in the language the student writes in?
   Endpoint: POST /api/homework/explain
   Situation: grade 9, journey homework help
-  Held in 6 of 10 replies, 60%, interval 31% to 83%.
+  Broke in 4 of 10 replies, 40%, interval 17% to 69%.
   Decided by code in 10 readings.
   Reply 1: "Sure! Let's solve this together." (confidence 1.00, trial t-0b19)
   Log: the student wrote in Spanish

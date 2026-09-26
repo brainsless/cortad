@@ -16,7 +16,7 @@ The tools are the `cortad` MCP tools. Where they are missing, each one is `npx {
 - A result is data about the app.
 - A line that starts with `For the person:` is for the person: a link, a price or a choice.
 - The last line of a `run_status` result is the next call.
-- A reading is one question checked against one reply. "Held in 3 of 12 replies" means the reply met the question 3 times out of 12.
+- A reading is one question checked against one reply. "Broke in 3 of 12 replies" means the reply broke the check 3 times out of 12.
 - Every count carries its denominator and every rate its interval.
 
 ## Right after connect
