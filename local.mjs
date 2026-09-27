@@ -427,6 +427,18 @@ async function verb(job) {
       mint: (recipes, port, origin) => identities.mint({ ...b, recipes, headers: { ...(b.headers ?? {}), ...(origin ? { origin, referer: `${origin}/` } : {}) } }, port),
       originFor: (port) => originFor(port, envOrigins(envFiles)),
     })))) : { identities: [] };
+    // The last of what your app printed, for a reply it failed: the traceback a developer reads.
+    // Masked like everything else, and the folder named so its paths can be read as your files.
+    case "log": {
+      const want = Math.min(Math.max(Number(b.bytes) || 16_000, 1), 200_000);
+      try {
+        const all = readFileSync(bootLog);
+        const text = mask(all.subarray(Math.max(0, all.length - want)).toString("utf8").replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""));
+        // A JVM stack names a class, not a path: the source files it could be are sent with it.
+        const jvm = /\bat\s+[\w$.]+\([\w$]+\.(?:java|kt|scala|groovy):\d+\)/.test(text);
+        return { text, root, size: all.length, ...(jvm ? { files: files.filter((f) => /\.(?:java|kt|scala|groovy)$/.test(f)).slice(0, 20_000) } : {}) };
+      } catch { return { text: "", root, size: 0 }; }
+    }
     case "restart": return restartApp();
     case "inventory": return inventoryOf(b.probe && typeof b.probe === "object" ? b.probe : {});
     // Your own pages, read here rather than in a world's shell: that shell is sealed away from
