@@ -49,16 +49,17 @@ Take the person through them worst first, each with its file and line. A long li
 
 ## Fixing one finding
 
+Each finding ends with what a verify of it can show. When a verify cannot leave the noise, the person hears that before one is spent: more trials in that situation, from the next full run, is what adds readings.
+
 1. One change, in the file and near the line the finding names.
 2. `verify <findingId>`. It answers within a second, and `run_status` follows it. Cortad starts the app again itself before the replay, so the saved edit is what plays.
-3. Read the move on the `Visible trials:` and `Held-out trials:` lines:
-   - `improved` without `inside the noise`, with the held-out line improved too or `no pair`: the behavior moved. The change stays.
-   - `no change` or `regressed`: the file goes back to how it was.
-   - `inside the noise` or `unsettled`: the trials cannot tell yet, which is not a verdict against the change. `verify` again to add readings; a change the app's own tests support may stay, said as not yet verified by Cortad.
+3. Read the verify's text. It opens with what came back on the replayed trials before and now (errors, refusals, replies that got no answer), so a fix that broke the endpoint shows first. It closes on whether the evidence supports keeping the fix:
+   - `supports keeping the fix`: the behavior moved outside the noise, with the held-out line moving too or `no pair`. The change stays.
+   - `does not support keeping the fix`: the pairs could have shown a fix and nothing moved, or it moved the wrong way. The file goes back to how it was.
+   - `cannot tell`: not a verdict against the change, and the sentence says why and what would. A second verify of the same trials pairs the same replies again and adds nothing. A change the app's own tests support may stay, said as not yet verified by Cortad.
+   - A reply that failed before and no longer meets the question's condition is counted as gone on its own, not as a pass.
    - A verify that played no trial says so and compares nothing; the file stays as it was left.
-   - `Verification unavailable:` the two runs read the question on no common trial, and the line says why (the replay took another turn, the trial halted, the question's condition did not hold). It is not a verdict: the file stays, said as not yet verified by Cortad.
    - An `Overfit:` line: the visible trials moved and the held-out trials stayed where they were, so the change fits the trials it could see. The file goes back, and the next change aims at the behavior the question asks about.
-   - `regressed`: the file goes back.
 4. Then the next finding.
 
 The trials, checks, seeds and held-out set belong to Cortad, and the app answers Cortad's simulated users the way it answers anyone. A number moves when the app's behavior moves.
