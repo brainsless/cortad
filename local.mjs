@@ -375,10 +375,13 @@ async function verb(job) {
       const url = hostUrl(port, path);
       const yours = (to) => { try { const u = new URL(to, url); return ["127.0.0.1", "::1", "[::1]", "localhost"].includes(u.hostname) && u.port === String(port) ? u.href : null; } catch { return null; } };
       let jar = "";
+      // Held as long as the run waits for this reply: a course generator that takes ninety seconds
+      // a reply is waited on for three of them. A run that says nothing gets the old 170 seconds.
+      const holdMs = Math.min(Math.max(Number(b.waitMs) || 170_000, 1_000), 630_000);
       const sent = (at, over = {}) => fetch(at, {
         ...init, ...over,
         headers: { ...headers, ...(over.headers ?? {}), ...(jar ? { cookie: [headers.cookie, jar].filter(Boolean).join("; ") } : {}) },
-        signal: AbortSignal.timeout(170_000),
+        signal: AbortSignal.timeout(holdMs),
       });
       const keep = (res) => { const set = res.headers.getSetCookie?.() ?? []; if (set.length) jar = [jar, ...set.map((c) => c.split(";")[0])].filter(Boolean).join("; "); };
       const sentBack = (res) => (res.status >= 300 && res.status < 400 ? yours(res.headers.get("location") ?? "") : null);
