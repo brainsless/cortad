@@ -21,7 +21,8 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { COMMANDS, main as face } from "./lib/cli.mjs";
-import { clearRunner, homeOf, projectOf, readToken, writeDigest, writeRunner, writeToken } from "./lib/home.mjs";
+import { clearRunner, homeOf, projectOf, readToken, writeApp, writeDigest, writeRunner, writeToken } from "./lib/home.mjs";
+import { commandText, elapsedMs, RELOADER, sourceOf } from "./lib/fresh.mjs";
 import { registerAll } from "./lib/register.mjs";
 import { finished } from "./lib/text.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
@@ -646,16 +647,32 @@ async function listenerOn(port) {
 // The top of the chain that runs the app: nodemon, npm, the sh -c under it. Climbs from the listener
 // while the parent is a runner, never into the person's own shell or terminal.
 const RUNNER = /^(?:\S*\/)?(?:node|npm|npx|pnpm|yarn|bun|deno|python[\d.]*|uvicorn|gunicorn|flask|tsx|ts-node|nodemon|concurrently|pm2)(?:\s|$)|^(?:\/bin\/)?sh -c\b/;
-async function supervisorOf(pid) {
-  const rows = (await exec("ps", ["-axo", "pid=,ppid=,args="])).stdout.trim().split("\n").map((l) => l.trim());
-  const table = new Map(rows.map((l) => { const m = /^(\d+)\s+(\d+)\s+(.*)$/.exec(l); return m ? [Number(m[1]), { ppid: Number(m[2]), args: m[3] }] : [0, null]; }));
-  let top = pid;
-  for (let i = 0; i < 8; i++) {
-    const parent = table.get(table.get(top)?.ppid ?? 0);
+async function chainOf(pid) {
+  const rows = (await exec("ps", ["-axo", "pid=,ppid=,etime=,args="])).stdout.trim().split("\n").map((l) => l.trim());
+  const table = new Map(rows.map((l) => { const m = /^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(l); return m ? [Number(m[1]), { pid: Number(m[1]), ppid: Number(m[2]), etime: m[3], args: m[4] }] : [0, null]; }));
+  const chain = table.get(pid) ? [table.get(pid)] : [];
+  for (let i = 0; i < 8 && chain.length; i++) {
+    const parent = table.get(chain.at(-1).ppid);
     if (!parent || !RUNNER.test(parent.args)) break;
-    top = table.get(top).ppid;
+    chain.push(parent);
   }
-  return top;
+  return chain;
+}
+const supervisorOf = async (pid) => (await chainOf(pid)).at(-1)?.pid ?? pid;
+
+// What the running app was started from, noted in app.json for the verbs, which run in another
+// process (lib/fresh.mjs): when it started, whether this command started it, whether it reloads on
+// save, and what each source file said then. An app found already running is noted by its own
+// process's age and command line, with the file names alone.
+let loaded = null;
+const noteApp = () => writeApp(project, loaded?.at
+  ? { runner: process.pid, own: loaded.own, startedAt: new Date(loaded.at).toISOString(), reloads: loaded.reloads, files: loaded.files }
+  : { runner: process.pid });
+async function noteAttached(port) {
+  const pid = await listenerOn(port);
+  const chain = pid ? await chainOf(pid).catch(() => []) : [];
+  loaded = { own: false, at: chain.length ? Date.now() - elapsedMs(chain[0].etime) : null, reloads: RELOADER.test(chain.map((p) => p.args).join("\n")), files: sourceOf(root, files, false) };
+  noteApp();
 }
 
 // Your app, started the way you start it, and watched until one of its own ports answers.
@@ -772,10 +789,17 @@ async function start(waitMs) {
   // The record of what the app writes opens with the app: the first run starts itself on the
   // server's side, with no verb here to mark it, and a restart mid-run keeps the record open.
   try { markRun(writesDirOf(homeOf(projectOf(root))), "session", { keep: true }); } catch { /* the app's writes go unrecorded */ }
+  // Taken before the app reads a file: a save after this moment is a change it has not loaded.
+  const note = { own: true, at: Date.now(), reloads: RELOADER.test(commandText(cmd, appDir)), answered: false };
+  note.files = sourceOf(root, files);
+  loaded = note;
   child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...dataOnce(true).env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
   const mine = child;
   let seen = "";
-  const onData = (d) => { const s = d.toString(); appendFileSync(bootLog, s); seen = (seen + s).slice(-20_000); lastSaid = seen; lastOutputAt = Date.now(); if (verbose) process.stdout.write(s); };
+  const onData = (d) => {
+    const s = d.toString(); appendFileSync(bootLog, s); seen = (seen + s).slice(-20_000); lastSaid = seen; lastOutputAt = Date.now(); if (verbose) process.stdout.write(s);
+    if (!note.reloads && RELOADER.test(s)) { note.reloads = true; if (note.answered && loaded === note) noteApp(); }
+  };
   mine.stdout.on("data", onData);
   mine.stderr.on("data", onData);
   let exited = null;
@@ -807,7 +831,11 @@ async function start(waitMs) {
     const plain = seen.replace(/\x1b\[[0-9;]*m/g, "");
     const said = [...plain.matchAll(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\]):(\d{2,5})\b|\bport\s*[:=]?\s*(\d{4,5})\b/gi)].map((m) => Number(m[1] || m[2]));
     for (const port of [...new Set([...said.reverse().filter((p) => ports.includes(p)), ...ports])]) {
-      if (await answers(port)) return { port, exited: null, tail: "" };
+      if (await answers(port)) {
+        note.answered = true;
+        if (loaded === note) noteApp();
+        return { port, exited: null, tail: "" };
+      }
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -1024,7 +1052,7 @@ const announce = () => call("POST", `/local/${box}/app`, { port: app.port, cmd: 
 async function appLife() {
   for (let first = true; ; first = false) {
     const got = await startApp();
-    if (got.port) { app = got; break; }
+    if (got.port) { app = got; if (!launched) await noteAttached(app.port); break; }
     await call("POST", `/local/${box}/stopped`, { said: mask(got.said || got.why).slice(-2000) }).catch(() => {});
     say(got.noStart ? got.why : `${got.why} Fix it and save: it is started again by itself.`);
     // Said with the same words the agent prompt waits for, so an agent holding the terminal reports
@@ -1086,6 +1114,7 @@ async function appLife() {
         say("saw your change, starting your app again");
         back = launched ? await launch(180_000) : await startApp();
       }
+      if (back.port && !launched) await noteAttached(back.port);
       if (back.port) { app = { ...app, ...(back.cmd !== undefined ? back : {}), port: back.port }; up = true; downSince = 0; toldDown = false; appTold = Boolean((await announce().catch(() => null))?.ok); say(`your app is answering again on port ${app.port}`); }
     } finally { restarting = false; }
   }
@@ -1119,6 +1148,13 @@ async function close(code = 0) {
 }
 process.on("SIGINT", () => close(0));
 process.on("SIGTERM", () => close(0));
+// A verb in another process asks for the app to be started again before a run, because its code
+// changed and nothing reloaded it (lib/fresh.mjs). The new start is noted as the app answers; one
+// that fails is noted with its reason. A restart already under way answers the same way.
+process.on("SIGUSR2", () => {
+  if (restarting || !app) return;
+  void restartApp().then((out) => { if (out.error) writeApp(project, { runner: process.pid, failedAt: new Date().toISOString(), error: mask(out.error).slice(-600) }); });
+});
 
 let quiet = 0;
 // Each poll names the jobs the last one brought. A poll's answer can die on the way (the network

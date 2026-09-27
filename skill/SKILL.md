@@ -52,7 +52,7 @@ Take the person through them worst first, each with its file and line. A long li
 Each finding ends with what a verify of it can show. When the trials it replays read the question too few times for a rate, the verify plays up to 12 more trials in that situation itself, counted as verify trials, and the finding says how many before one is spent.
 
 1. One change, in the file and near the line the finding names.
-2. `verify <findingId>`. It answers within a second, and `run_status` follows it. Cortad starts the app again itself before the replay, so the saved edit is what plays. When it also plays new trials in the finding's situation, the answer says how many.
+2. `verify <findingId>`. It answers within a second, and `run_status` follows it. When the app's code changed since the app started and nothing reloaded it, Cortad starts the app again first and the answer says so, so the saved edit is what plays; `run_status` names when the app started against the last change. When it also plays new trials in the finding's situation, the answer says how many.
 3. Read the verify's text. It opens with what came back on the replayed trials before and now (errors, refusals, replies that got no answer), so a fix that broke the endpoint shows first. It closes on whether the evidence supports keeping the fix:
    - `supports keeping the fix`: the behavior moved outside the noise, with the held-out line moving too or `no pair`. The change stays.
    - `does not support keeping the fix`: the pairs, or the rate on the same trials, could have shown a fix and nothing moved, or it moved the wrong way. The file goes back to how it was.

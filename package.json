@@ -10,6 +10,7 @@
     "README.md",
     "lib/cli.mjs",
     "lib/data.mjs",
+    "lib/fresh.mjs",
     "lib/home.mjs",
     "lib/identities.mjs",
     "lib/keys.mjs",
