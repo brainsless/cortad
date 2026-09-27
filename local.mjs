@@ -32,6 +32,7 @@ import { mintAcross, originFor, waitForPort } from "./lib/service.mjs";
 import { listingUrl } from "./lib/listing.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
 import { openSwitches } from "./lib/switches.mjs";
+import { keepData } from "./lib/data.mjs";
 
 const argv = process.argv.slice(2);
 // The two faces a coding agent uses after the first connect (lib/cli.mjs): the MCP server the
@@ -587,7 +588,7 @@ async function startApp() {
     const ports = [...up.tail.matchAll(/(?::|port\s*[:=]?\s*)(\d{4,5})\b/gi)].map((m) => Number(m[1]));
     for (const port of new Set(ports)) {
       if (await answers(port)) {
-        launched = null; child = null;
+        launched = null; child = null; data = null;
         const took = await takeOver(port);
         if (took) return took;
         say(`your app is already running on port ${port}, so that one is used; its request limits stay as they are`);
@@ -740,9 +741,27 @@ async function freed(cmd, lifted) {
   return m ? { cmd: cmd.replace(m[0], `${m[1]}${port}`), lifted } : { cmd, lifted: { ...lifted, PORT: String(port) } };
 }
 
+// Your app's database, read once per session: a copy made before the first start, and every
+// restart after it runs against the same copy, so a crash mid-run does not lose what the run made.
+// Told in the terminal here and to the run with the app (announce), so status and the report say it.
+let data = null;
+function dataOnce(started) {
+  if (data) return data;
+  const values = { ...envExports(envFiles), ...process.env };
+  const from = {};
+  for (const file of envFiles.filter((f) => !/\.(example|sample)$/.test(f))) {
+    let text = "";
+    try { text = readFileSync(file, "utf8"); } catch { continue; }
+    for (const line of text.split("\n")) { const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line); if (m && !(m[1] in process.env)) from[m[1]] = file; }
+  }
+  data = keepData({ values, from, appDir, root, work, sources: files.map((f) => join(root, f)), started });
+  for (const line of data.said) say(line.charAt(0).toLowerCase() + line.slice(1));
+  return data;
+}
+
 async function start(waitMs) {
   const { cmd, lifted } = await freed(launched.cmd, launched.lifted ?? {});
-  child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+  child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...dataOnce(true).env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
   const mine = child;
   let seen = "";
   const onData = (d) => { const s = d.toString(); appendFileSync(bootLog, s); seen = (seen + s).slice(-20_000); lastSaid = seen; lastOutputAt = Date.now(); if (verbose) process.stdout.write(s); };
@@ -859,6 +878,7 @@ if (explain) {
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
     `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
     `your files      never written by this program; your own coding agent edits them`,
+    `your database   a database file your env or code names is copied to this program's temp folder and your app is started on the copy; a database server is named, not copied`,
     `test shell      confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
     `for your agent  an MCP entry and a skill in each coding agent's own home folder (Claude Code, Codex, Cursor), and a key in ~/.cortad for later runs`,
     ``,
@@ -975,7 +995,7 @@ function sourceChanged() {
 }
 // `watching` says whether a message sent to this app can be seen arriving: only an app this command
 // started carries the hook, and only a runtime the hook exists for.
-const announce = () => call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], watching: Boolean(launched && capture?.watching(app.port)), metered: Boolean(launched && capture?.watching(app.port)) });
+const announce = () => call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: dataOnce(Boolean(launched)).said.slice(0, 8), watching: Boolean(launched && capture?.watching(app.port)), metered: Boolean(launched && capture?.watching(app.port)) });
 
 // Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
 // and starts it again the moment you save a fix, and the browser is told each time it answers, so a
@@ -1022,7 +1042,10 @@ async function appLife() {
     const busy = launched && !appGone && !crashed && Date.now() - lastOutputAt < 15_000;
     if (busy || downFor < (crashed ? 4_000 : 10_000)) continue;
     // Down for real. The screen is told, so it never shows an app that is not there.
-    if (!toldDown) toldDown = Boolean((await call("POST", `/local/${box}/stopped`, { said: mask(lastSaid || "your app stopped answering").slice(-2000) }).catch(() => null))?.ok);
+    // `exited`: the process this command started is gone or its watcher said it crashed, not a process
+    // running and not answering. The run tells the two apart: one is their crash, the other may be our
+    // load. An app it only attached to is not its to watch, so nothing is said either way.
+    if (!toldDown) toldDown = Boolean((await call("POST", `/local/${box}/stopped`, { said: mask(lastSaid || "your app stopped answering").slice(-2000), ...(launched ? { exited: Boolean(appGone || crashed) } : {}) }).catch(() => null))?.ok);
     // An app that went quiet or exited did not stop because of a save (it was killed, it ran out
     // of memory, it crashed on a request), so waiting for a save would wait forever. It is started
     // here, whoever started it first: an app this command only attached to (yours, from another

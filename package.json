@@ -9,6 +9,7 @@
   "files": [
     "README.md",
     "lib/cli.mjs",
+    "lib/data.mjs",
     "lib/home.mjs",
     "lib/identities.mjs",
     "lib/keys.mjs",
