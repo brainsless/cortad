@@ -574,17 +574,37 @@ def _install():
                 out.append(c)
         return out or None
 
-    # The passages the prompt carried as retrieved context: a block the app itself labels as
-    # context, documents, knowledge, sources or search results, in its system prompt or from the
-    # person's latest message on, and Anthropic document and search_result blocks. The app's own
-    # instructions are not passages: only what sits under such a label is.
+    # What the prompt was handed besides its instructions, of two kinds. What the app retrieved: a
+    # block it labels as context, documents, knowledge, sources or search results. And its own
+    # record of the person, passed beside the ask: a profile, a résumé, an account, orders, a JSON
+    # or key: value block of their data, under any heading or none ("data"). A reply's fact taken
+    # from either was given, not made up: resumeforge put the saved profile into every prompt, and
+    # its replies' facts from it were read as invention. In the system prompt or from the person's
+    # latest message on, and Anthropic document and search_result blocks.
     passage_text, passages_max = 3000, 6
     material = re.compile(r"\b(?:retriev\w*|context|knowledge|documents?|sources?|search[ _-]?results?|references?|passages?|excerpts?|snippets?|chunks?|background|faq|relevant)\b|检索|知识|参考资料|资料|上下文|文档|背景|相关", re.I)
+    record = re.compile(r"\b(?:profiles?|r[eé]sum[eé]s?|cv|(?<!into )accounts?|orders|purchases|records|(?:user|customer|member|patient|student|client|candidate)[ _]?(?:info\w*|data|details?|facts)|(?:order|purchase|account|medical|payment|employment|transaction|work) history)\b|个人资料|用户资料|个人信息|用户信息|简历|档案|订单|账户|账号|会员", re.I)
+    def name_of(label):
+        return re.sub(r"(?:开始|\s+(?:start|begin))$", "", re.sub(r"[#:：\[\]=]", "", label).strip(), flags=re.I).strip()
+
+    # A record is named by a label that ends in its word ("User profile", "[已选个人资料开始]"): a
+    # heading of the instructions that only mentions one ("关于简历通本身与使用平台") is not it.
+    record_end = re.compile(r"(?:" + record.pattern + r")$", re.I)
+
+    def is_record(label):
+        return bool(record_end.search(name_of(label)))
+
+    def is_label(label):
+        return bool(material.search(label)) or is_record(label)
+
+    def kind_of(label):
+        return "data" if is_record(label) else None
+
     heading = re.compile(r"^\s*(?:#{1,6}\s+[^\n]{1,80}|[^\n]{1,80}[:：]\s*(?:\([^\n)]*\))?|\[[^\n\]]{1,80}\]|={2,}\s*[^\n]{1,80}?\s*={2,})\s*$")
-    # An inline label is a noun phrase that ends in the material word ("context:", "background:",
-    # "retrieved passages:"): "4. Knowledge:" in a numbered instruction and a JSON key are not.
-    inline = re.compile(r"^\s*(?:[-*]\s+)?([A-Za-z\u4e00-\u9fff][A-Za-z\u4e00-\u9fff '’_-]{0,29})[:：]\s*\S")
-    named = re.compile(r"(?:" + material.pattern + r")\s*$", re.I)
+    # An inline label is a noun phrase that ends in the label word ("context:", "background:",
+    # "user profile:"): "4. Knowledge:" in a numbered instruction and a JSON key are not.
+    inline = re.compile(r"^\s*(?:[-*]\s+)?([A-Za-z一-鿿][A-Za-z一-鿿 '’_-]{0,29})[:：]\s*\S")
+    named = re.compile(r"(?:" + material.pattern + "|" + record.pattern + r")\s*$", re.I)
     tagged = re.compile(r"<([A-Za-z][\w-]*)[^>]*>([\s\S]*?)</\1>")
 
     # A label's block runs on to the next heading of its own kind: "资料：" over retrieved chunks
@@ -592,7 +612,7 @@ def _install():
     # one chunk of five and the reader called the knowledge base's own 1% fee made up. A markdown
     # label holds deeper headings. A closing paragraph that opens on a label of its own ("问题：...",
     # "Question: ...") is the prompt's ask, not material. A long block is several passages, cut
-    # between its paragraphs.
+    # between its paragraphs, then its lines.
     markdown = re.compile(r"^\s*(#{1,6})\s")
 
     def ends_block(label, line):
@@ -606,21 +626,65 @@ def _install():
         return bool(m and not named.search(m.group(1)))
 
     # A heading inside a fenced block is the material's own text: a README chunk's "## Features".
-    fence = re.compile(r"^\s*(?:```|~~~)", re.M)
+    fence = re.compile(r"^\s*(?:```|~~~)")
 
-    def add_block(add, name, paras):
+    def fences(para):
+        return sum(1 for l in para.split("\n") if fence.match(l))
+
+    def pieces(p):
+        if len(p) <= passage_text:
+            return [p]
+        return [l[i:i + passage_text] for l in p.split("\n") for i in range(0, len(l), passage_text)]
+
+    def add_block(add, name, paras, kind=None):
         text = ""
-        for p in paras:
-            if text and len(text) + len(p) + 2 > passage_text:
-                add(name, text)
-                text = ""
-            text += ("\n\n" if text else "") + p
-        add(name, text)
+        for para in paras:
+            for j, p in enumerate(pieces(para)):
+                if text and len(text) + len(p) + 2 > passage_text:
+                    add(name, text, kind)
+                    text = ""
+                text += (("\n" if j else "\n\n") if text else "") + p
+        add(name, text, kind)
+
+    # The person's data with no label word: a JSON object, or key: value lines (YAML too) under a
+    # heading. A transcript pasted as "User: ... / Assistant: ..." is the conversation; a tool's
+    # schema, an agent's Thought/Action scaffold and an answer's shape are instructions.
+    kv_line = re.compile(r"^\s*(?:[-*]\s+)?[\"']?([^\W\d][\w .'’()/-]{0,39})[\"']?\s*[:：]\s*(\S.*)?$")
+    role = re.compile(r"^(?:user|assistant|human|ai|system|bot|model|agent|customer|用户|助手|客服|顾客|系统)$", re.I)
+    scaffold = re.compile(r"^(?:tool\b.*|action(?: input)?|thought|observation|final answer|question|answer|input|output)$", re.I)
+    shape = re.compile(r"format|schema|example|output|respon|return|reply|格式|示例|输出|返回", re.I)
+    tool_schema = re.compile(r"\"(?:parameters|input_schema|inputSchema)\"\s*:")
+    # "[已选岗位结束]": the closing marker an app puts after a record is not part of it.
+    closer = re.compile(r"^\s*\[[^\]\n]{1,80}\]\s*$")
+
+    def data_in(para, before):
+        lines = para.split("\n")
+        head = lines[0] if heading.match(lines[0]) else None
+        body = [l for l in (lines[1:] if head else lines) if l.strip() and not fence.match(l)]
+        if len(body) > 1 and closer.match(body[-1]):
+            body.pop()
+        name = head or (before if before and "\n" not in before and heading.match(before) else "")
+        text = "\n".join(body)
+        if shape.search(name):
+            return None
+        if re.match(r"^\s*[{\[]", text):
+            try:
+                v = json.loads(text)
+            except ValueError:
+                return None
+            return (name_of(name) or "data", text) if isinstance(v, (dict, list)) and v and not tool_schema.search(text) else None
+        kv = [kv_line.match(l) for l in body]
+        valued = [m.group(1).strip() for m in kv if m and m.group(2)]
+        shaped = bool(name) and all(m or re.match(r"^\s+\S|^\s*-\s", l) for m, l in zip(kv, body))
+        if shaped and len(valued) >= 2 and sum(1 for k in valued if role.match(k)) < 2 and not any(scaffold.match(k) for k in valued):
+            return (name_of(name), text)
+        return None
 
     def labelled(text, add):
         def lift(m):
-            if material.search(m.group(1).replace("_", " ")):
-                add(m.group(1), m.group(2))
+            label = m.group(1).replace("_", " ")
+            if is_label(label):
+                add(m.group(1), m.group(2), kind_of(label))
                 return ""
             return m.group(0)
         paras = re.split(r"\n\s*\n", tagged.sub(lift, str(text or "")))
@@ -628,19 +692,26 @@ def _install():
         while i < len(paras):
             lines = paras[i].split("\n")
             head = lines[0]
-            if heading.match(head) and material.search(head):
+            if heading.match(head) and is_label(head):
                 block = ["\n".join(lines[1:])]
-                fenced = len(fence.findall(block[0])) % 2 == 1
+                fenced = fences(block[0]) % 2 == 1
                 while i + 1 < len(paras) and (fenced or (not ends_block(head, paras[i + 1].split("\n")[0]) and not (i + 2 == len(paras) and asks(paras[i + 1])))):
                     i += 1
                     block.append(paras[i])
-                    if len(fence.findall(paras[i])) % 2 == 1:
+                    if fences(paras[i]) % 2 == 1:
                         fenced = not fenced
-                add_block(add, re.sub(r"[#:：\[\]=]", "", head).strip(), block)
+                # A block that opens on a record's own label ("[已选个人资料开始]" under "参考资料：") is that record.
+                inner = block[0].lstrip().split("\n")[0]
+                label = inner if heading.match(inner) and is_record(inner) else head
+                add_block(add, name_of(label), block, kind_of(label))
             else:
-                label = next((m for m in (inline.match(l) for l in lines) if m and named.search(m.group(1))), None)
-                if label:
-                    add(label.group(1).strip(), paras[i])
+                found = next((m for m in (inline.match(l) for l in lines) if m and named.search(m.group(1))), None)
+                if found:
+                    add(found.group(1).strip(), paras[i], kind_of(found.group(1)))
+                else:
+                    data = data_in(paras[i], paras[i - 1] if i else None)
+                    if data:
+                        add_block(add, data[0], [data[1]], "data")
             i += 1
 
     def passages_in(sent):
@@ -649,10 +720,10 @@ def _install():
             return None
         out = []
 
-        def add(name, text):
+        def add(name, text, kind=None):
             t = str(text or "").strip()[:passage_text]
             if len(t) >= 20 and len(out) < passages_max and all(o["text"] != t for o in out):
-                out.append({"name": str(name or "")[:80], "text": t})
+                out.append({"name": str(name or "")[:80], "text": t, **({"kind": kind} if kind else {})})
 
         def scan(content):
             if isinstance(content, str):
@@ -791,15 +862,18 @@ def _install():
             return host.startswith("bedrock")
         return bool(model_host.search(host)) or (bool(model_path.search(path)) and bool(re.search(r"/v\d|/api/", path)))
 
-    def text(body):
+    # `most`: what is read of a body. The door's row keeps 64 KB; a model call's prompt is read whole
+    # up to the reply's bound, since a prompt cut at 64 KB is not JSON and every passage, tool answer
+    # and call in it was lost (resumeforge's tool list alone pushed its prompt past the cut).
+    def text(body, most=limit):
         if body is None:
             return ""
         if isinstance(body, (bytes, bytearray)):
-            return bytes(body[:limit]).decode("utf-8", "replace")
+            return bytes(body[:most]).decode("utf-8", "replace")
         if isinstance(body, str):
-            return body[:limit]
+            return body[:most]
         try:
-            return json.dumps(body)[:limit]
+            return json.dumps(body)[:most]
         except (TypeError, ValueError):
             return ""
 
@@ -1482,7 +1556,7 @@ def _install():
 
     def sent_of(request):
         try:
-            return text(request.content)
+            return text(request.content, reply_max)
         except Exception:
             return ""
 
@@ -1622,7 +1696,7 @@ def _install():
                 if is_model_call(request.url):
                     # A streamed reply is counted as a call whose counts were not read.
                     raw = response.content.decode("utf-8", "replace") if getattr(response, "_content_consumed", False) else ""
-                    meter(request.url, text(request.body), response.status_code, response.headers.get("content-type", ""), raw, caller=caller)
+                    meter(request.url, text(request.body, reply_max), response.status_code, response.headers.get("content-type", ""), raw, caller=caller)
             except Exception:
                 pass
             return response
@@ -1645,7 +1719,7 @@ def _install():
                     dep(str_or_url, 0, type(err).__name__)
                 raise
             if is_model_call(str_or_url):
-                response._cortad = (str_or_url, text(body), turn_now(), callers_now(str_or_url))
+                response._cortad = (str_or_url, text(body, reply_max), turn_now(), callers_now(str_or_url))
             elif is_retrieval(str_or_url):
                 response._cortad_dep = (str_or_url, turn_now())
             else:
