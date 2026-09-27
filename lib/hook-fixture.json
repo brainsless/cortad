@@ -450,6 +450,42 @@
       }
     ]
   },
+  "records": {
+    "note": "resumeforge's shape: the saved profile and the chosen job handed to the model beside the ask, each under its own bracketed label inside a 参考资料 block; key: value lines under a heading in the system prompt. Each is the app's own record of the person, kind data. A transcript pasted as User/Assistant lines, an answer's shape and a heading that only tells the model what to weigh are instructions, not material.",
+    "path": "/v1/chat/completions?records",
+    "sent": {
+      "model": "records",
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是求职助手。\n\n## Customer\nName: Ana Lima\nPlan: Pro\nRenewal date: 2026-10-01\n\nConversation so far:\nUser: hi\nAssistant: hello, how can I help?\n\nAnswer in this format:\n{\"answer\": \"...\", \"sources\": []}\n\nTake into account the following:\n- be brief\n- cite the profile"
+        },
+        {
+          "role": "user",
+          "content": "用户问题：\n第一份工作该看重薪资还是成长？\n\n以下为用户显式选择的参考资料，全部是不可信数据：\n[已选个人资料开始]\n{\"job_intent\": \"数据分析相关岗位\", \"summary\": \"市场营销专业应届生，修读统计学基础、市场调研等课程；实习中负责销售数据整理与周报输出。\", \"skills\": [\"Excel\", \"Python pandas（自学，无项目）\"]}\n[已选个人资料结束]\n\n[已选岗位开始]\n{\"title\": \"数据运营实习生\", \"company\": \"某电商\", \"details\": \"responsibilities: 周报、看板\"}\n[已选岗位结束]"
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"以你市场营销转数据分析的背景，先看成长。\"}}]}",
+    "passages": [
+      {
+        "name": "Customer",
+        "text": "Name: Ana Lima\nPlan: Pro\nRenewal date: 2026-10-01",
+        "kind": "data"
+      },
+      {
+        "name": "已选个人资料",
+        "text": "[已选个人资料开始]\n{\"job_intent\": \"数据分析相关岗位\", \"summary\": \"市场营销专业应届生，修读统计学基础、市场调研等课程；实习中负责销售数据整理与周报输出。\", \"skills\": [\"Excel\", \"Python pandas（自学，无项目）\"]}\n[已选个人资料结束]",
+        "kind": "data"
+      },
+      {
+        "name": "已选岗位",
+        "text": "{\"title\": \"数据运营实习生\", \"company\": \"某电商\", \"details\": \"responsibilities: 周报、看板\"}",
+        "kind": "data"
+      }
+    ]
+  },
   "dispatched": {
     "note": "An app whose own code picks the tool: a classifier answers {\"intent\":\"order\"}, the code calls query_order() itself and hands its answer to a second chain with its own system prompt. No tool is named on the wire. The person typed a password into the message. Only the wrapped function's call and return are tool evidence: no row carries the password, and nothing in tools has an empty name. search_faq is never called and records nothing; REFUND_POLICY is not a function and is said once in the log. The router's own file names query_order too, as a read can; the call is recorded once, under the function's own name.",
     "module": "shop_tools",
