@@ -33,6 +33,7 @@ import { listingUrl } from "./lib/listing.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
 import { openSwitches } from "./lib/switches.mjs";
 import { keepData } from "./lib/data.mjs";
+import { markRun, writesDirOf } from "./lib/writes.mjs";
 
 const argv = process.argv.slice(2);
 // The two faces a coding agent uses after the first connect (lib/cli.mjs): the MCP server the
@@ -768,6 +769,9 @@ function dataOnce(started) {
 
 async function start(waitMs) {
   const { cmd, lifted } = await freed(launched.cmd, launched.lifted ?? {});
+  // The record of what the app writes opens with the app: the first run starts itself on the
+  // server's side, with no verb here to mark it, and a restart mid-run keeps the record open.
+  try { markRun(writesDirOf(homeOf(projectOf(root))), "session", { keep: true }); } catch { /* the app's writes go unrecorded */ }
   child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...dataOnce(true).env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
   const mine = child;
   let seen = "";
