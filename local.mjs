@@ -370,8 +370,8 @@ async function verb(job) {
       // method", which is what your chat looked like from the outside. So the chain is walked the
       // way a browser walks it, one GET with redirects followed, and the request is sent again with
       // the session your app just handed out. The cookie is kept here and never leaves this machine.
-      const url = `http://127.0.0.1:${port}${path}`;
-      const yours = (to) => { try { const u = new URL(to, url); return u.hostname === "127.0.0.1" && u.port === String(port) ? u.href : null; } catch { return null; } };
+      const url = hostUrl(port, path);
+      const yours = (to) => { try { const u = new URL(to, url); return ["127.0.0.1", "::1", "[::1]", "localhost"].includes(u.hostname) && u.port === String(port) ? u.href : null; } catch { return null; } };
       let jar = "";
       const sent = (at, over = {}) => fetch(at, {
         ...init, ...over,
@@ -448,10 +448,26 @@ async function verb(job) {
 const exec = promisify(execFile);
 
 // ---- start or attach to the app
+// The address the app answers on: 127.0.0.1, or [::1] when it bound IPv6 localhost alone, which a
+// Vite dev server does and which a probe of 127.0.0.1 waited three minutes on.
+let appHost = "127.0.0.1";
+const hostUrl = (port, path = "/") => `http://${appHost === "::1" ? "[::1]" : appHost}:${port}${path}`;
 const answers = async (port) => {
-  try { await fetch(`http://127.0.0.1:${port}/`, { method: "GET", signal: AbortSignal.timeout(2500), redirect: "manual" }); return true; }
-  catch { return false; }
+  for (const host of [appHost, appHost === "::1" ? "127.0.0.1" : "::1"]) {
+    try {
+      await fetch(`http://${host === "::1" ? "[::1]" : host}:${port}/`, { method: "GET", signal: AbortSignal.timeout(2500), redirect: "manual" });
+      appHost = host;
+      return true;
+    } catch { /* the other family next */ }
+  }
+  return false;
 };
+// The values an env file beside the app declares, exported into its process the way `source .env`
+// would: an app with no dotenv loader of its own crashed every route without them. Example files
+// hold placeholders and are left out; the shell's own environment and the lifted limits win.
+function envExports(envFiles) {
+  return envValues(envFiles.filter((f) => !/\.(example|sample)$/.test(f)));
+}
 const onPath = (bin) => (process.env.PATH ?? "").split(":").some((dir) => dir && existsSync(join(dir, bin)));
 // Where their app lives inside this repository, and how it starts. Worked out in lib/start.mjs.
 let appDir = root;
@@ -707,7 +723,7 @@ async function freed(cmd, lifted) {
 
 async function start(waitMs) {
   const { cmd, lifted } = await freed(launched.cmd, launched.lifted ?? {});
-  child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...process.env, ...lifted, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+  child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
   const mine = child;
   let seen = "";
   const onData = (d) => { const s = d.toString(); appendFileSync(bootLog, s); seen = (seen + s).slice(-20_000); lastSaid = seen; lastOutputAt = Date.now(); if (verbose) process.stdout.write(s); };
