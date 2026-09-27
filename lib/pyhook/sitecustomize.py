@@ -579,13 +579,43 @@ def _install():
     # person's latest message on, and Anthropic document and search_result blocks. The app's own
     # instructions are not passages: only what sits under such a label is.
     passage_text, passages_max = 3000, 6
-    material = re.compile(r"\b(?:retriev\w*|context|knowledge|documents?|sources?|search[ _-]?results?|references?|passages?|excerpts?|snippets?|chunks?|background|faq)\b|检索|知识|参考资料|资料|上下文|文档|背景", re.I)
+    material = re.compile(r"\b(?:retriev\w*|context|knowledge|documents?|sources?|search[ _-]?results?|references?|passages?|excerpts?|snippets?|chunks?|background|faq|relevant)\b|检索|知识|参考资料|资料|上下文|文档|背景|相关", re.I)
     heading = re.compile(r"^\s*(?:#{1,6}\s+[^\n]{1,80}|[^\n]{1,80}[:：]\s*(?:\([^\n)]*\))?|\[[^\n\]]{1,80}\]|={2,}\s*[^\n]{1,80}?\s*={2,})\s*$")
     # An inline label is a noun phrase that ends in the material word ("context:", "background:",
     # "retrieved passages:"): "4. Knowledge:" in a numbered instruction and a JSON key are not.
     inline = re.compile(r"^\s*(?:[-*]\s+)?([A-Za-z\u4e00-\u9fff][A-Za-z\u4e00-\u9fff '’_-]{0,29})[:：]\s*\S")
     named = re.compile(r"(?:" + material.pattern + r")\s*$", re.I)
     tagged = re.compile(r"<([A-Za-z][\w-]*)[^>]*>([\s\S]*?)</\1>")
+
+    # A label's block runs on to the next heading of its own kind: "资料：" over retrieved chunks
+    # that open on markdown headings holds every chunk, where stopping at its first paragraph kept
+    # one chunk of five and the reader called the knowledge base's own 1% fee made up. A markdown
+    # label holds deeper headings. A closing paragraph that opens on a label of its own ("问题：...",
+    # "Question: ...") is the prompt's ask, not material. A long block is several passages, cut
+    # between its paragraphs.
+    markdown = re.compile(r"^\s*(#{1,6})\s")
+
+    def ends_block(label, line):
+        if not heading.match(line):
+            return False
+        outer, inner = markdown.match(label), markdown.match(line)
+        return not inner or bool(outer and len(inner.group(1)) <= len(outer.group(1)))
+
+    def asks(para):
+        m = inline.match(para.split("\n")[0])
+        return bool(m and not named.search(m.group(1)))
+
+    # A heading inside a fenced block is the material's own text: a README chunk's "## Features".
+    fence = re.compile(r"^\s*(?:```|~~~)", re.M)
+
+    def add_block(add, name, paras):
+        text = ""
+        for p in paras:
+            if text and len(text) + len(p) + 2 > passage_text:
+                add(name, text)
+                text = ""
+            text += ("\n\n" if text else "") + p
+        add(name, text)
 
     def labelled(text, add):
         def lift(m):
@@ -599,13 +629,14 @@ def _install():
             lines = paras[i].split("\n")
             head = lines[0]
             if heading.match(head) and material.search(head):
-                body = "\n".join(lines[1:])
-                # A heading alone on its paragraph labels what follows, up to the next heading.
-                if not body.strip():
-                    while i + 1 < len(paras) and len(body) < passage_text and not heading.match(paras[i + 1].split("\n")[0]):
-                        i += 1
-                        body += ("\n\n" if body else "") + paras[i]
-                add(re.sub(r"[#:：\[\]=]", "", head).strip(), body)
+                block = ["\n".join(lines[1:])]
+                fenced = len(fence.findall(block[0])) % 2 == 1
+                while i + 1 < len(paras) and (fenced or (not ends_block(head, paras[i + 1].split("\n")[0]) and not (i + 2 == len(paras) and asks(paras[i + 1])))):
+                    i += 1
+                    block.append(paras[i])
+                    if len(fence.findall(paras[i])) % 2 == 1:
+                        fenced = not fenced
+                add_block(add, re.sub(r"[#:：\[\]=]", "", head).strip(), block)
             else:
                 label = next((m for m in (inline.match(l) for l in lines) if m and named.search(m.group(1))), None)
                 if label:
@@ -855,7 +886,76 @@ def _install():
         except Exception:
             return ""
 
-    def meter(url, sent, status, kind, raw, turn=None):
+    # Which of the app's own lines made a model call, nearest first: the run names the code path that
+    # ran by it, where the read could only name the door. Its frames on this stack outside installed
+    # packages, then, when the call runs in a task another task awaits (LangChain runs each step of a
+    # chain as its own task), the awaiting task's. Relative to the folder the app was started in.
+    root = os.getcwd().replace(os.sep, "/").rstrip("/") + "/"
+    installed = re.compile(r"/(?:site-packages|dist-packages|\.venv|venv|__pypackages__)/|/lib/python\d")
+
+    def ours(frame, out):
+        f = frame.f_code.co_filename.replace(os.sep, "/")
+        if f.startswith(root) and not installed.search(f[len(root) - 1:]):
+            at = "%s:%d" % (f[len(root):], frame.f_lineno)
+            if at not in out:
+                out.append(at)
+        return len(out) >= 3
+
+    # The task that waits on this one: its wake-up is among this one's callbacks, directly, or behind
+    # the future an asyncio.gather callback closes over.
+    def awaiting(fut, depth=0):
+        for cb in getattr(fut, "_callbacks", None) or ():
+            fn = cb[0] if isinstance(cb, tuple) else cb
+            owner = getattr(fn, "__self__", None)
+            if owner is not None and owner is not fut and hasattr(owner, "get_coro"):
+                return owner
+            for cell in (getattr(fn, "__closure__", None) or ()) if depth < 2 else ():
+                try:
+                    inner = cell.cell_contents
+                except ValueError:
+                    continue
+                found = awaiting(inner, depth + 1) if inner is not fut and hasattr(inner, "_callbacks") else None
+                if found is not None:
+                    return found
+        return None
+
+    # An embedding call answers nobody, so where it was made names no path a reply came down.
+    embedding = re.compile(r"/embeddings$", re.I)
+
+    def callers_now(url):
+        if embedding.search(urlsplit(str(url)).path or ""):
+            return None
+        out = []
+        try:
+            # Below the event loop's own frames is whatever started the loop, not this call's path.
+            frame = sys._getframe(1)
+            while frame is not None and not frame.f_code.co_filename.replace(os.sep, "/").endswith("/asyncio/events.py"):
+                if ours(frame, out):
+                    return out
+                frame = frame.f_back
+            aio = sys.modules.get("asyncio")
+            try:
+                task = aio.current_task() if aio else None
+            except RuntimeError:
+                task = None
+            for _ in range(8):
+                task = awaiting(task) if task is not None else None
+                if task is None:
+                    break
+                chain, coro = [], task.get_coro()
+                while coro is not None and len(chain) < 64:
+                    f = getattr(coro, "cr_frame", None) or getattr(coro, "gi_frame", None) or getattr(coro, "ag_frame", None)
+                    if f is not None:
+                        chain.append(f)
+                    coro = getattr(coro, "cr_await", None) or getattr(coro, "gi_yieldfrom", None) or getattr(coro, "ag_await", None)
+                for f in reversed(chain):
+                    if ours(f, out):
+                        return out
+        except Exception:
+            pass
+        return out or None
+
+    def meter(url, sent, status, kind, raw, turn=None, caller=None):
         try:
             tokens, model, events = read_reply(kind, (raw or "")[:reply_max])
             parts = urlsplit(str(url))
@@ -878,6 +978,8 @@ def _install():
             passages = passages_in(as_text)
             if passages:
                 row["passages"] = passages
+            if caller:
+                row["caller"] = caller
             write({"call": row})
         except Exception:
             pass
@@ -1425,7 +1527,7 @@ def _install():
                 finally:
                     self.finish()
 
-        def watch(request, response, sent):
+        def watch(request, response, sent, caller):
             model = is_model_call(request.url)
             if not model and not is_retrieval(request.url):
                 dep(request.url, response.status_code)
@@ -1433,13 +1535,13 @@ def _install():
             kind = response.headers.get("content-type", "")
             if getattr(response, "_content", None) is not None:
                 if model:
-                    meter(request.url, sent, response.status_code, kind, response.content.decode("utf-8", "replace"))
+                    meter(request.url, sent, response.status_code, kind, response.content.decode("utf-8", "replace"), caller=caller)
                 else:
                     dep(request.url, response.status_code, passages=passages_from(response.content.decode("utf-8", "replace")))
                 return response
             turn = turn_now()
             if model:
-                done = lambda raw: meter(request.url, sent, response.status_code, kind, unpacked(raw, response.headers.get("content-encoding")), turn)
+                done = lambda raw: meter(request.url, sent, response.status_code, kind, unpacked(raw, response.headers.get("content-encoding")), turn, caller)
             else:
                 done = lambda raw: dep(request.url, response.status_code, passages=passages_from(unpacked(raw, response.headers.get("content-encoding"))), turn=turn)
             stream = response.stream
@@ -1448,7 +1550,7 @@ def _install():
             elif hasattr(stream, "__iter__"):
                 response.stream = SyncKept(stream, done)
             elif model:
-                meter(request.url, sent, response.status_code, kind, "")
+                meter(request.url, sent, response.status_code, kind, "", caller=caller)
             else:
                 dep(request.url, response.status_code)
             return response
@@ -1458,6 +1560,7 @@ def _install():
             if cls is module.Client:
                 def sync_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
+                    caller = callers_now(request.url) if is_model_call(request.url) else None
                     try:
                         note(request.url, sent)
                     except Exception:
@@ -1466,18 +1569,19 @@ def _install():
                         response = _send(self, request, *a, **k)
                     except Exception as err:
                         if is_model_call(request.url):
-                            meter(request.url, sent, 0, "", "")
+                            meter(request.url, sent, 0, "", "", caller=caller)
                         else:
                             dep(request.url, 0, type(err).__name__)
                         raise
                     try:
-                        return watch(request, response, sent)
+                        return watch(request, response, sent, caller)
                     except Exception:
                         return response
                 cls.send = sync_send
             else:
                 async def async_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
+                    caller = callers_now(request.url) if is_model_call(request.url) else None
                     try:
                         note(request.url, sent)
                     except Exception:
@@ -1486,12 +1590,12 @@ def _install():
                         response = await _send(self, request, *a, **k)
                     except Exception as err:
                         if is_model_call(request.url):
-                            meter(request.url, sent, 0, "", "")
+                            meter(request.url, sent, 0, "", "", caller=caller)
                         else:
                             dep(request.url, 0, type(err).__name__)
                         raise
                     try:
-                        return watch(request, response, sent)
+                        return watch(request, response, sent, caller)
                     except Exception:
                         return response
                 cls.send = async_send
@@ -1500,6 +1604,7 @@ def _install():
         send = module.Session.send
 
         def sent(self, request, *a, **k):
+            caller = callers_now(request.url) if is_model_call(request.url) else None
             try:
                 note(request.url, request.body)
             except Exception:
@@ -1517,7 +1622,7 @@ def _install():
                 if is_model_call(request.url):
                     # A streamed reply is counted as a call whose counts were not read.
                     raw = response.content.decode("utf-8", "replace") if getattr(response, "_content_consumed", False) else ""
-                    meter(request.url, text(request.body), response.status_code, response.headers.get("content-type", ""), raw)
+                    meter(request.url, text(request.body), response.status_code, response.headers.get("content-type", ""), raw, caller=caller)
             except Exception:
                 pass
             return response
@@ -1540,7 +1645,7 @@ def _install():
                     dep(str_or_url, 0, type(err).__name__)
                 raise
             if is_model_call(str_or_url):
-                response._cortad = (str_or_url, text(body), turn_now())
+                response._cortad = (str_or_url, text(body), turn_now(), callers_now(str_or_url))
             elif is_retrieval(str_or_url):
                 response._cortad_dep = (str_or_url, turn_now())
             else:
@@ -1559,7 +1664,7 @@ def _install():
             call = getattr(self, "_cortad", None)
             if call:
                 self._cortad = None
-                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), (raw or b"").decode("utf-8", "replace"), call[2])
+                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), (raw or b"").decode("utf-8", "replace"), call[2], call[3])
             return raw
 
         def release_kept(self, *a, **k):
@@ -1570,7 +1675,7 @@ def _install():
             call = getattr(self, "_cortad", None)
             if call:
                 self._cortad = None
-                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), "", call[2])
+                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), "", call[2], call[3])
             return release(self, *a, **k)
 
         module.ClientSession._request = requested
