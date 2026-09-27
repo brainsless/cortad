@@ -53,7 +53,9 @@ Take the person through them worst first, each with its file and line. A long li
 2. `verify <findingId>`. It answers within a second, and `run_status` follows it. Cortad starts the app again itself before the replay, so the saved edit is what plays.
 3. Read the move on the `Visible trials:` and `Held-out trials:` lines:
    - `improved` without `inside the noise`, with the held-out line improved too or `no pair`: the behavior moved. The change stays.
-   - `inside the noise`, `no change` or `unsettled`: the trials cannot tell the change from chance. The file goes back to how it was.
+   - `no change` or `regressed`: the file goes back to how it was.
+   - `inside the noise` or `unsettled`: the trials cannot tell yet, which is not a verdict against the change. `verify` again to add readings; a change the app's own tests support may stay, said as not yet verified by Cortad.
+   - A verify that played no trial says so and compares nothing; the file stays as it was left.
    - An `Overfit:` line: the visible trials moved and the held-out trials stayed where they were, so the change fits the trials it could see. The file goes back, and the next change aims at the behavior the question asks about.
    - `regressed`: the file goes back.
 4. Then the next finding.
