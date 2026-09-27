@@ -532,7 +532,9 @@ async function ask(question) {
 let child = null;
 async function startApp() {
   const wanted = Number(flag("--port"));
-  if (wanted) {
+  // "--port 8106 --start ..." is "start it, it will answer on 8106", not "it is already on 8106":
+  // read as the latter it said nothing was answering and never ran the command it was given.
+  if (wanted && !flag("--start")) {
     if (!(await answers(wanted))) return { port: null, said: "", why: `nothing is answering on port ${wanted}, so there is nothing to ask.`, noStart: true };
     const took = await takeOver(wanted);
     if (took) return took;
@@ -735,7 +737,10 @@ async function start(waitMs) {
   const started = Date.now();
   while (Date.now() - started < waitMs) {
     const tail = () => seen.replace(/\x1b\[[0-9;]*m/g, "").split("\n").filter(Boolean).slice(-25).join("\n");
-    if (exited !== null) return { port: null, exited, tail: tail() };
+    // The port was taken: the app says so and exits at once, so this is read before the exit code,
+    // or a bed whose .env named a port another round still held printed "your app stopped" three times.
+    const taken = /EADDRINUSE|address already in use/i.test(seen);
+    if (exited !== null && !taken) return { port: null, exited, tail: tail() };
     // nodemon and its kind outlive the app they watch: the app is gone, the process is not, and
     // the wait ran its whole three minutes on one app with the reason sitting in the output.
     // Also: the port is taken, under a watcher that does not exit when its app cannot listen. The app
@@ -904,6 +909,7 @@ await exec("tar", ["-czf", archive, "-C", root, "-T", list]);
 const bytes = readFileSync(archive);
 const PART = 1_500_000;
 let resumed = false;
+let moved = false;
 const parts = Math.max(1, Math.ceil(bytes.length / PART));
 for (let off = 0; off < bytes.length; off += PART) {
   const last = off + PART >= bytes.length;
@@ -915,12 +921,13 @@ for (let off = 0; off < bytes.length; off += PART) {
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
   if (last) {
     resumed = put.data?.resumed === true;
+    moved = put.data?.moved === true;
     if (typeof put.data?.machineKey === "string" && put.data.machineKey) writeToken(project, put.data.machineKey);
     writeDigest(project, treeDigest);
   }
 }
 // Unchanged code has already been read: coming back says so instead of claiming a second read.
-stepDone(resumed ? "connected · nothing changed since last time" : "connected");
+stepDone(moved ? "connected · your change is in; the read from before stands" : resumed ? "connected · nothing changed since last time" : "connected");
 // The coding agents on this machine learn about Cortad now, once: an MCP entry and a skill in each
 // one's own home folder. A run started by an agent later comes back through lib/cli.mjs.
 if (!viaToken) {
