@@ -105,11 +105,12 @@ Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
-Finished:
+Finished. Tell the person what was measured before the score, and what the rest waits on:
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 51 of 51 trials played.
-Score 71 of 100, interval 64 to 78.
+112 of 140 checks measured; score 71 of 100 on those 112, interval 64 to 78.
+28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
 3 findings.
 1,204 readings of 112 questions.
 For the person: the report is at https://cortad.com/lab
@@ -172,7 +173,8 @@ Worst first, grouped by the line the rule lives at. A list longer than one page 
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: 3 findings.
-Score 71 of 100, interval 64 to 78.
+112 of 140 checks measured; score 71 of 100 on those 112, interval 64 to 78.
+28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
 1,204 readings of 112 questions: 1,150 decided, 54 unclear.
 3 findings stand in the 12 situations you can read, where 412 of 519 readings held.
 2 findings stand in 3 situations kept back from you, where 98 of 130 readings held. A fix is graded on those too.
