@@ -155,6 +155,17 @@ For the person: the report is at https://cortad.com/lab
 next: findings
 ```
 
+A verify with no pair: the two runs read the finding's question on no common trial, so there is no move to print, and the line says why. It is not a verdict on the change.
+
+```
+Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 1 of 1 trial played.
+Verify of finding:2 at backend/tools/refunds.py.
+Held-out trials: no pair for this question.
+Verification unavailable: the replay took a different turn at reply 2, and the question was not asked on the replay because its condition did not hold (the customer has reached this step of the journey: Agent states amount, asks consent). This is not a verdict on the change either way: the two runs share no reading of this question to compare.
+For the person: the report is at https://cortad.com/lab
+next: findings
+```
+
 ## findings
 
 Worst first, grouped by the line the rule lives at. A list longer than one page ends with `page 1 of 3, call findings with page 2`.
