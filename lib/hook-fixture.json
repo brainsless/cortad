@@ -1,0 +1,237 @@
+{
+  "note": "One turn of a shop assistant as three SDK styles see it, shared by the Node and Python hook tests: what each app sends, and what each provider answers.",
+  "turn": "case_2:1",
+  "chat": {
+    "path": "/v1/chat/completions",
+    "sent": {
+      "model": "chat-stream",
+      "stream": true,
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a shop assistant.\n\nRETRIEVED KNOWLEDGE (cite by id only):\n- faq-7: Refunds take 3 to 5 working days once the parcel is back.\n\nRules:\nNever invent an order number."
+        },
+        {
+          "role": "user",
+          "content": "Where was my last parcel?"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_0",
+              "type": "function",
+              "function": {
+                "name": "list_orders",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_0",
+          "content": "an earlier turn's answer, not this one's"
+        },
+        {
+          "role": "assistant",
+          "content": "It arrived on Monday."
+        },
+        {
+          "role": "user",
+          "content": "Where is YQ1?"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Let me look."
+            }
+          ],
+          "tool_calls": [
+            {
+              "id": "call_9",
+              "type": "function",
+              "function": {
+                "name": "list_orders",
+                "arguments": "{\"limit\":1}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_9",
+          "content": "[{\"id\":\"YQ1\",\"status\":\"shipped\"}]"
+        }
+      ]
+    },
+    "type": "text/event-stream",
+    "reply": "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"query_order\",\"arguments\":\"\"}}]}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"order_id\\\":\\\"YQ1\\\",\"}}]}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"apiKey\\\":\\\"abc123\\\",\\\"note\\\":\\\"sk-livekey123456\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
+    "called": [
+      {
+        "name": "list_orders",
+        "arguments": "{\"limit\":1}"
+      },
+      {
+        "name": "query_order",
+        "arguments": "{\"order_id\":\"YQ1\",\"apiKey\":\"[secret]\",\"note\":\"[secret]\"}"
+      }
+    ],
+    "passages": [
+      {
+        "name": "RETRIEVED KNOWLEDGE (cite by id only)",
+        "text": "- faq-7: Refunds take 3 to 5 working days once the parcel is back."
+      }
+    ],
+    "tools": [
+      {
+        "name": "list_orders",
+        "text": "[{\"id\":\"YQ1\",\"status\":\"shipped\"}]"
+      }
+    ]
+  },
+  "chatJson": {
+    "path": "/v1/chat/completions?json",
+    "sent": {
+      "model": "chat-json",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Cancel YQ2 please."
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": null, \"tool_calls\": [{\"id\": \"call_5\", \"type\": \"function\", \"function\": {\"name\": \"cancel_order\", \"arguments\": \"{\\\"order_id\\\":\\\"YQ2\\\",\\\"password\\\":\\\"hunter2\\\"}\"}}]}}]}",
+    "called": [
+      {
+        "name": "cancel_order",
+        "arguments": "{\"order_id\":\"YQ2\",\"password\":\"[secret]\"}"
+      }
+    ]
+  },
+  "responses": {
+    "path": "/v1/responses",
+    "sent": {
+      "model": "responses-json",
+      "instructions": "Answer from the documents.\n<documents>Shipping is free over 99 yuan for every member.</documents>",
+      "input": [
+        {
+          "role": "user",
+          "content": "Can I get a refund?"
+        },
+        {
+          "type": "function_call",
+          "call_id": "fc_0",
+          "name": "list_orders",
+          "arguments": "{}"
+        },
+        {
+          "type": "function_call_output",
+          "call_id": "fc_0",
+          "output": "[{\"id\":\"YQ1\"}]"
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"output\":[{\"type\":\"function_call\",\"call_id\":\"fc_1\",\"name\":\"search_faq\",\"arguments\":\"{\\\"q\\\":\\\"refund\\\"}\"}]}",
+    "called": [
+      {
+        "name": "list_orders",
+        "arguments": "{}"
+      },
+      {
+        "name": "search_faq",
+        "arguments": "{\"q\":\"refund\"}"
+      }
+    ],
+    "tools": [
+      {
+        "name": "list_orders",
+        "text": "[{\"id\":\"YQ1\"}]"
+      }
+    ],
+    "passages": [
+      {
+        "name": "documents",
+        "text": "Shipping is free over 99 yuan for every member."
+      }
+    ]
+  },
+  "responsesStream": {
+    "path": "/v1/responses?stream",
+    "sent": {
+      "model": "responses-stream",
+      "stream": true,
+      "input": "Refund YQ3."
+    },
+    "type": "text/event-stream",
+    "reply": "event: response.output_item.added\ndata: {\"type\": \"response.output_item.added\", \"output_index\": 0, \"item\": {\"type\": \"function_call\", \"call_id\": \"fc_7\", \"name\": \"apply_refund\", \"arguments\": \"\"}}\n\nevent: response.function_call_arguments.delta\ndata: {\"type\": \"response.function_call_arguments.delta\", \"output_index\": 0, \"delta\": \"{\\\"order_id\\\":\"}\n\nevent: response.output_item.done\ndata: {\"type\": \"response.output_item.done\", \"output_index\": 0, \"item\": {\"type\": \"function_call\", \"call_id\": \"fc_7\", \"name\": \"apply_refund\", \"arguments\": \"{\\\"order_id\\\":\\\"YQ3\\\"}\"}}\n\nevent: response.completed\ndata: {\"type\": \"response.completed\", \"response\": {\"output\": [{\"type\": \"function_call\", \"call_id\": \"fc_7\", \"name\": \"apply_refund\", \"arguments\": \"{\\\"order_id\\\":\\\"YQ3\\\"}\"}]}}\n\n",
+    "called": [
+      {
+        "name": "apply_refund",
+        "arguments": "{\"order_id\":\"YQ3\"}"
+      }
+    ]
+  },
+  "anthropic": {
+    "path": "/v1/messages",
+    "sent": {
+      "model": "anthropic-stream",
+      "stream": true,
+      "system": [
+        {
+          "type": "text",
+          "text": "Be kind."
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "track it"
+            },
+            {
+              "type": "document",
+              "title": "Policy",
+              "source": {
+                "type": "text",
+                "data": "Parcels ship within 48 hours of payment."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "type": "text/event-stream",
+    "reply": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"track_logistics\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"order_id\\\":\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"YQ1\\\"}\"}}\n\n",
+    "called": [
+      {
+        "name": "track_logistics",
+        "arguments": "{\"order_id\":\"YQ1\"}"
+      }
+    ],
+    "passages": [
+      {
+        "name": "Policy",
+        "text": "Parcels ship within 48 hours of payment."
+      }
+    ]
+  },
+  "store": {
+    "path": "/collections/faq/points/search",
+    "type": "application/json",
+    "reply": "{\"result\":[{\"id\":1,\"score\":0.9,\"payload\":{\"text\":\"Returns are accepted within seven days of delivery.\"}}]}",
+    "passages": [
+      {
+        "name": "text",
+        "text": "Returns are accepted within seven days of delivery."
+      }
+    ]
+  }
+}

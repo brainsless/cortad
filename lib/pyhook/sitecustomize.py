@@ -84,6 +84,24 @@ def _install():
                 return ""
         return ""
 
+    def items(v):
+        return [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
+
+    # Only what came after the person's latest message belongs to this turn: a thread the app
+    # resends whole carries every earlier turn's tool answers too.
+    def since(seq, is_person):
+        at = -1
+        for i, m in enumerate(seq):
+            if is_person(m):
+                at = i
+        return seq[at + 1:]
+
+    def person_said(m):
+        return m.get("role") == "user" and not any(isinstance(c, dict) and c.get("type") == "tool_result" for c in (m.get("content") if isinstance(m.get("content"), list) else []))
+
+    def person_asked(c):
+        return c.get("role") == "user" and not any(p.get("functionResponse") for p in items(c.get("parts")))
+
     def tools_in(sent):
         body = parsed(sent) if isinstance(sent, str) else None
         if not isinstance(body, dict):
@@ -95,37 +113,256 @@ def _install():
             if t.strip() and len(out) < tools_max and all(o["text"] != t for o in out):
                 out.append({"name": str(name or "")[:80], "text": t})
 
-        messages = body.get("messages") if isinstance(body.get("messages"), list) else []
+        messages = items(body.get("messages"))
         for m in messages:
-            if not isinstance(m, dict):
-                continue
-            for c in m.get("tool_calls") or []:
-                if isinstance(c, dict) and c.get("id") and isinstance(c.get("function"), dict):
+            for c in items(m.get("tool_calls")):
+                if c.get("id") and isinstance(c.get("function"), dict):
                     names[c["id"]] = c["function"].get("name")
-            if isinstance(m.get("content"), list):
-                for c in m["content"]:
-                    if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("id"):
-                        names[c["id"]] = c.get("name")
-        for m in messages:
-            if not isinstance(m, dict):
-                continue
+            for c in items(m.get("content")):
+                if c.get("type") == "tool_use" and c.get("id"):
+                    names[c["id"]] = c.get("name")
+        for m in since(messages, person_said):
             if m.get("role") in ("tool", "function"):
                 add(m.get("name") or names.get(m.get("tool_call_id")), m.get("content"))
-            if isinstance(m.get("content"), list):
-                for c in m["content"]:
-                    if isinstance(c, dict) and c.get("type") == "tool_result":
-                        add(names.get(c.get("tool_use_id")), c.get("content"))
-        items = body.get("input") if isinstance(body.get("input"), list) else []
-        for it in items:
-            if isinstance(it, dict) and it.get("type") == "function_call" and it.get("call_id"):
+            for c in items(m.get("content")):
+                if c.get("type") == "tool_result":
+                    add(names.get(c.get("tool_use_id")), c.get("content"))
+        inputs = items(body.get("input"))
+        for it in inputs:
+            if it.get("type") == "function_call" and it.get("call_id"):
                 names[it["call_id"]] = it.get("name")
-        for it in items:
-            if isinstance(it, dict) and it.get("type") == "function_call_output":
+        for it in since(inputs, lambda x: x.get("role") == "user"):
+            if it.get("type") == "function_call_output":
                 add(names.get(it.get("call_id")), it.get("output"))
-        for c in body.get("contents") if isinstance(body.get("contents"), list) else []:
-            for p in c.get("parts") if isinstance(c, dict) and isinstance(c.get("parts"), list) else []:
-                if isinstance(p, dict) and isinstance(p.get("functionResponse"), dict):
+        for c in since(items(body.get("contents")), person_asked):
+            for p in items(c.get("parts")):
+                if isinstance(p.get("functionResponse"), dict):
                     add(p["functionResponse"].get("name"), p["functionResponse"].get("response"))
+        return out or None
+
+    # What the model asked the app to run: chat tool_calls (a stream's pieces joined by position), a
+    # legacy function_call, a responses function_call item, an Anthropic or Bedrock tool use, a
+    # Gemini functionCall. Read off the model's reply, and off this turn's earlier calls as the
+    # prompt resends them. Names and arguments only: every value clipped, a secret never written.
+    calls_max, value_max, args_max = 12, 200, 1200
+    secret_key = re.compile(r"(?:^|_)(?:pass(?:word|phrase)?|secret|token|api_?key|authorization|cookie|session(?:_id)?|credentials?|private_key)$")
+    secret_value = re.compile(r"^(?:Bearer\s|Basic\s|sk-|pk_|rk_|ghp_|gho_|github_pat_|xox[abpr]-|AKIA|AIza|eyJ[\w-]{10,}\.)")
+
+    def clipped(v, depth=0):
+        if isinstance(v, str):
+            return "[secret]" if secret_value.match(v) else (v[:value_max] + "…" if len(v) > value_max else v)
+        if isinstance(v, list):
+            return [] if depth > 4 else [clipped(x, depth + 1) for x in v[:20]]
+        if isinstance(v, dict):
+            if depth > 4:
+                return {}
+            return {k: ("[secret]" if secret_key.search(re.sub(r"([a-z])([A-Z])", r"\1_\2", str(k)).lower()) else clipped(x, depth + 1)) for k, x in list(v.items())[:40]}
+        return v
+
+    def args_text(raw):
+        v = raw
+        if isinstance(raw, str):
+            v = parsed(raw) if raw.strip() else {}
+            if v is None:
+                v = raw
+        return json.dumps(clipped({} if v is None else v), ensure_ascii=False, separators=(",", ":"))[:args_max]
+
+    def calls_of(events):
+        whole, parts, n = {}, {}, [0]
+
+        def put(key, name, args):
+            if name:
+                if not key:
+                    n[0] += 1
+                    key = "w%d" % n[0]
+                whole[key] = (name, args)
+
+        def piece(key, name, args):
+            p = parts.setdefault(key, ["", ""])
+            if name and not p[0]:
+                p[0] = name
+            if isinstance(args, str):
+                p[1] += args
+
+        def blocks(content):
+            for b in items(content):
+                if b.get("type") == "tool_use":
+                    put(b.get("id"), b.get("name"), b.get("input"))
+                if isinstance(b.get("toolUse"), dict):
+                    put(b["toolUse"].get("toolUseId"), b["toolUse"].get("name"), b["toolUse"].get("input"))
+
+        for e in events:
+            if not isinstance(e, dict):
+                continue
+            for c in items(e.get("choices")):
+                m = c.get("message") if isinstance(c.get("message"), dict) else None
+                if m:
+                    for t in items(m.get("tool_calls")):
+                        f = t.get("function") if isinstance(t.get("function"), dict) else None
+                        if f:
+                            put(t.get("id"), f.get("name"), f.get("arguments"))
+                    if isinstance(m.get("function_call"), dict):
+                        put(None, m["function_call"].get("name"), m["function_call"].get("arguments"))
+                d = c.get("delta") if isinstance(c.get("delta"), dict) else None
+                if d:
+                    for t in items(d.get("tool_calls")):
+                        f = t.get("function") if isinstance(t.get("function"), dict) else {}
+                        piece("c%s.%s" % (c.get("index") or 0, t.get("index", t.get("id"))), f.get("name"), f.get("arguments"))
+                    if isinstance(d.get("function_call"), dict):
+                        piece("f%s" % (c.get("index") or 0), d["function_call"].get("name"), d["function_call"].get("arguments"))
+            resp = e.get("response") if isinstance(e.get("response"), dict) else {}
+            for it in items(e.get("output")) + items([e.get("item")]) + items(resp.get("output")):
+                if it.get("type") == "function_call":
+                    put(it.get("call_id") or it.get("id"), it.get("name"), it.get("arguments"))
+            blocks(e.get("content"))
+            if isinstance(e.get("message"), dict):
+                blocks(e["message"].get("content"))
+            if isinstance(e.get("output"), dict) and isinstance(e["output"].get("message"), dict):
+                blocks(e["output"]["message"].get("content"))
+            cb = e.get("content_block") if isinstance(e.get("content_block"), dict) else {}
+            if e.get("type") == "content_block_start" and cb.get("type") == "tool_use":
+                piece("a%s" % e.get("index"), cb.get("name"), "")
+            delta = e.get("delta") if isinstance(e.get("delta"), dict) else {}
+            if e.get("type") == "content_block_delta" and delta.get("type") == "input_json_delta":
+                piece("a%s" % e.get("index"), "", delta.get("partial_json"))
+            for c in items(e.get("candidates")):
+                for p in items((c.get("content") or {}).get("parts") if isinstance(c.get("content"), dict) else None):
+                    if isinstance(p.get("functionCall"), dict):
+                        put(None, p["functionCall"].get("name"), p["functionCall"].get("args"))
+        found = list(whole.values()) + [tuple(p) for p in parts.values()]
+        return [{"name": str(name)[:80], "arguments": args_text(args)} for name, args in found if name]
+
+    # This turn's earlier calls, as the prompt resends them after the person's latest message.
+    def called_before(body):
+        events = []
+        for m in since(items(body.get("messages")), person_said):
+            if m.get("role") == "assistant":
+                events.append({"choices": [{"message": m}], "content": m.get("content")})
+        events.append({"output": since(items(body.get("input")), lambda x: x.get("role") == "user")})
+        for c in since(items(body.get("contents")), person_asked):
+            if c.get("role") == "model":
+                events.append({"candidates": [{"content": c}]})
+        return calls_of(events)
+
+    def called_in(sent, events):
+        body = parsed(sent) if isinstance(sent, str) else None
+        out = []
+        for c in (called_before(body) if isinstance(body, dict) else []) + calls_of(events):
+            if len(out) < calls_max and not any(o["name"] == c["name"] and o["arguments"] == c["arguments"] for o in out):
+                out.append(c)
+        return out or None
+
+    # The passages the prompt carried as retrieved context: a block the app itself labels as
+    # context, documents, knowledge, sources or search results, in its system prompt or from the
+    # person's latest message on, and Anthropic document and search_result blocks. The app's own
+    # instructions are not passages: only what sits under such a label is.
+    passage_text, passages_max = 3000, 6
+    material = re.compile(r"\b(?:retriev\w*|context|knowledge|documents?|sources?|search[ _-]?results?|references?|passages?|excerpts?|snippets?|chunks?|background|faq)\b|检索|知识|参考资料|资料|上下文|文档|背景", re.I)
+    heading = re.compile(r"^\s*(?:#{1,6}\s+[^\n]{1,80}|[^\n]{1,80}[:：]\s*(?:\([^\n)]*\))?|\[[^\n\]]{1,80}\]|={2,}\s*[^\n]{1,80}?\s*={2,})\s*$")
+    # An inline label is a noun phrase that ends in the material word ("context:", "background:",
+    # "retrieved passages:"): "4. Knowledge:" in a numbered instruction and a JSON key are not.
+    inline = re.compile(r"^\s*(?:[-*]\s+)?([A-Za-z\u4e00-\u9fff][A-Za-z\u4e00-\u9fff '’_-]{0,29})[:：]\s*\S")
+    named = re.compile(r"(?:" + material.pattern + r")\s*$", re.I)
+    tagged = re.compile(r"<([A-Za-z][\w-]*)[^>]*>([\s\S]*?)</\1>")
+
+    def labelled(text, add):
+        def lift(m):
+            if material.search(m.group(1).replace("_", " ")):
+                add(m.group(1), m.group(2))
+                return ""
+            return m.group(0)
+        paras = re.split(r"\n\s*\n", tagged.sub(lift, str(text or "")))
+        i = 0
+        while i < len(paras):
+            lines = paras[i].split("\n")
+            head = lines[0]
+            if heading.match(head) and material.search(head):
+                body = "\n".join(lines[1:])
+                # A heading alone on its paragraph labels what follows, up to the next heading.
+                if not body.strip():
+                    while i + 1 < len(paras) and len(body) < passage_text and not heading.match(paras[i + 1].split("\n")[0]):
+                        i += 1
+                        body += ("\n\n" if body else "") + paras[i]
+                add(re.sub(r"[#:：\[\]=]", "", head).strip(), body)
+            else:
+                label = next((m for m in (inline.match(l) for l in lines) if m and named.search(m.group(1))), None)
+                if label:
+                    add(label.group(1).strip(), paras[i])
+            i += 1
+
+    def passages_in(sent):
+        body = parsed(sent) if isinstance(sent, str) else None
+        if not isinstance(body, dict):
+            return None
+        out = []
+
+        def add(name, text):
+            t = str(text or "").strip()[:passage_text]
+            if len(t) >= 20 and len(out) < passages_max and all(o["text"] != t for o in out):
+                out.append({"name": str(name or "")[:80], "text": t})
+
+        def scan(content):
+            if isinstance(content, str):
+                return labelled(content, add)
+            for b in items(content):
+                if b.get("type") == "document":
+                    src = b.get("source") if isinstance(b.get("source"), dict) else None
+                    add(b.get("title") or "document", text_of(src.get("data") if src and src.get("data") is not None else (src or {}).get("content")) if src else text_of(b.get("content")))
+                elif b.get("type") == "search_result":
+                    add(b.get("title") or b.get("source") or "search result", text_of(b.get("content")))
+                elif isinstance(b.get("text"), str):
+                    labelled(b["text"], add)
+
+        messages = items(body.get("messages"))
+        for m in messages:
+            if m.get("role") in ("system", "developer"):
+                scan(m.get("content"))
+        last = max([i for i, m in enumerate(messages) if person_said(m)] or [0])
+        for m in messages[last:]:
+            if m.get("role") == "user":
+                scan(m.get("content"))
+        scan(body.get("system"))
+        scan(body.get("instructions"))
+        if isinstance(body.get("systemInstruction"), dict):
+            scan(body["systemInstruction"].get("parts"))
+        inputs = [{"role": "user", "content": body["input"]}] if isinstance(body.get("input"), str) else items(body.get("input"))
+        last = max([i for i, it in enumerate(inputs) if it.get("role") == "user"] or [0])
+        for it in inputs[last:]:
+            if it.get("role") in ("user", "system", "developer"):
+                scan(it.get("content"))
+        return out or None
+
+    # The passages a retrieval call answered with: a vector store, a search index or a web search,
+    # read off its reply when it is JSON. Text fields only, bounded like the rest.
+    retrieval_host = re.compile(r"pinecone\.io|qdrant|weaviate|chroma|zilliz|milvus|turbopuffer|upstash\.io|algolia|typesense|meilisearch|elastic|opensearch|vespa|tavily\.com|exa\.ai|serper\.dev|serpapi\.com|search\.brave\.com|bing\.microsoft\.com|jina\.ai", re.I)
+    retrieval_path = re.compile(r"/(?:query|search|_search|retrieve|similarity_search|rerank|hybrid)(?:/|$)|/points/(?:search|query)|/rpc/match\w*", re.I)
+    passage_key = re.compile(r"^(?:text|content|page_?content|pageContent|chunk|snippet|passage|body|document|documents|description|answer|raw_content|highlights?|excerpt)$", re.I)
+
+    def is_retrieval(url):
+        try:
+            parts = urlsplit(str(url))
+        except ValueError:
+            return False
+        return bool(retrieval_host.search(parts.hostname or "")) or bool(retrieval_path.search(parts.path or ""))
+
+    def passages_from(raw):
+        out, nodes = [], [0]
+
+        def walk(v, key, depth):
+            nodes[0] += 1
+            if len(out) >= passages_max or depth > 7 or nodes[0] > 4000:
+                return
+            if isinstance(v, str):
+                t = v.strip()[:passage_text]
+                if passage_key.match(key) and len(t) >= 20 and all(o["text"] != t for o in out):
+                    out.append({"name": key, "text": t})
+            elif isinstance(v, list):
+                for x in v:
+                    walk(x, key, depth + 1)
+            elif isinstance(v, dict):
+                for k, x in v.items():
+                    walk(x, str(k), depth + 1)
+        walk(parsed(raw) if isinstance(raw, str) else None, "", 0)
         return out or None
 
     # A framework that folds its tools' answers into the next prompt as plain text sends no tool
@@ -189,13 +426,14 @@ def _install():
 
     # Every other outbound call: the host and what it answered, never a byte of it. A search
     # provider over its limit for a whole run was invisible until this row existed.
-    def dep(url, status, code=None):
+    # A store on this machine (a local Qdrant or Chroma) is said too when it answered with passages.
+    def dep(url, status, code=None, passages=None, turn=None):
         try:
             host = (urlsplit(str(url)).hostname or "").lower()
-            if not host or host in ("localhost", "127.0.0.1", "::1"):
+            if not host or (host in ("localhost", "127.0.0.1", "::1") and not passages):
                 return
-            turn = turn_now()
-            write({"dep": {"at": int(time.time() * 1000), "host": host[:253], "status": int(status or 0), **({"code": str(code)[:40]} if code else {}), **({"turn": turn} if turn else {})}})
+            turn = turn or turn_now()
+            write({"dep": {"at": int(time.time() * 1000), "host": host[:253], "status": int(status or 0), **({"code": str(code)[:40]} if code else {}), **({"turn": turn} if turn else {}), **({"passages": passages} if passages else {})}})
         except Exception:
             pass
     def is_model_call(url):
@@ -283,7 +521,7 @@ def _install():
             if isinstance(part, dict):
                 usage.update(part)
             model = e.get("model") or msg.get("model") or resp.get("model") or e.get("modelVersion") or model
-        return tokens_of(usage or None), model
+        return tokens_of(usage or None), model, events
 
     def asked_for(url, sent):
         body = parsed(sent) if isinstance(sent, str) else None
@@ -308,7 +546,7 @@ def _install():
 
     def meter(url, sent, status, kind, raw, turn=None):
         try:
-            tokens, model = read_reply(kind, (raw or "")[:reply_max])
+            tokens, model, events = read_reply(kind, (raw or "")[:reply_max])
             parts = urlsplit(str(url))
             row = {"at": int(time.time() * 1000), "host": parts.netloc.replace(":443", ""), "model": str(asked_for(url, sent) or model or "")[:160],
                    "status": int(status or 0), "usage": tokens is not None}
@@ -323,6 +561,12 @@ def _install():
             tools = tools_in(as_text) or material_in(as_text, turn)
             if tools:
                 row["tools"] = tools
+            called = called_in(as_text, events)
+            if called:
+                row["called"] = called
+            passages = passages_in(as_text)
+            if passages:
+                row["passages"] = passages
             write({"call": row})
         except Exception:
             pass
@@ -693,21 +937,31 @@ def _install():
                     self.finish()
 
         def watch(request, response, sent):
-            if not is_model_call(request.url):
+            model = is_model_call(request.url)
+            if not model and not is_retrieval(request.url):
                 dep(request.url, response.status_code)
                 return response
             kind = response.headers.get("content-type", "")
             if getattr(response, "_content", None) is not None:
-                meter(request.url, sent, response.status_code, kind, response.content.decode("utf-8", "replace"))
+                if model:
+                    meter(request.url, sent, response.status_code, kind, response.content.decode("utf-8", "replace"))
+                else:
+                    dep(request.url, response.status_code, passages=passages_from(response.content.decode("utf-8", "replace")))
                 return response
-            done = lambda raw: meter(request.url, sent, response.status_code, kind, unpacked(raw, response.headers.get("content-encoding")))
+            turn = turn_now()
+            if model:
+                done = lambda raw: meter(request.url, sent, response.status_code, kind, unpacked(raw, response.headers.get("content-encoding")), turn)
+            else:
+                done = lambda raw: dep(request.url, response.status_code, passages=passages_from(unpacked(raw, response.headers.get("content-encoding"))), turn=turn)
             stream = response.stream
             if hasattr(stream, "__aiter__") and hasattr(stream, "aclose"):
                 response.stream = AsyncKept(stream, done)
             elif hasattr(stream, "__iter__"):
                 response.stream = SyncKept(stream, done)
-            else:
+            elif model:
                 meter(request.url, sent, response.status_code, kind, "")
+            else:
+                dep(request.url, response.status_code)
             return response
 
         for cls in (module.Client, module.AsyncClient):
@@ -769,7 +1023,8 @@ def _install():
                 raise
             try:
                 if not is_model_call(request.url):
-                    dep(request.url, response.status_code)
+                    read = is_retrieval(request.url) and not k.get("stream")
+                    dep(request.url, response.status_code, passages=passages_from(response.content.decode("utf-8", "replace")) if read else None)
                 if is_model_call(request.url):
                     # A streamed reply is counted as a call whose counts were not read.
                     raw = response.content.decode("utf-8", "replace") if getattr(response, "_content_consumed", False) else ""
@@ -797,6 +1052,8 @@ def _install():
                 raise
             if is_model_call(str_or_url):
                 response._cortad = (str_or_url, text(body), turn_now())
+            elif is_retrieval(str_or_url):
+                response._cortad_dep = (str_or_url, turn_now())
             else:
                 dep(str_or_url, response.status)
             return response
@@ -806,6 +1063,10 @@ def _install():
 
         async def read_kept(self, *a, **k):
             raw = await read(self, *a, **k)
+            store = getattr(self, "_cortad_dep", None)
+            if store:
+                self._cortad_dep = None
+                dep(store[0], self.status, passages=passages_from((raw or b"").decode("utf-8", "replace")), turn=store[1])
             call = getattr(self, "_cortad", None)
             if call:
                 self._cortad = None
@@ -813,6 +1074,10 @@ def _install():
             return raw
 
         def release_kept(self, *a, **k):
+            store = getattr(self, "_cortad_dep", None)
+            if store:
+                self._cortad_dep = None
+                dep(store[0], self.status, turn=store[1])
             call = getattr(self, "_cortad", None)
             if call:
                 self._cortad = None
