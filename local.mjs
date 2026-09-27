@@ -712,9 +712,14 @@ async function freePortAbove(port) {
   for (let next = port + 1; next < port + 30; next++) if (!lost.has(next) && !(await listenerOn(next))) return next;
   return null;
 }
+// The port a bind failure names, in the app's own words: uvicorn's "('127.0.0.1', 8105): address
+// already in use", Node's "EADDRINUSE: address already in use :::3000".
+const portInError = (said) => Number(/(\d{4,5})\)?:?\s*address already in use/i.exec(said)?.[1] ?? /(?:EADDRINUSE|address already in use)\D{0,40}?(\d{4,5})\b/i.exec(said)?.[1] ?? 0);
 async function freed(cmd, lifted) {
   const m = /(--port[= ]|-p |\bPORT=)(\d{4,5})\b/.exec(cmd);
-  const named = m ? Number(m[2]) : Number(lifted.PORT) || 0;
+  // The app's own env file names its port too: yunqiao's PORT=8105 sat in .env, and a stale copy
+  // on that port was reported as "your app stopped" instead of moved past.
+  const named = m ? Number(m[2]) : Number(lifted.PORT) || Number(envExports(envFiles).PORT) || 0;
   if (!named || (!lost.has(named) && !(await listenerOn(named)))) return { cmd, lifted };
   const port = await freePortAbove(named);
   if (!port) return { cmd, lifted };
@@ -749,7 +754,7 @@ async function start(waitMs) {
       await stopApp(mine.pid);
       // The port this start named was taken between the check and the bind: the next free one, at
       // most three times, before the failure is theirs to read.
-      const named = /(?:--port[= ]|-p |\bPORT=)(\d{4,5})\b/.exec(cmd)?.[1] ?? lifted.PORT;
+      const named = /(?:--port[= ]|-p |\bPORT=)(\d{4,5})\b/.exec(cmd)?.[1] ?? lifted.PORT ?? envExports(envFiles).PORT ?? (portInError(seen) || undefined);
       if (/EADDRINUSE|address already in use/i.test(seen) && named && lost.size < 3) { lost.add(Number(named)); return start(waitMs); }
       return { port: null, exited: 1, tail: tail() };
     }
