@@ -907,7 +907,7 @@ const keepSecret = (v) => { if (v && v.length >= 12 && !secrets.includes(v)) sec
 identities = makeIdentities({ root, work, envFiles, sourceFiles: () => files, say, keepSecret, appDir: () => appDir });
 // One message sent in their own app tells us the door for certain. The route and the body go up,
 // masked like everything else; the sign-in that message carried stays here.
-capture = makeCapture({ work, keepSecret, onDoor: (door) => {
+capture = makeCapture({ work, keepSecret, writes: join(homeOf(projectOf(root)), "writes"), root, onDoor: (door) => {
   let body = door.body;
   try { body = JSON.parse(mask(JSON.stringify(door.body))); } catch { /* sent as it is */ }
   call("POST", `/local/${box}/captured`, { ...door, body }).catch(() => {});

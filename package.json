@@ -30,6 +30,7 @@
     "lib/text.mjs",
     "lib/trace.cjs",
     "lib/verbs.mjs",
+    "lib/writes.mjs",
     "lib/words.mjs",
     "local.mjs",
     "skill/SKILL.md",

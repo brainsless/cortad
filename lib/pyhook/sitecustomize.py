@@ -8,6 +8,101 @@ import os
 
 _FILE = os.environ.get("CORTAD_TRACE_FILE")
 _RULES = os.environ.get("CORTAD_RULES_FILE")
+_WRITES = os.environ.get("CORTAD_WRITES_DIR")
+_APP_ROOT = os.environ.get("CORTAD_APP_ROOT")
+
+
+# What the app writes into its own folder while a run is on: each file copied once before its first
+# write, so the command puts every one back when the run ends (lib/writes.mjs). Trials wrote carts
+# and tickets into an app's data/*.json and the developer's own tests read them afterwards.
+def _install_writes():
+    import builtins
+    import hashlib
+    import io
+    import json
+    import re
+    import shutil
+
+    roots = {os.path.realpath(_APP_ROOT), os.path.abspath(_APP_ROOT)}
+    not_data = re.compile(r"(?:^|/)(?:node_modules|\.git|\.next|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|dist|build|coverage|\.cortad)(?:/|$)|\.(?:log|pyc|tmp|swp)$")
+    state = {"run": None, "at": -1, "seen": set()}
+    real_open = builtins.open
+    real_os_open = os.open
+    real_rename, real_replace, real_remove, real_unlink, real_truncate = os.rename, os.replace, os.remove, os.unlink, os.truncate
+
+    # The run marker names the run; a new one starts the record over, none stops it.
+    def run_now():
+        try:
+            marker = os.path.join(_WRITES, "run")
+            at = os.stat(marker).st_mtime_ns
+            if at != state["at"]:
+                state["at"] = at
+                with real_open(marker, encoding="utf-8") as f:
+                    state["run"] = f.read().strip()
+                state["seen"] = set()
+            return state["run"]
+        except Exception:
+            state["run"], state["at"], state["seen"] = None, -1, set()
+            return None
+
+    def note(target):
+        try:
+            if isinstance(target, int) or target is None:
+                return
+            path = os.fspath(target)
+            if isinstance(path, bytes):
+                path = path.decode("utf-8", "replace")
+            ab = os.path.abspath(path)
+            root = next((r for r in roots if ab.startswith(r + os.sep)), None)
+            if root is None:
+                return
+            rel = os.path.relpath(ab, root)
+            if not_data.search(rel):
+                return
+            run = run_now()
+            if not run or rel in state["seen"]:
+                return
+            state["seen"].add(rel)
+            before = None
+            if os.path.isfile(ab):
+                before = os.path.join(_WRITES, "before", hashlib.sha1(rel.encode("utf-8")).hexdigest())
+                os.makedirs(os.path.dirname(before), mode=0o700, exist_ok=True)
+                shutil.copyfile(ab, before)
+            fd = real_os_open(os.path.join(_WRITES, "written.jsonl"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"run": run, "path": rel, "before": before}) + "\n")
+        except Exception:
+            pass
+
+    def opened(file, mode="r", *a, **kw):
+        m = kw.get("mode", mode)
+        if isinstance(m, str) and any(c in m for c in "wax+"):
+            note(file)
+        return real_open(file, mode, *a, **kw)
+
+    def os_opened(path, flags, mode=0o777, *a, **kw):
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_TRUNC | os.O_CREAT):
+            note(path)
+        return real_os_open(path, flags, mode, *a, **kw)
+
+    def two(orig):
+        def moved(src, dst, *a, **kw):
+            note(src)
+            note(dst)
+            return orig(src, dst, *a, **kw)
+        return moved
+
+    def one(orig):
+        def gone(path, *a, **kw):
+            note(path)
+            return orig(path, *a, **kw)
+        return gone
+
+    builtins.open = opened
+    io.open = opened
+    os.open = os_opened
+    os.rename, os.replace = two(real_rename), two(real_replace)
+    os.remove, os.unlink, os.truncate = one(real_remove), one(real_unlink), one(real_truncate)
 
 
 def _install():
@@ -1538,3 +1633,8 @@ if _FILE:
         _install()
     except Exception:
         pass
+    if _WRITES and _APP_ROOT:
+        try:
+            _install_writes()
+        except Exception:
+            pass
