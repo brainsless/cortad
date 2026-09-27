@@ -162,7 +162,19 @@ A verify with no pair: the two runs read the finding's question on no common tri
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 1 of 1 trial played.
 Verify of finding:2 at backend/tools/refunds.py.
 Held-out trials: no pair for this question.
-On the 1 trial replayed, 0 of 3 replies were errors before and 0 of 3 now. No reading of this question pairs between the two runs. Not paired: 1 trial (t-5d10): the replay took a different turn at reply 2, and the question was not asked on the replay because its condition did not hold (the customer has reached this step of the journey: Agent states amount, asks consent). The evidence cannot tell whether to keep the fix: no reading of this question pairs between the two runs. This finding rests on 2 readings, 2 of them failures, so a verify of it cannot leave the noise: even if both failures hold on the replay, 2 readings cannot tell that apart from chance. About 4 readings from more trials that reach this situation could; a second replay of the same trials pairs the same replies again and adds nothing.
+On the 1 trial replayed, 0 of 3 replies were errors before and 0 of 3 now. No reading of this question pairs between the two runs. Not paired: 1 trial (t-5d10): the replay took a different turn at reply 2, and the question was not asked on the replay because its condition did not hold (the customer has reached this step of the journey: Agent states amount, asks consent). The evidence cannot tell whether to keep the fix: no reading of this question pairs between the two runs. This finding rests on 2 readings, 2 of them failures, so a replay of its trials alone cannot leave the noise: even if both failures hold on the replay, 2 readings cannot tell that apart from chance. A verify of it plays 10 more trials in this situation to reach about 22 readings.
+For the person: the report is at https://cortad.com/lab
+next: findings
+```
+
+A verify whose replies did not pair: the replay took other turns and the reader settled other replies, so the question's failure rate on the same trials is compared instead, with the 10 new trials the verify played in the finding's situation. Readings the reader could not settle count on neither side.
+
+```
+Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 11 of 11 trials played.
+Verify of finding:2 at backend/tools/refunds.py.
+Visible trials: failed on 2 of 2 settled readings before, 1 of 29 after, 4 unclear after, over 1 trial replayed and 10 new; improved, +97 points, interval 29 to 99.
+Held-out trials: failed on 2 of 16 settled readings before, 0 of 15 after, 1 unclear after; too few to state a rate (15 of the 22 it needs).
+On the 1 trial replayed, 0 of 3 replies were errors before and 0 of 4 now. On the 10 more trials played in this situation, 0 of 30 replies were errors. Reply for reply, nothing could be paired: the reader could not settle any reply of this question that both runs read. Across the 1 trial replayed in this situation and the 10 more this verify played there, this question failed on 2 of 2 settled readings before and 1 of 29 now; 4 readings now could not be settled either way and count on neither side. As two separate samples the failure rate fell 97 points, and the real fall is between 29 and 99 points. That is outside the 18 points that come back different on temperature alone. The held-out trials have too few readings to say (15 of the 22 each rate needs). The evidence supports keeping the fix: this question failed on 2 of 2 settled readings before and 1 of 29 now, 97 points fewer.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -218,6 +230,14 @@ Answers like `run`, with the finding named:
 
 ```
 Verify of finding:1 started: 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a.
+next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
+```
+
+When the trials it replays read the finding's question too few times for a rate, it says before they play how many new trials it adds in the finding's situation. They are verify trials from the plan.
+
+```
+Verify of finding:2 started: 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a.
+Playing 10 more trials in this situation to reach about 22 readings of this question; the run before read it 2 times here.
 next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
 ```
 

@@ -49,14 +49,15 @@ Take the person through them worst first, each with its file and line. A long li
 
 ## Fixing one finding
 
-Each finding ends with what a verify of it can show. When a verify cannot leave the noise, the person hears that before one is spent: more trials in that situation, from the next full run, is what adds readings.
+Each finding ends with what a verify of it can show. When the trials it replays read the question too few times for a rate, the verify plays up to 12 more trials in that situation itself, counted as verify trials, and the finding says how many before one is spent.
 
 1. One change, in the file and near the line the finding names.
-2. `verify <findingId>`. It answers within a second, and `run_status` follows it. Cortad starts the app again itself before the replay, so the saved edit is what plays.
+2. `verify <findingId>`. It answers within a second, and `run_status` follows it. Cortad starts the app again itself before the replay, so the saved edit is what plays. When it also plays new trials in the finding's situation, the answer says how many.
 3. Read the verify's text. It opens with what came back on the replayed trials before and now (errors, refusals, replies that got no answer), so a fix that broke the endpoint shows first. It closes on whether the evidence supports keeping the fix:
    - `supports keeping the fix`: the behavior moved outside the noise, with the held-out line moving too or `no pair`. The change stays.
-   - `does not support keeping the fix`: the pairs could have shown a fix and nothing moved, or it moved the wrong way. The file goes back to how it was.
-   - `cannot tell`: not a verdict against the change, and the sentence says why and what would. A second verify of the same trials pairs the same replies again and adds nothing. A change the app's own tests support may stay, said as not yet verified by Cortad.
+   - `does not support keeping the fix`: the pairs, or the rate on the same trials, could have shown a fix and nothing moved, or it moved the wrong way. The file goes back to how it was.
+   - `cannot tell`: not a verdict against the change, and the sentence says why and what would; most often the reader could not settle enough of the replies, which is on Cortad's side. A change the app's own tests support may stay, said as not yet verified by Cortad.
+   - Where the replies cannot be paired reply for reply, the verify compares the question's failure rate on the same trials before and now, with the new trials it played in the situation, and says both. Readings the reader could not settle are named and count on neither side.
    - A reply that failed before and no longer meets the question's condition is counted as gone on its own, not as a pass.
    - A verify that played no trial says so and compares nothing; the file stays as it was left.
    - An `Overfit:` line: the visible trials moved and the held-out trials stayed where they were, so the change fits the trials it could see. The file goes back, and the next change aims at the behavior the question asks about.
