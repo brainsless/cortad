@@ -813,11 +813,20 @@ async function restartNow() {
   if (!launched || !child) return { error: "You started this app yourself, so restart it in your own terminal. Most dev servers reload on save." };
   const port = app.port;
   await stopApp(child.pid);
-  for (let i = 0; i < 25 && (await answers(port)); i++) await new Promise((r) => setTimeout(r, 200));
+  // Until the port is free, not merely silent: a listener still closing does not answer and still
+  // holds the bind, and the restarted app was moved to the next port while the run kept knocking on
+  // this one (resumeforge's verify played seven trials against nothing).
+  for (let i = 0; i < 75 && (await listenerOn(port)); i++) await new Promise((r) => setTimeout(r, 200));
   const up = await launch(90_000);
   if (!up.port) return { error: up.exited !== null ? `Your app exited ${up.exited} on restart.\n${up.tail}` : "Your app was restarted but did not answer within 90 seconds." };
-  if (up.port !== port) return { error: `Your app came back on port ${up.port}, not ${port}. Run the command again to reconnect.` };
-  return { restarted: true, port };
+  if (up.port !== port) {
+    // It moved anyway: the world follows the app, never the other way round.
+    app = up;
+    const told = await announce().catch(() => null);
+    if (!told?.ok) return { error: `Your app came back on port ${up.port}, not ${port}. Run the command again to reconnect.` };
+    say(`your app came back on port ${up.port}; the run follows it there`);
+  }
+  return { restarted: true, port: up.port };
 }
 // TCP ports your app is listening on: every process descended from the one this program started.
 // By descent, not by process group: nodemon, pm2 and concurrently put the real server in a group of
