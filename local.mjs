@@ -34,6 +34,7 @@ import { listingUrl } from "./lib/listing.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
 import { openSwitches } from "./lib/switches.mjs";
 import { keepData } from "./lib/data.mjs";
+import { downLine, makeHealth } from "./lib/health.mjs";
 import { markRun, writesDirOf } from "./lib/writes.mjs";
 
 const argv = process.argv.slice(2);
@@ -275,6 +276,9 @@ let appGone = false;
 let lastSaid = "";
 let lastOutputAt = Date.now();
 let forgetTold = null;
+// The run's requests your app has not answered yet: a slow health probe while any are open is our
+// load on it, not a hang.
+let answering = 0;
 const mask = (text) => { let s = String(text ?? ""); for (const v of secrets) s = s.split(v).join("[masked]"); return s; };
 
 // ---- the wire
@@ -405,12 +409,13 @@ async function verb(job) {
         const said = Object.fromEntries([...res.headers].filter(([k]) => !/^set-cookie2?$/i.test(k)).map(([k, v]) => [k, mask(v)]));
         return { status: res.status, headers: said, body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
       };
-      try { return await ask(); }
+      const counted = async () => { answering += 1; try { return await ask(); } finally { answering -= 1; } };
+      try { return await counted(); }
       catch (e) {
         const code = String(e.cause?.code ?? e.code ?? "");
         if (!/ECONNREFUSED|ECONNRESET|EPIPE|UND_ERR_SOCKET/.test(code)) return { error: `nothing answered at port ${port}: ${code || e.message}` };
         for (let i = 0; i < 45 && !(await answers(port)); i++) await new Promise((r) => setTimeout(r, 1000));
-        try { return { ...(await ask()), heldForRestart: true }; }
+        try { return { ...(await counted()), heldForRestart: true }; }
         catch (again) { return { error: `nothing answered at port ${port}: ${String(again.cause?.code ?? again.message)}` }; }
       }
     }
@@ -854,6 +859,7 @@ async function restartApp() {
 async function restartNow() {
   if (!launched || !child) return { error: "You started this app yourself, so restart it in your own terminal. Most dev servers reload on save." };
   const port = app.port;
+  say("starting your app again so it runs the code you saved, since it does not reload by itself");
   await stopApp(child.pid);
   // Until the port is free, not merely silent: a listener still closing does not answer and still
   // holds the bind, and the restarted app was moved to the next port while the run kept knocking on
@@ -1073,26 +1079,30 @@ async function appLife() {
   let toldDown = false;
   let appTold = true;
   forgetTold = () => { appTold = false; };
+  const health = makeHealth({ host: () => appHost, gone: () => Boolean(launched && appGone), inFlight: () => answering });
   for (let up = true; !closing;) {
     await new Promise((r) => setTimeout(r, 2000));
     if (closing || restarting) continue;
-    const now = await answers(app.port);
-    if (now) {
+    const state = await health.check(app.port);
+    if (state === "up") {
       downSince = 0; toldDown = false;
       // Said until it is heard. Said once, it was lost when their app came back while the network
       // was down, and the screen went on showing an app that had stopped while it answered turns.
       if (!up || !appTold) { up = true; appTold = Boolean((await announce().catch(() => null))?.ok); }
       continue;
     }
+    // Running, holding its port, and slow because it is answering the run's own requests: working,
+    // not dead. Nothing is said and nothing restarts, and a silence after it is timed from here.
+    if (state === "busy") { if (!up) downSince = Date.now(); continue; }
     if (up) { up = false; downSince = Date.now(); }
     appTold = false;
     const downFor = Date.now() - downSince;
-    // Not answering. A dev server restarting on a save is busy and says so in its output: it is
-    // left alone, however long its own startup takes.
-    // A watcher that has said its app crashed is not busy, it is waiting, and says so.
+    // Not answering. A dev server restarting on a save says so in its output: it is left alone,
+    // however long its own startup takes.
+    // A watcher that has said its app crashed is not reloading, it is waiting, and says so.
     const crashed = /app crashed - waiting|Failed running|waiting for (?:file )?changes before restart/i.test(lastSaid.slice(-600));
-    const busy = launched && !appGone && !crashed && Date.now() - lastOutputAt < 15_000;
-    if (busy || downFor < (crashed ? 4_000 : 10_000)) continue;
+    const reloading = launched && !appGone && !crashed && Date.now() - lastOutputAt < 15_000;
+    if (reloading || downFor < (crashed ? 4_000 : 10_000)) continue;
     // Down for real. The screen is told, so it never shows an app that is not there.
     // `exited`: the process this command started is gone or its watcher said it crashed, not a process
     // running and not answering. The run tells the two apart: one is their crash, the other may be our
@@ -1108,7 +1118,7 @@ async function appLife() {
     restarting = true;
     try {
       if (child?.pid) await stopApp(child.pid);
-      say("your app stopped answering, starting it again");
+      say(downLine(state, { port: app.port, downMs: downFor, crashed }));
       let back = launched ? await launch(180_000) : await startApp();
       while (!back.port && !closing) {
         await call("POST", `/local/${box}/stopped`, { said: mask(back.tail || back.said || lastSaid).slice(-2000) }).catch(() => {});

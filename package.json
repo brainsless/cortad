@@ -12,6 +12,7 @@
     "lib/data.mjs",
     "lib/failed-text.mjs",
     "lib/fresh.mjs",
+    "lib/health.mjs",
     "lib/home.mjs",
     "lib/identities.mjs",
     "lib/keys.mjs",
