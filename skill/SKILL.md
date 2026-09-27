@@ -49,7 +49,7 @@ Take the person through them worst first, each with its file and line. A long li
 
 ## Fixing one finding
 
-Each finding ends with what a verify of it can show. When the trials it replays read the question too few times for a rate, the verify plays up to 12 more trials in that situation itself, counted as verify trials, and the finding says how many before one is spent.
+Each finding ends with what a verify of it can show. When the trials it replays read the question too few times for a rate, the verify plays up to 12 more trials itself, in the finding's situations that were read least, counted as verify trials, and the finding says how many before one is spent. A finding listed in several situations is verified in all of them.
 
 1. One change, in the file and near the line the finding names.
 2. `verify <findingId>`. It answers within a second, and `run_status` follows it. When the app's code changed since the app started and nothing reloaded it, Cortad starts the app again first and the answer says so, so the saved edit is what plays; `run_status` names when the app started against the last change. When it also plays new trials in the finding's situation, the answer says how many.

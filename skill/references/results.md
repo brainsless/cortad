@@ -130,6 +130,21 @@ For the person: the report is at https://cortad.com/lab
 next: findings
 ```
 
+Replies that did not count come before the score, each part saying whose it is, with the request to paste where there is one:
+
+```
+Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 31 of 31 trials played.
+17 of 33 replies did not count: 9 answered HTTP 502 at backend/app/api/resume_writing.py:91 (yours; request below), 6 refused the shape we sent to POST /api/drill/{id}/answer (HTTP 422) (ours; request below), 2 got no answer from /api/chat before we stopped waiting at 90 seconds (ours).
+  Request for the 9 at backend/app/api/resume_writing.py:91: curl -X POST 'http://localhost:8004/api/resume/writing' -H 'authorization: <redacted>' -H 'content-type: application/json' --data-raw '{"message":"rewrite my summary"}'
+    Answered: Bad Gateway
+    verify finding:1 replays them.
+  Request for the 6 from /api/drill/{id}/answer: curl -X POST 'http://localhost:8004/api/drill/7/answer' -H 'content-type: application/json' --data-raw '{"message":"hi"}'
+    Answered: {"detail":[{"loc":["body","answer"],"msg":"field required"}]}
+20 of 40 checks measured; score 88 of 100 on those 20, interval 70 to 96; the 17 of 33 replies that did not count are not in it.
+```
+
+A part marked yours is the app failing: run the request, fix what it shows, then verify the finding named. A part marked ours is Cortad's to fix, and nothing in the app changes for it. A masked value (`<redacted>`) is the app's own sign-in or key; put it back before running the request.
+
 Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes. It has no trials to replay, so `verify` refuses it; the next run that finishes without it is the proof. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
 
 A verify that holds: both intervals are above zero and the held-out trials moved with the visible ones.
