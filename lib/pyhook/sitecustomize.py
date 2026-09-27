@@ -96,8 +96,12 @@ def _install():
                 at = i
         return seq[at + 1:]
 
+    # A user message that only hands a tool's answer back ("Observation: ...", <tool_response>) is
+    # the agent loop talking, not the person.
+    handed_back = re.compile(r"^\s*(?:Observation\s*:|<(?:tool_response|tool_result|function_results?)>)", re.I)
+
     def person_said(m):
-        return m.get("role") == "user" and not any(isinstance(c, dict) and c.get("type") == "tool_result" for c in (m.get("content") if isinstance(m.get("content"), list) else []))
+        return m.get("role") == "user" and not any(isinstance(c, dict) and c.get("type") == "tool_result" for c in (m.get("content") if isinstance(m.get("content"), list) else [])) and not handed_back.match(text_of(m.get("content")))
 
     def person_asked(c):
         return c.get("role") == "user" and not any(p.get("functionResponse") for p in items(c.get("parts")))
@@ -138,6 +142,9 @@ def _install():
             for p in items(c.get("parts")):
                 if isinstance(p.get("functionResponse"), dict):
                     add(p["functionResponse"].get("name"), p["functionResponse"].get("response"))
+        declared = declared_in(body)
+        for name, said in observed_in(turn_texts(body, True, declared), declared):
+            add(name, said)
         return out or None
 
     # What the model asked the app to run: chat tool_calls (a stream's pieces joined by position), a
@@ -244,10 +251,230 @@ def _install():
                 events.append({"candidates": [{"content": c}]})
         return calls_of(events)
 
+    # Tool use a model writes in its words instead of as a structured call. A ReAct agent (CrewAI,
+    # LangChain) writes "Action: name" then "Action Input: {...}" and is handed "Observation: ..."
+    # back in its next prompt; others write <tool_call>{...}</tool_call>, <function=name>,
+    # <invoke name="..."> or a JSON object that names the tool. A name counts only when the request
+    # declares that tool, in its tools field or in the tool list its prompt carries, so a thought, a
+    # "Final Answer" or prose that says Action is never a call.
+    final = re.compile(r"final[\s_-]*answer", re.I)
+    tool_name = re.compile(r"[A-Za-z_][\w.-]{0,79}", re.A)
+
+    def prompt_text(body):
+        inp = body.get("input")
+        return "\n".join(
+            [text_of(m.get("content")) for m in items(body.get("messages")) if m.get("role") != "assistant"]
+            + [text_of(body.get("system")), text_of(body.get("instructions")), body.get("prompt") if isinstance(body.get("prompt"), str) else "", inp if isinstance(inp, str) else ""]
+            + [text_of(x.get("content")) for x in items(inp) if x.get("role") and x.get("role") != "assistant"]
+            + [text_of((body.get("systemInstruction") or {}).get("parts") if isinstance(body.get("systemInstruction"), dict) else None)]
+            + [text_of(c.get("parts")) for c in items(body.get("contents")) if c.get("role") != "model"])
+
+    def declared_in(body):
+        out = set()
+
+        def add(n):
+            v = n.strip().strip("\"'`") if isinstance(n, str) else ""
+            if tool_name.fullmatch(v) and not final.fullmatch(v):
+                out.add(v)
+
+        def get(d, k):
+            return d.get(k) if isinstance(d, dict) else None
+
+        for t in items(body.get("tools")):
+            add(t.get("name"))
+            add(get(t.get("function"), "name"))
+            add(get(t.get("toolSpec"), "name"))
+            for d in items(t.get("functionDeclarations") or t.get("function_declarations")):
+                add(d.get("name"))
+        for f in items(body.get("functions")):
+            add(f.get("name"))
+        for t in items(get(body.get("toolConfig"), "tools")):
+            add(get(t.get("toolSpec"), "name"))
+        text = prompt_text(body)[:200000]
+        for m in re.finditer(r"^[ \t]*Tool Name:[ \t]*([^\n]+)", text, re.I | re.M):
+            add(m.group(1))
+        for m in re.finditer(r"\b(?:one of|name of|names? from)[ \t]*\[([^\]\n]{1,2000})\]", text, re.I):
+            for x in m.group(1).split(","):
+                add(x)
+        for m in re.finditer(r"valid \"?action\"? values?:?[ \t]*([^\n]{1,2000})", text, re.I):
+            for x in re.split(r",|\bor\b", m.group(1)):
+                add(x)
+        for m in re.finditer(r"<(tools|functions)>([\s\S]*?)</\1>", text, re.I):
+            for k in re.finditer(r"\"name\"\s*:\s*\"([^\"]+)\"", m.group(2)):
+                add(k.group(1))
+        for m in re.finditer(r"\"name\"\s*:\s*\"([^\"]+)\"\s*,\s*\"(?:description|parameters|input_schema)\"", text):
+            add(m.group(1))
+        for m in re.finditer(r"<(?:tool|function)\s+name\s*=\s*[\"']([^\"']+)[\"']", text, re.I):
+            add(m.group(1))
+        return out
+
+    react = re.compile(r"(?:^|\n)[ \t>*_#]*Action[ \t]*\d*[ \t*_]*:[ \t*_`]*([^\n`*]*?)[ \t*_`]*\n+[ \t>*_#]*Action[ \t]*\d*[ \t_]*Input[ \t*_]*:[ \t*_]*([\s\S]*?)(?=\n[ \t>*_#]*(?:Observation|Thought|Final[ \t]*Answer|Action)\b|\x00|\Z)", re.I)
+    tag_call = re.compile(r"<(tool_call|function_call|tool_use)>([\s\S]*?)</\1>", re.I)
+    fn_tag = re.compile(r"<function=([\w.-]+)>([\s\S]*?)</function>", re.I)
+    invoke = re.compile(r"<invoke\s+name\s*=\s*[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</invoke>", re.I)
+    observed = re.compile(r"(?:^|\n)[ \t>*_]*Observation[ \t*_]*:[ \t]*([\s\S]*?)(?=\n[ \t>*_#]*(?:Thought|Action|Final[ \t]*Answer)\b|\x00|\Z)|<(tool_response|tool_result|function_results?|observation)>([\s\S]*?)</\2>", re.I)
+
+    def params_of(s):
+        return {m.group(1): m.group(2).strip() for m in re.finditer(r"<parameter(?:=|\s+name\s*=\s*[\"'])([\w.-]+)[\"']?\s*>([\s\S]*?)</parameter>", s, re.I)}
+
+    # Each balanced JSON object in the text, outermost first; its insides are not read again.
+    def objects_in(text):
+        out, i = [], text.find("{")
+        while i != -1 and len(out) < 20:
+            depth, in_str, esc, end = 0, False, False, -1
+            for j in range(i, min(len(text), i + 20000)):
+                ch = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                    continue
+                if ch == '"':
+                    in_str = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = j
+                        break
+            v = parsed(text[i:end + 1]) if end != -1 else None
+            if isinstance(v, dict):
+                out.append((i, v))
+                i = end
+            i = text.find("{", i + 1)
+        return out
+
+    # An Action Input that opens with a JSON object is that object: a model that runs on past it
+    # ("Observ: ...") does not put its own invention into the arguments.
+    def leading_json(s):
+        t = s.strip()
+        o = objects_in(t)[:1] if t.startswith("{") else []
+        return o[0][1] if o and o[0][0] == 0 else t
+
+    # A tool's schema carries a description; a call does not.
+    def json_call(v):
+        f = v["function"] if isinstance(v.get("function"), dict) else v
+        if "description" in f:
+            return None
+        name = next((x for x in (f.get("name"), v.get("tool"), v.get("tool_name"), v.get("action"), v.get("function") if isinstance(v.get("function"), str) else None) if isinstance(x, str)), None)
+        if not name:
+            return None
+        args = next((x for x in (f.get("arguments"), f.get("args"), f.get("parameters"), v.get("action_input"), v.get("tool_input"), v.get("input"), v.get("args"), v.get("arguments"), v.get("parameters")) if x is not None), None)
+        return name, args
+
+    def written_calls(text, declared):
+        found = []
+        if not text or not declared:
+            return found
+        s = text[:50000]
+
+        def take(at, name, args):
+            n = str(name or "").strip()
+            if n in declared:
+                found.append((at, n, args.strip() if isinstance(args, str) else args))
+
+        for m in react.finditer(s):
+            take(m.start(), m.group(1), leading_json(m.group(2)))
+        for m in tag_call.finditer(s):
+            v = parsed(m.group(2).strip())
+            c = json_call(v) if isinstance(v, dict) else None
+            if c:
+                take(m.start(), *c)
+        for m in fn_tag.finditer(s):
+            v = parsed(m.group(2).strip())
+            take(m.start(), m.group(1), v if isinstance(v, (dict, list)) else params_of(m.group(2)))
+        for m in invoke.finditer(s):
+            take(m.start(), m.group(1), params_of(m.group(2)))
+        for at, v in objects_in(s):
+            c = json_call(v)
+            if c:
+                take(at, *c)
+        return sorted(found, key=lambda c: c[0])
+
+    # What a tool answered, named by the call written just before it.
+    def observed_in(text, declared):
+        s = str(text or "")[:50000]
+        calls = written_calls(s, declared)
+        out = []
+        if calls:
+            for m in observed.finditer(s):
+                before = [c for c in calls if c[0] < m.start()]
+                if before:
+                    out.append((before[-1][1], (m.group(1) if m.group(1) is not None else m.group(3)).strip()))
+        return out
+
+    # The model's own words: the text it answered, whole or streamed, in every provider's shape.
+    def reply_text(events):
+        s = []
+        for e in events:
+            if not isinstance(e, dict):
+                continue
+            for c in items(e.get("choices")):
+                if isinstance(c.get("message"), dict):
+                    s.append(text_of(c["message"].get("content")))
+                if isinstance(c.get("delta"), dict) and isinstance(c["delta"].get("content"), str):
+                    s.append(c["delta"]["content"])
+                if isinstance(c.get("text"), str):
+                    s.append(c["text"])
+            if e.get("type") == "response.output_text.delta" and isinstance(e.get("delta"), str):
+                s.append(e["delta"])
+            resp = e.get("response") if isinstance(e.get("response"), dict) else {}
+            for it in items(e.get("output")) + items(resp.get("output")):
+                if it.get("type") == "message":
+                    s.extend(p["text"] for p in items(it.get("content")) if isinstance(p.get("text"), str))
+            delta = e.get("delta") if isinstance(e.get("delta"), dict) else {}
+            if e.get("type") == "content_block_delta" and isinstance(delta.get("text"), str):
+                s.append(delta["text"])
+            msg = e.get("message") if isinstance(e.get("message"), dict) else {}
+            out_msg = e["output"].get("message") if isinstance(e.get("output"), dict) and isinstance(e["output"].get("message"), dict) else {}
+            for b in items(e.get("content")) + items(msg.get("content")) + items(out_msg.get("content")):
+                if isinstance(b.get("text"), str):
+                    s.append(b["text"])
+            if isinstance(msg.get("content"), str) and not e.get("choices"):
+                s.append(msg["content"])
+            for c in items(e.get("candidates")):
+                for p in items((c.get("content") or {}).get("parts") if isinstance(c.get("content"), dict) else None):
+                    if isinstance(p.get("text"), str) and not p.get("thought"):
+                        s.append(p["text"])
+            if isinstance(e.get("response"), str):
+                s.append(e["response"])
+        return "".join(s)
+
+    # This turn as the prompt carries it: the model's earlier words after the person's latest
+    # message, and everything from that message on, where a single-prompt agent keeps its scratchpad.
+    # A user message right after the model wrote a tool call is the agent loop's nudge ("Analyze the
+    # tool result"), never the person: after a call, only the loop speaks.
+    def turn_texts(body, with_person, declared):
+        def since_person(seq, is_person):
+            at = -1
+            for i, m in enumerate(seq):
+                if is_person(m):
+                    at = i
+            return seq[max(0, at):] if with_person else seq[at + 1:]
+
+        def ours(role):
+            return role not in ("system", "developer") if with_person else role in ("assistant", "model")
+
+        inp = body.get("input")
+        ms = items(body.get("messages"))
+        after_call = {i for i in range(1, len(ms)) if ms[i - 1].get("role") == "assistant" and written_calls(text_of(ms[i - 1].get("content")), declared)}
+        out = [text_of(m.get("content")) for m in since_person([dict(m, _i=i) for i, m in enumerate(ms)], lambda m: person_said(m) and m["_i"] not in after_call) if ours(m.get("role"))]
+        out += [text_of(x.get("content") if x.get("content") is not None else x.get("output")) for x in since_person(items(inp), lambda x: x.get("role") == "user") if ours(x.get("role"))]
+        out += [text_of(c.get("parts")) for c in since_person(items(body.get("contents")), person_asked) if ours(c.get("role"))]
+        if with_person:
+            out += [body.get("prompt") if isinstance(body.get("prompt"), str) else "", inp if isinstance(inp, str) else ""]
+        return "\x00\n".join(out)
+
     def called_in(sent, events):
         body = parsed(sent) if isinstance(sent, str) else None
         out = []
-        for c in (called_before(body) if isinstance(body, dict) else []) + calls_of(events):
+        declared = declared_in(body) if isinstance(body, dict) else set()
+        written = [{"name": n, "arguments": args_text(a)} for _, n, a in written_calls(turn_texts(body, False, declared) if isinstance(body, dict) else "", declared) + written_calls(reply_text(events), declared)]
+        for c in (called_before(body) if isinstance(body, dict) else []) + calls_of(events) + written:
             if len(out) < calls_max and not any(o["name"] == c["name"] and o["arguments"] == c["arguments"] for o in out):
                 out.append(c)
         return out or None

@@ -1,5 +1,5 @@
 {
-  "note": "One turn of a shop assistant as three SDK styles see it, shared by the Node and Python hook tests: what each app sends, and what each provider answers.",
+  "note": "One turn of a shop assistant as the SDK styles and agent frameworks see it, shared by the Node and Python hook tests: what each app sends, and what each provider answers. Tool use written in the reply text (ReAct, a tool tag, JSON) counts only for tools the request declares.",
   "turn": "case_2:1",
   "chat": {
     "path": "/v1/chat/completions",
@@ -233,5 +233,171 @@
         "text": "Returns are accepted within seven days of delivery."
       }
     ]
+  },
+  "reactCrew": {
+    "path": "/v1/chat/completions?react-crew",
+    "sent": {
+      "model": "react-crew",
+      "stop": [
+        "\nObservation:"
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are 客服执行员. 你是二手交易平台客服。\nYour personal goal is: 根据意图调用对应工具\nYou ONLY have access to the following tools, and should NEVER make up tools that are not listed here:\n\nTool Name: search_knowledge\nTool Arguments: {'query': {'description': None, 'type': 'str'}}\nTool Description: 检索平台知识库\nTool Name: query_order\nTool Arguments: {'message': {'description': None, 'type': 'str'}}\nTool Description: 查询订单\n\nIMPORTANT: Use the following format in your response:\n\n```\nThought: you should always think about what to do\nAction: the action to take, only one name of [search_knowledge, query_order], just the name, exactly as it's written.\nAction Input: the input to the action, just a simple JSON object, enclosed in curly braces, using \" to wrap keys and values.\nObservation: the result of the action\n```\n\nOnce all necessary information is gathered, return the following format:\n\n```\nThought: I now know the final answer\nFinal Answer: the final answer to the original input question\n```"
+        },
+        {
+          "role": "user",
+          "content": "\nCurrent Task: 处理用户消息：订单 YQ9 到哪了，能退吗？\n\nBegin! This is VERY important to you, use the tools available and give your best Final Answer, your job depends on it!\n\nThought:"
+        },
+        {
+          "role": "assistant",
+          "content": "Thought: 先查订单\nAction: query_order\nAction Input: {\"message\": \"YQ9\"}\nObservation: 订单 YQ9：已发货，顺丰 SF1234567890"
+        },
+        {
+          "role": "user",
+          "content": "Analyze the tool result. If requirements are met, provide the Final Answer. Otherwise, call the next tool. Deliver only the answer without meta-commentary."
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"Thought: 再查退货规则\\nAction: search_knowledge\\nAction Input: {\\\"query\\\": \\\"退货规则\\\", \\\"api_key\\\": \\\"sk-livekey\\\"}\\n\\nObserv: {\\\"invented\\\": \\\"by the model\\\"}\"}}]}",
+    "called": [
+      {
+        "name": "query_order",
+        "arguments": "{\"message\":\"YQ9\"}"
+      },
+      {
+        "name": "search_knowledge",
+        "arguments": "{\"query\":\"退货规则\",\"api_key\":\"[secret]\"}"
+      }
+    ],
+    "tools": [
+      {
+        "name": "query_order",
+        "text": "订单 YQ9：已发货，顺丰 SF1234567890"
+      }
+    ]
+  },
+  "reactLangchain": {
+    "path": "/v1/chat/completions?react-langchain",
+    "sent": {
+      "model": "react-langchain",
+      "stream": true,
+      "stop": [
+        "\nObservation"
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "Answer the following questions as best you can. You have access to the following tools:\n\nweather_lookup: Look up the weather for a city\n\nUse the following format:\n\nQuestion: the input question you must answer\nThought: you should always think about what to do\nAction: the action to take, should be one of [weather_lookup]\nAction Input: the input to the action\nObservation: the result of the action\n... (this Thought/Action/Action Input/Observation can repeat N times)\nThought: I now know the final answer\nFinal Answer: the final answer to the original input question\n\nBegin!\n\nQuestion: Is it warm in Paris today and tomorrow?\nThought: I should look it up\nAction: weather_lookup\nAction Input: Paris today\nObservation: 18C and cloudy\nThought:"
+        }
+      ]
+    },
+    "type": "text/event-stream",
+    "reply": "data: {\"choices\": [{\"index\": 0, \"delta\": {\"content\": \" Now tomorrow\\nAct\"}}]}\n\ndata: {\"choices\": [{\"index\": 0, \"delta\": {\"content\": \"ion: weather\"}}]}\n\ndata: {\"choices\": [{\"index\": 0, \"delta\": {\"content\": \"_lookup\\nAction In\"}}]}\n\ndata: {\"choices\": [{\"index\": 0, \"delta\": {\"content\": \"put: Paris tomorrow\"}}]}\n\ndata: [DONE]\n\n",
+    "called": [
+      {
+        "name": "weather_lookup",
+        "arguments": "\"Paris tomorrow\""
+      }
+    ],
+    "tools": [
+      {
+        "name": "weather_lookup",
+        "text": "18C and cloudy"
+      }
+    ]
+  },
+  "xmlTag": {
+    "path": "/v1/chat/completions?xml-tag",
+    "sent": {
+      "model": "xml-tag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You may call functions. <tools>[{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"description\": \"d\", \"parameters\": {\"type\": \"object\"}}}, {\"type\": \"function\", \"function\": {\"name\": \"get_forecast\", \"description\": \"d\", \"parameters\": {\"type\": \"object\"}}}]</tools> Write each call as <tool_call>{\"name\": ..., \"arguments\": ...}</tool_call>."
+        },
+        {
+          "role": "user",
+          "content": "Weather in Oslo, now and for two days?"
+        },
+        {
+          "role": "assistant",
+          "content": "<tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Oslo\"}}\n</tool_call>"
+        },
+        {
+          "role": "user",
+          "content": "<tool_response>\n{\"temp\": 3, \"sky\": \"snow\"}\n</tool_response>"
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"<function=get_forecast>\\n<parameter=city>Oslo</parameter>\\n<parameter=days>2</parameter>\\n</function>\"}}]}",
+    "called": [
+      {
+        "name": "get_weather",
+        "arguments": "{\"city\":\"Oslo\"}"
+      },
+      {
+        "name": "get_forecast",
+        "arguments": "{\"city\":\"Oslo\",\"days\":\"2\"}"
+      }
+    ],
+    "tools": [
+      {
+        "name": "get_weather",
+        "text": "{\"temp\": 3, \"sky\": \"snow\"}"
+      }
+    ]
+  },
+  "jsonText": {
+    "path": "/v1/chat/completions?json-text",
+    "sent": {
+      "model": "json-text",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Tools:\n{\"name\": \"lookup_user\", \"description\": \"Find an account\", \"parameters\": {\"email\": \"string\"}}\nTo use one, answer only with {\"tool\": <name>, \"args\": {...}}."
+        },
+        {
+          "role": "user",
+          "content": "Find my account, it is a@b.co."
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"Sure.\\n```json\\n{\\\"tool\\\": \\\"lookup_user\\\", \\\"args\\\": {\\\"email\\\": \\\"a@b.co\\\", \\\"password\\\": \\\"hunter2\\\"}}\\n```\"}}]}",
+    "called": [
+      {
+        "name": "lookup_user",
+        "arguments": "{\"email\":\"a@b.co\",\"password\":\"[secret]\"}"
+      }
+    ]
+  },
+  "reactProse": {
+    "path": "/v1/chat/completions?react-prose",
+    "sent": {
+      "model": "react-prose",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "search_knowledge",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": "What happens next with my refund?"
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"Thought: search_knowledge might help, but I know this.\\nAction: I will check your refund and write back today.\\nAction Input: nothing needed from you\\nObservation: refunds take five days\\nFinal Answer: {\\\"action\\\": \\\"Final Answer\\\", \\\"action_input\\\": \\\"Five working days.\\\"}\"}}]}"
   }
 }
