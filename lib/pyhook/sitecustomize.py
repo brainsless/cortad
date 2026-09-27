@@ -964,7 +964,10 @@ def _install():
     # ran by it, where the read could only name the door. Its frames on this stack outside installed
     # packages, then, when the call runs in a task another task awaits (LangChain runs each step of a
     # chain as its own task), the awaiting task's. Relative to the folder the app was started in.
+    # Five lines: a provider class's stream, post and retry can be three lines of one file, and the
+    # line that says which path ran is past them.
     root = os.getcwd().replace(os.sep, "/").rstrip("/") + "/"
+    callers_max = 5
     installed = re.compile(r"/(?:site-packages|dist-packages|\.venv|venv|__pypackages__)/|/lib/python\d")
 
     def ours(frame, out):
@@ -973,7 +976,7 @@ def _install():
             at = "%s:%d" % (f[len(root):], frame.f_lineno)
             if at not in out:
                 out.append(at)
-        return len(out) >= 3
+        return len(out) >= callers_max
 
     # The task that waits on this one: its wake-up is among this one's callbacks, directly, or behind
     # the future an asyncio.gather callback closes over.
