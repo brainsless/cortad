@@ -35,7 +35,7 @@ Engineering standards: 38 decided, 35 met, 3 missed.
   apps/api/src/agent/system.ts:30  User text stays out of the system prompt: the student's name is written into the system prompt (decided by a model)
   apps/api/src/tools/search.ts:51  Tool errors reach the model as errors: search returns an empty list when the index is down (decided by a model)
 Questions: 112; 40 asked in every conversation, 72 placed in the situations they fit.
-Trials: 58 written, 51 playable.
+Trials: 58 written.
   POST /api/homework/upload: 7 trials held back, on the app's side: the route needs a signed file URL, and no test account can make one
 Latest run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
 410 readings of 112 questions.
