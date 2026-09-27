@@ -139,7 +139,7 @@ Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 12 of 12 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
 Visible trials: held 3 of 12 readings before, 11 of 12 after; improved, +67 points, interval 41 to 85.
 Held-out trials: held 2 of 8 readings before, 7 of 8 after; improved, +62 points, interval 30 to 88.
-3 of 12 readings held before and 11 of 12 now.
+On the 12 trials replayed, 0 of 12 replies were errors before and 0 of 12 now. 3 of 12 readings held before and 11 of 12 now. On the 12 readings both runs settled, it gained 67 points, and the real move is between 41 points and 85 points. That is outside the 18 points that come back different on temperature alone. The evidence supports keeping the fix: 3 of 12 held before and 11 of 12 now, 67 points up.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -162,7 +162,7 @@ A verify with no pair: the two runs read the finding's question on no common tri
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 1 of 1 trial played.
 Verify of finding:2 at backend/tools/refunds.py.
 Held-out trials: no pair for this question.
-Verification unavailable: the replay took a different turn at reply 2, and the question was not asked on the replay because its condition did not hold (the customer has reached this step of the journey: Agent states amount, asks consent). This is not a verdict on the change either way: the two runs share no reading of this question to compare.
+On the 1 trial replayed, 0 of 3 replies were errors before and 0 of 3 now. No reading of this question pairs between the two runs. Not paired: 1 trial (t-5d10): the replay took a different turn at reply 2, and the question was not asked on the replay because its condition did not hold (the customer has reached this step of the journey: Agent states amount, asks consent). The evidence cannot tell whether to keep the fix: no reading of this question pairs between the two runs. This finding rests on 2 readings, 2 of them failures, so a verify of it cannot leave the noise: even if both failures hold on the replay, 2 readings cannot tell that apart from chance. About 4 readings from more trials that reach this situation could; a second replay of the same trials pairs the same replies again and adds nothing.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -188,6 +188,7 @@ finding:1  Does the reply refuse to state a refund policy the product does not p
   Decided by a model in 12 readings.
   Reply 2: "Yes, refunds are processed within 3 business days." (confidence 0.94, trial t-41c2)
   Replay: 12 trials, verify finding:1
+  This finding rests on 12 readings, 9 of them failures: a verify shows the fix if at least 4 of the 9 hold on the replay.
 finding:3  Does the reply keep the refund answer to what the billing page says?
   Endpoint: POST /api/chat
   Situation: plan paid, journey billing question
@@ -196,6 +197,7 @@ finding:3  Does the reply keep the refund answer to what the billing page says?
   Decided by a model in 9 readings.
   Reply 1: "You can get a full refund any time in the first 60 days." (confidence 0.81, trial t-77a0)
   Replay: 9 trials, verify finding:3
+  This finding rests on 9 readings, 4 of them failures: a verify shows the fix only if all 4 failures hold on the replay.
 
 1 finding at apps/api/src/agent/system.ts:12
 finding:4  Does the reply stay in the language the student writes in?
@@ -207,6 +209,7 @@ finding:4  Does the reply stay in the language the student writes in?
   Log: the student wrote in Spanish
   Log: the reply language was detected as English
   Replay: 10 trials, verify finding:4
+  This finding rests on 10 readings, 4 of them failures: a verify shows the fix only if all 4 failures hold on the replay.
 ```
 
 ## verify
