@@ -400,6 +400,56 @@
     "type": "application/json",
     "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"Thought: search_knowledge might help, but I know this.\\nAction: I will check your refund and write back today.\\nAction Input: nothing needed from you\\nObservation: refunds take five days\\nFinal Answer: {\\\"action\\\": \\\"Final Answer\\\", \\\"action_input\\\": \\\"Five working days.\\\"}\"}}]}"
   },
+  "ragBlock": {
+    "note": "LangChain's RAG template as ai-robot sends it: one human message whose label opens on retrieved chunks that start with markdown headings, and the person's question after them. Every chunk is one passage under the label; a chunk's own 注意： line is material; the closing 问题： paragraph is the ask.",
+    "path": "/v1/chat/completions?rag-block",
+    "sent": {
+      "model": "rag-block",
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是二手交易平台的智能客服助手。只能依据给定的资料回答问题；资料中没有的信息要如实说明不知道，禁止编造。"
+        },
+        {
+          "role": "user",
+          "content": "资料：\n# 平台帮助中心（示例知识库）  \n## 如何发布商品\n1. 登录后点击\"发布商品\"，填写标题、描述、价格与实物图片；\n2. 商品必须真实存在、如实描述成色与瑕疵。\n\n## 七天无理由退货\n1. 除定制类、贴身类等特殊商品外，签收 7 天内支持无理由退货；\n2. 退货商品需保持完好、附件齐全。\n\n注意：定制类商品不支持无理由退货。\n\n## 保证金与服务费\n1. 发布商品暂不收取发布费；\n2. 交易成功后平台按成交金额收取 1% 服务费。\n\n问题：交易过程中平台收手续费吗？怎么算的？"
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"交易成功后平台按成交金额收取 1% 服务费。\"}}]}",
+    "passages": [
+      {
+        "name": "资料",
+        "text": "# 平台帮助中心（示例知识库）  \n## 如何发布商品\n1. 登录后点击\"发布商品\"，填写标题、描述、价格与实物图片；\n2. 商品必须真实存在、如实描述成色与瑕疵。\n\n## 七天无理由退货\n1. 除定制类、贴身类等特殊商品外，签收 7 天内支持无理由退货；\n2. 退货商品需保持完好、附件齐全。\n\n注意：定制类商品不支持无理由退货。\n\n## 保证金与服务费\n1. 发布商品暂不收取发布费；\n2. 交易成功后平台按成交金额收取 1% 服务费。"
+      }
+    ]
+  },
+  "ragCode": {
+    "note": "RepoWiki's chat prompt: a markdown label that names the code as relevant, retrieved chunks under deeper headings in fences, a README chunk with a heading of its own inside its fence, and the question under a heading of the label's level.",
+    "path": "/v1/chat/completions?rag-code",
+    "sent": {
+      "model": "rag-code",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a knowledgeable developer answering questions about a codebase. Answer based on the actual code shown below."
+        },
+        {
+          "role": "user",
+          "content": "## Relevant Code\n### src/chat.py (lines 1-4)\n```\n\"\"\"Q&A chat endpoint.\"\"\"\n\nimport json\n```\n\n### README.md (lines 58-62)\n```\nIt skips secret files by default.\n\n## Features\n\n- **Structured wiki**: one page per module.\n```\n\n## Question\nHow does chat pick chunks?"
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"By TF-IDF.\"}}]}",
+    "passages": [
+      {
+        "name": "Relevant Code",
+        "text": "### src/chat.py (lines 1-4)\n```\n\"\"\"Q&A chat endpoint.\"\"\"\n\nimport json\n```\n\n### README.md (lines 58-62)\n```\nIt skips secret files by default.\n\n## Features\n\n- **Structured wiki**: one page per module.\n```"
+      }
+    ]
+  },
   "dispatched": {
     "note": "An app whose own code picks the tool: a classifier answers {\"intent\":\"order\"}, the code calls query_order() itself and hands its answer to a second chain with its own system prompt. No tool is named on the wire. The person typed a password into the message. Only the wrapped function's call and return are tool evidence: no row carries the password, and nothing in tools has an empty name. search_faq is never called and records nothing; REFUND_POLICY is not a function and is said once in the log. The router's own file names query_order too, as a read can; the call is recorded once, under the function's own name.",
     "module": "shop_tools",
