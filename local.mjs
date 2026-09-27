@@ -15,13 +15,13 @@
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
 import { homedir, hostname, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { COMMANDS, main as face } from "./lib/cli.mjs";
-import { clearRunner, projectOf, readToken, writeDigest, writeRunner, writeToken } from "./lib/home.mjs";
+import { clearRunner, homeOf, projectOf, readToken, writeDigest, writeRunner, writeToken } from "./lib/home.mjs";
 import { registerAll } from "./lib/register.mjs";
 import { finished } from "./lib/text.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
@@ -420,7 +420,14 @@ async function verb(job) {
       // machine writes your files; the agent that edits them is your own.
       const mine = scratch(b.path);
       if (!mine) return { success: false, stderr: "this program does not write your files" };
-      try { mkdirSync(dirname(mine), { recursive: true }); if (b.append) appendFileSync(mine, bytes); else writeFileSync(mine, bytes); return { success: true, stderr: "" }; }
+      try {
+        mkdirSync(dirname(mine), { recursive: true });
+        if (b.append) appendFileSync(mine, bytes); else writeFileSync(mine, bytes);
+        // The read's tools, kept for this project too: the next start hands them to the hook before
+        // the app loads its code, which a Node app needs to have its tool functions wrapped.
+        if (mine === join(work, "tools.json")) { try { mkdirSync(homeOf(project), { recursive: true, mode: 0o700 }); writeFileSync(join(homeOf(project), "tools.json"), bytes, { mode: 0o600 }); } catch { /* kept for this session only */ } }
+        return { success: true, stderr: "" };
+      }
       catch (e) { return { success: false, stderr: String(e.message) }; }
     }
     case "mint": return identities ? JSON.parse(mask(JSON.stringify(await mintAcross({
@@ -910,6 +917,7 @@ if (!files.length) fail("no source files here to read.");
 // Which project this is, as a hash of where it lives: the same folder coming back resumes the same
 // connection, and the path itself never leaves this machine.
 const project = projectOf(root);
+try { copyFileSync(join(homeOf(project), "tools.json"), join(work, "tools.json")); } catch { /* no run has read this project's tools yet */ }
 // The key the last connect left for this project, if any: the token face signs in with it. A connect
 // from the screen always asks for a fresh one, since the code may belong to another account or site.
 const stored = readToken(project);

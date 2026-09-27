@@ -399,5 +399,83 @@
     },
     "type": "application/json",
     "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"Thought: search_knowledge might help, but I know this.\\nAction: I will check your refund and write back today.\\nAction Input: nothing needed from you\\nObservation: refunds take five days\\nFinal Answer: {\\\"action\\\": \\\"Final Answer\\\", \\\"action_input\\\": \\\"Five working days.\\\"}\"}}]}"
+  },
+  "dispatched": {
+    "note": "An app whose own code picks the tool: a classifier answers {\"intent\":\"order\"}, the code calls query_order() itself and hands its answer to a second chain with its own system prompt. No tool is named on the wire. The person typed a password into the message. Only the wrapped function's call and return are tool evidence: no row carries the password, and nothing in tools has an empty name. search_faq is never called and records nothing; REFUND_POLICY is not a function and is said once in the log. The router's own file names query_order too, as a read can; the call is recorded once, under the function's own name.",
+    "module": "shop_tools",
+    "tools": [
+      {
+        "name": "query_order (router)",
+        "function": "query_order",
+        "file": "app"
+      },
+      {
+        "name": "query_order",
+        "function": "query_order"
+      },
+      {
+        "name": "search_faq",
+        "function": "search_faq"
+      },
+      {
+        "name": "refund_policy",
+        "function": "REFUND_POLICY"
+      }
+    ],
+    "message": "Where is order 202608090001? My password is hunter2, in case you need it.",
+    "returns": "Order 202608090001 shipped on 2026-09-20 with SF1234567.",
+    "classify": {
+      "path": "/v1/chat/completions?classify",
+      "sent": {
+        "model": "classify",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Classify the message. Answer only {\"intent\":\"order|knowledge|chat\"}."
+          },
+          {
+            "role": "user",
+            "content": "Where is order 202608090001? My password is hunter2, in case you need it."
+          }
+        ]
+      },
+      "type": "application/json",
+      "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"{\\\"intent\\\":\\\"order\\\"}\"}}]}"
+    },
+    "answer": {
+      "path": "/v1/chat/completions?answer",
+      "sent": {
+        "model": "answer",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are the order desk. Answer only from the order record."
+          },
+          {
+            "role": "user",
+            "content": "Where is order 202608090001? My password is hunter2, in case you need it."
+          },
+          {
+            "role": "user",
+            "content": "Order record: Order 202608090001 shipped on 2026-09-20 with SF1234567."
+          }
+        ]
+      },
+      "type": "application/json",
+      "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"It shipped on 20 September.\"}}]}"
+    },
+    "called": [
+      {
+        "name": "query_order",
+        "arguments": "{\"message\":\"Where is order 202608090001? My password is [secret], in case you need it.\"}"
+      }
+    ],
+    "toolRows": [
+      {
+        "name": "query_order",
+        "text": "Order 202608090001 shipped on 2026-09-20 with SF1234567."
+      }
+    ],
+    "unwatched": "cortad: calls to refund_policy in shop_tools.%s are not recorded: REFUND_POLICY there is not a function this hook can wrap."
   }
 }

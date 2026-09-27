@@ -155,15 +155,15 @@ def _install():
     secret_key = re.compile(r"(?:^|_)(?:pass(?:word|phrase)?|secret|token|api_?key|authorization|cookie|session(?:_id)?|credentials?|private_key)$")
     secret_value = re.compile(r"^(?:Bearer\s|Basic\s|sk-|pk_|rk_|ghp_|gho_|github_pat_|xox[abpr]-|AKIA|AIza|eyJ[\w-]{10,}\.)")
 
-    def clipped(v, depth=0):
+    def clipped(v, depth=0, most=value_max):
         if isinstance(v, str):
-            return "[secret]" if secret_value.match(v) else (v[:value_max] + "…" if len(v) > value_max else v)
+            return "[secret]" if secret_value.match(v) else (v[:most] + "…" if len(v) > most else v)
         if isinstance(v, list):
-            return [] if depth > 4 else [clipped(x, depth + 1) for x in v[:20]]
+            return [] if depth > 4 else [clipped(x, depth + 1, most) for x in v[:20]]
         if isinstance(v, dict):
             if depth > 4:
                 return {}
-            return {k: ("[secret]" if secret_key.search(re.sub(r"([a-z])([A-Z])", r"\1_\2", str(k)).lower()) else clipped(x, depth + 1)) for k, x in list(v.items())[:40]}
+            return {k: ("[secret]" if secret_key.search(re.sub(r"([a-z])([A-Z])", r"\1_\2", str(k)).lower()) else clipped(x, depth + 1, most)) for k, x in list(v.items())[:40]}
         return v
 
     def args_text(raw):
@@ -592,50 +592,6 @@ def _install():
         walk(parsed(raw) if isinstance(raw, str) else None, "", 0)
         return out or None
 
-    # A framework that folds its tools' answers into the next prompt as plain text sends no tool
-    # message to find: within one turn, what a later call's prompt carries that the call before did
-    # not, outside the model's own words, is that material. The first call holds the customer's
-    # message and the system prompt, present in every later call, so neither is ever counted.
-    seen_by_turn = {}
-
-    def texts_of(body):
-        out = set()
-
-        def take(v):
-            t = text_of(v).strip()
-            if t:
-                out.add(t[:tool_text])
-        for m in body.get("messages") if isinstance(body.get("messages"), list) else []:
-            if isinstance(m, dict) and m.get("role") != "assistant":
-                take(m.get("content"))
-        for it in body.get("input") if isinstance(body.get("input"), list) else []:
-            if isinstance(it, dict) and it.get("role") != "assistant" and it.get("type") != "function_call":
-                take(it.get("content") if it.get("content") is not None else it.get("output"))
-        if isinstance(body.get("system"), str):
-            take(body["system"])
-        for c in body.get("contents") if isinstance(body.get("contents"), list) else []:
-            if isinstance(c, dict) and c.get("role") != "model":
-                for p in c.get("parts") if isinstance(c.get("parts"), list) else []:
-                    if isinstance(p, dict) and isinstance(p.get("text"), str):
-                        take(p["text"])
-        return out
-
-    def material_in(sent, turn):
-        if not turn:
-            return None
-        body = parsed(sent) if isinstance(sent, str) else None
-        if not isinstance(body, dict):
-            return None
-        now = texts_of(body)
-        before = seen_by_turn.get(turn)
-        seen_by_turn[turn] = now
-        if len(seen_by_turn) > 200:
-            seen_by_turn.pop(next(iter(seen_by_turn)))
-        if before is None:
-            return None
-        fresh = [{"name": "", "text": t} for t in now if t not in before][:tools_max]
-        return fresh or None
-
     def rules_in(sent):
         found = rules_now()
         if found is None:
@@ -643,12 +599,45 @@ def _install():
         body = norm(sent)
         return [rid for rid, parts in found if all(p in body for p in parts)]
 
+    # Every value this file writes passes one mask, whichever path wrote it: a key inside a value
+    # ("sk-...", a bearer token, a JWT) and what anyone wrote after "password is" or "token:". The
+    # door row's sign-in headers are kept on purpose: the command replays them from this machine.
+    secret_text = [
+        re.compile(r"""((?:pass(?:word|phrase|wd)|pwd|密码|口令)["']?\s*(?:is\b|was\b|[:=：]|是|为)\s*["']?)([^\s"'\\,;}，。；、]+)""", re.I),
+        re.compile(r"""((?:secret(?:[ _-]?key)?|api[ _-]?key|apikey|access[ _-]?key|private[ _-]?key|client[ _-]?secret|(?:auth|access|refresh)[ _-]?token|token)["']?\s*[:=：]\s*["']?)([^\s"'\\,;}，。；、]+)""", re.I),
+    ]
+    secret_word = re.compile(r"\b(?:Bearer\s+(?=[\w.~+/=-]*\d)[\w.~+/=-]{16,}|[spr]k[-_](?=[\w-]*\d)[\w-]{8,}|gh[po]_\w{16,}|github_pat_\w{16,}|xox[abpr]-[\w-]{8,}|AKIA[0-9A-Z]{12,}|AIza[\w-]{20,}|eyJ[\w-]{10,}\.[\w-]{4,}\.[\w-]*)", re.A)
+
+    def mask_text(t):
+        for pattern in secret_text:
+            t = pattern.sub(r"\1[secret]", t)
+        return secret_word.sub("[secret]", t)
+
+    def scrub(v, depth=0):
+        if isinstance(v, str):
+            return mask_text(v)
+        if isinstance(v, (list, tuple)):
+            return [scrub(x, depth + 1) for x in v]
+        if isinstance(v, dict) and depth < 12:
+            return {k: (x if k == "headers" and depth == 0 else scrub(x, depth + 1)) for k, x in v.items()}
+        return v
+
+    # A door's body goes up to the run as JSON, so it is masked as JSON: its string values, never its shape.
+    def body_scrubbed(raw):
+        b = parsed(raw)
+        return json.dumps(scrub(b), ensure_ascii=False) if isinstance(b, (dict, list)) else mask_text(raw)
+
     def write(row):
         try:
+            if not (row.get("hello") or row.get("listen") or row.get("routes")):
+                out = scrub(row)
+                if isinstance(row.get("body"), str):
+                    out["body"] = body_scrubbed(row["body"])
+                row = out
             fd = os.open(_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, "a", encoding="utf-8") as f:
                 f.write(json.dumps(row) + "\n")
-        except OSError:
+        except Exception:
             pass
 
     # Every other outbound call: the host and what it answered, never a byte of it. A search
@@ -785,7 +774,7 @@ def _install():
             found = rules_in(as_text)
             if found is not None:
                 row["rules"] = found
-            tools = tools_in(as_text) or material_in(as_text, turn)
+            tools = tools_in(as_text)
             if tools:
                 row["tools"] = tools
             called = called_in(as_text, events)
@@ -798,7 +787,185 @@ def _install():
         except Exception:
             pass
 
+    # The app's own functions the read names as its tools. An app whose code picks the tool itself
+    # (a classifier answers {"intent":"order"} and the code calls query_order()) never names one on
+    # the wire, so the function is wrapped where it is defined and wherever it was imported by name:
+    # each call writes its name, its clipped arguments and what it returned, on the turn it ran in.
+    # The run writes the list beside the rules, after the app has loaded, so it is applied to the
+    # modules already loaded and looked at again when more load.
+    tools_file = os.environ.get("CORTAD_TOOLS_FILE")
+    ident = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    targets, swept, wrappers = [[]], [None], {}
+    unsaid = set()
+
+    def unwatched(t, why):
+        if (t["file"], t["fn"]) in unsaid:
+            return
+        unsaid.add((t["file"], t["fn"]))
+        try:
+            sys.stderr.write("cortad: calls to %s in %s are not recorded: %s.\n" % (t["name"], t["file"], why))
+        except Exception:
+            pass
+
+    def plain_of(v, depth=0):
+        if v is None or isinstance(v, (str, bool, int, float)):
+            return v
+        if depth > 4:
+            return "[%s]" % type(v).__name__
+        if isinstance(v, (list, tuple, set)):
+            return [plain_of(x, depth + 1) for x in list(v)[:20]]
+        if isinstance(v, dict):
+            return {str(k): plain_of(x, depth + 1) for k, x in list(v.items())[:40]}
+        dump = getattr(v, "model_dump", None)
+        if callable(dump):
+            try:
+                return plain_of(dump(), depth + 1)
+            except Exception:
+                pass
+        return "[%s]" % type(v).__name__
+
+    # The returned value's shape and a clipped text: a string as it is, anything else named by kind.
+    def returned(v):
+        if v is None:
+            return "returned nothing"
+        if isinstance(v, str):
+            return v
+        kind = "list of %d" % len(v) if isinstance(v, (list, tuple)) else "object" if isinstance(v, dict) or hasattr(v, "model_dump") else "value"
+        return "%s: %s" % (kind, json.dumps(clipped(plain_of(v), 0, tool_text), ensure_ascii=False, separators=(",", ":")))
+
+    def tool_row(name, sig, a, k, value, error, turn):
+        try:
+            try:
+                named = dict(sig.bind_partial(*a, **k).arguments) if sig else None
+            except TypeError:
+                named = None
+            if named is None:
+                named = {**{str(i): x for i, x in enumerate(a)}, **k}
+            text = "raised %s: %s" % (type(error).__name__, error) if error is not None else returned(value)
+            row = {"at": int(time.time() * 1000), "host": "in-app", "status": 200,
+                   "called": [{"name": name, "arguments": args_text(plain_of(named))}],
+                   "tools": [{"name": name, "text": str(text)[:tool_text]}]}
+            if turn:
+                row["turn"] = turn
+            write({"dep": row})
+        except Exception:
+            pass
+
+    def wrap_tool(fn, name):
+        import functools
+        import inspect
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            sig = None
+        if inspect.iscoroutinefunction(fn):
+            async def wrapped(*a, **k):
+                turn = turn_now()
+                try:
+                    out = await fn(*a, **k)
+                except Exception as e:
+                    tool_row(name, sig, a, k, None, e, turn)
+                    raise
+                tool_row(name, sig, a, k, out, None, turn)
+                return out
+        else:
+            def wrapped(*a, **k):
+                turn = turn_now()
+                try:
+                    out = fn(*a, **k)
+                except Exception as e:
+                    tool_row(name, sig, a, k, None, e, turn)
+                    raise
+                tool_row(name, sig, a, k, out, None, turn)
+                return out
+        functools.update_wrapper(wrapped, fn)
+        wrapped.__cortad_tool__ = fn
+        return wrapped
+
+    def targets_now():
+        if not tools_file:
+            return []
+        try:
+            with open(tools_file, encoding="utf-8") as f:
+                raw = json.load(f)
+        except Exception:
+            return []
+        out = []
+        for t in raw if isinstance(raw, list) else []:
+            if isinstance(t, dict) and isinstance(t.get("name"), str) and t["name"] and isinstance(t.get("file"), str) and t["file"].endswith(".py") and ident.match(str(t.get("function"))):
+                out.append({"name": t["name"][:80], "file": re.sub(r"^\.?/+", "", t["file"]), "fn": t["function"]})
+        # One function named twice (by its own name, and as "query_order (fallback)" where a router
+        # imported it) is recorded under its own name.
+        return sorted(out, key=lambda t: t["name"] != t["fn"])
+
+    def sweep_tools():
+        if not tools_file:
+            return
+        try:
+            at = os.stat(tools_file).st_mtime
+        except OSError:
+            return
+        mark = (at, len(sys.modules))
+        if swept[0] == mark:
+            return
+        if swept[0] is None or swept[0][0] != at:
+            targets[0] = targets_now()
+        swept[0] = mark
+        if not targets[0]:
+            return
+        import inspect
+        loaded = list(sys.modules.values())
+        by_file = {}
+        for m in loaded:
+            f = getattr(m, "__file__", None)
+            if isinstance(f, str) and f.endswith(".py"):
+                by_file.setdefault(f.replace(os.sep, "/"), m)
+        fresh = {}
+        for t in targets[0]:
+            m = next((mod for f, mod in by_file.items() if f == t["file"] or f.endswith("/" + t["file"])), None)
+            if m is None:
+                continue
+            fn = getattr(m, t["fn"], None)
+            if getattr(fn, "__cortad_tool__", None) is not None:
+                continue
+            if not (inspect.isfunction(fn) or inspect.ismethod(fn)):
+                unwatched(t, "the file has no function named %s" % t["fn"] if fn is None else "%s there is not a function this hook can wrap" % t["fn"])
+                continue
+            held = wrappers.get(id(fn))
+            w = held[1] if held is not None and held[0] is fn else wrap_tool(fn, t["name"])
+            wrappers[id(fn)] = (fn, w)
+            try:
+                setattr(m, t["fn"], w)
+            except Exception:
+                unwatched(t, "its module does not let %s be replaced" % t["fn"])
+                continue
+            fresh[id(fn)] = (fn, w)
+        if not fresh:
+            return
+        # Wherever the app imported it by name (from tools import query_order) or put it in a table
+        # of its own (ROUTES = {"order": query_order}), the same function is swapped for the wrapper.
+        here = os.getcwd().replace(os.sep, "/") + "/"
+        for m in loaded:
+            d = getattr(m, "__dict__", None)
+            if not isinstance(d, dict):
+                continue
+            f = str(getattr(m, "__file__", "") or "").replace(os.sep, "/")
+            ours = f.startswith(here) and "/site-packages/" not in f and "/dist-packages/" not in f
+            for k, v in list(d.items()):
+                hit = fresh.get(id(v))
+                if hit is not None and hit[0] is v:
+                    d[k] = hit[1]
+                elif ours and isinstance(v, dict):
+                    for kk, vv in list(v.items()):
+                        hit = fresh.get(id(vv))
+                        if hit is not None and hit[0] is vv:
+                            v[kk] = hit[1]
+
     def started(method, path, headers):
+        try:
+            sweep_tools()
+        except Exception:
+            pass
         turn = headers.pop("x-cortad-turn", None)
         return {"method": method, "path": path, "headers": headers, "chunks": [], "size": 0, "noted": False,
                 "turn": turn if isinstance(turn, str) and turn_ok.match(turn) else None}
