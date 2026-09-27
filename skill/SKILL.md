@@ -56,6 +56,7 @@ Take the person through them worst first, each with its file and line. A long li
    - `no change` or `regressed`: the file goes back to how it was.
    - `inside the noise` or `unsettled`: the trials cannot tell yet, which is not a verdict against the change. `verify` again to add readings; a change the app's own tests support may stay, said as not yet verified by Cortad.
    - A verify that played no trial says so and compares nothing; the file stays as it was left.
+   - `Verification unavailable:` the two runs read the question on no common trial, and the line says why (the replay took another turn, the trial halted, the question's condition did not hold). It is not a verdict: the file stays, said as not yet verified by Cortad.
    - An `Overfit:` line: the visible trials moved and the held-out trials stayed where they were, so the change fits the trials it could see. The file goes back, and the next change aims at the behavior the question asks about.
    - `regressed`: the file goes back.
 4. Then the next finding.
