@@ -129,6 +129,8 @@ For the person: the report is at https://cortad.com/lab
 next: findings
 ```
 
+Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes. It has no trials to replay, so `verify` refuses it; the next run that finishes without it is the proof. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
+
 A verify that holds: both intervals are above zero and the held-out trials moved with the visible ones.
 
 ```
