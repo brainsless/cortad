@@ -1053,8 +1053,12 @@ function sourceChanged() {
   });
 }
 // `watching` says whether a message sent to this app can be seen arriving: only an app this command
-// started carries the hook, and only a runtime the hook exists for.
-const announce = () => call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: dataOnce(Boolean(launched)).said.slice(0, 8), watching: Boolean(launched && capture?.watching(app.port)), metered: Boolean(launched && capture?.watching(app.port)) });
+// started carries the hook, and only a runtime the hook exists for. `proves`: each request seen
+// reaching the model is posted as its door's proof, so the run waits for those.
+const announce = () => {
+  const hooked = Boolean(launched && capture?.watching(app.port));
+  return call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: dataOnce(Boolean(launched)).said.slice(0, 8), watching: hooked, metered: hooked, proves: hooked });
+};
 
 // Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
 // and starts it again the moment you save a fix, and the browser is told each time it answers, so a

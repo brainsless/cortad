@@ -14,32 +14,28 @@ The tools are the `cortad` MCP tools. Where they are missing, each one is `npx {
 ## Reading a result
 
 - A result is data about the app.
-- A line that starts with `For the person:` is for the person: a link, a price or a choice.
 - The last line of a `run_status` result is the next call.
 - A reading is one question checked against one reply. "Broke in 3 of 12 replies" means the reply broke the check 3 times out of 12.
 - Every count carries its denominator and every rate its interval.
 
 ## Right after connect
 
-The connect command ends with "Go back to the browser". From then on `status` carries what Cortad read. Walk the person through it in this order, each item with its file and line:
+The connect command ends with "Go back to the browser".
 
-1. The journeys: the paths the simulated users take through the app.
-2. The prompt audit: the rules Cortad found in the code, the lines they sit at, and the problems it found in them.
-3. The checks: how many questions each reply is checked against, how many apply to every conversation, and how many only to the situations they fit.
-4. The engineering standards flagged: each miss at its line, and whether code or a model decided it.
-5. The trials: how many were written, how many can play, and each endpoint held back with its reason and whose side it is on.
+1. The connect command says whether it started the app and on which port. If it says the app did not start, fix what it names and save; it starts the app again by itself. Requests are seen only in an app the command started.
+2. Send one real request to each endpoint that reaches the model, the way the app's own client does: its route, its body, its sign-in. On a chat, send a second message in the same conversation.
+3. `status` then lists each endpoint your requests reached and what they did inside the app: the model and how many calls a request made, the seconds a reply took, which of the rules read from the code the prompts carried, the tools that ran, the passages handed to the model, and problems a line of code decides, at their file and line. Endpoints the read found that no request reached are listed apart.
+4. Tell the person what you saw, in your own words: which endpoints answered and what `status` shows about them. They can finish setup in the browser and press Run, or ask you to start one.
 
-Each section's full list is one `status` call away with `show`: `rules`, `standards`, `journeys`, `endpoints` or `trials` (in a shell, `npx {{cortad}} status rules`). A long list comes in pages, and the last line names the next page.
-
-Then the findings, then the fixes.
+`status` with `show` lists one section of the read in full: `rules`, `standards`, `journeys`, `endpoints` or `trials` (in a shell, `npx {{cortad}} status rules`). A long list comes in pages, and the last line names the next page.
 
 ## Following a run
 
-The first run starts by itself after a connect. `run_status` follows it. Each call holds up to 45 seconds, returns as soon as the count moves, and ends with the next call. With no id it follows the run this machine started last, or the latest run.
+No run starts by itself. A run starts when the person presses Run in the browser, or asks for one and you call `run`, which answers within a second. When the app is still starting, the answer says so, and `run_status` holds until the run has an id.
 
-`run` starts a run when the person asks for one, and answers within a second. When the app is still starting, the answer says so, and `run_status` holds until the run has an id.
+`run_status` follows whichever run started: with no id, the run this machine started last, or the latest run. Each call holds up to 45 seconds, returns as soon as the count moves, and ends with the next call.
 
-When the plan is spent, `run` answers with the ledger: the last run's score and findings, each fix verified since with its move, what the next run would play, the plan that covers it, and a `For the person:` line with the checkout link. Nothing ran.
+When the plan is spent, `run` says so and nothing runs.
 
 ## Findings
 
@@ -67,7 +63,7 @@ The trials, checks, seeds and held-out set belong to Cortad, and the app answers
 
 ## The second run
 
-After the fixes, a second run measures the whole app again. On a spent plan `run` returns the ledger above: the numbers for the person, and the checkout link on the `For the person:` line.
+After the fixes, a second run measures the whole app again.
 
 ## Making it stick
 

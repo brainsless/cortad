@@ -9,6 +9,7 @@
   "files": [
     "README.md",
     "lib/cli.mjs",
+    "lib/contact-text.mjs",
     "lib/data.mjs",
     "lib/failed-text.mjs",
     "lib/fresh.mjs",
