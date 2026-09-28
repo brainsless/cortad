@@ -904,6 +904,11 @@ def _install():
     # whether kept or not; the command joins them to the exchange it has.
     exchanges_per_route, routes_kept, sent_max, model_words = 4, 1000, 4, 4000
     per_route = {}
+    id_segment = re.compile(r"^\d+$|^(?=.{8,}$).*\d")
+
+    # One route whatever id its path carries: a conversation in the path is a new path every trial.
+    def route_key(method, path):
+        return method + " " + "/".join("{id}" if id_segment.match(s) else s for s in path.split("?")[0].split("/"))
 
     def note(url, body):
         req = ctx.get()
@@ -911,7 +916,7 @@ def _install():
             return
         if not req["noted"]:
             req["noted"] = True
-            key = req["method"] + " " + req["path"].split("?")[0]
+            key = route_key(req["method"], req["path"])
             n = per_route.get(key, 0)
             if n < exchanges_per_route and (n or len(per_route) < routes_kept):
                 per_route[key] = n + 1
