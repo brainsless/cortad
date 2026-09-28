@@ -126,13 +126,31 @@ Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
-Finished. Tell the person what was measured before the score, and what the rest waits on:
+Finished. The top settled finding comes first: what broke, in how many trials, the exchange it broke in and the line. Then how many more, what was measured of the app's own promises in its own words, and the score, which counts only the trials that asked those promises:
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 51 of 51 trials played.
-112 of 140 checks measured; score 71 of 100 on those 112, interval 64 to 78.
+Top finding:
+finding:1  Does the reply state a refund policy the product does not publish?
+  Failed in 9 of 12 trials, between 47% and 91% of trials.
+  Played again: 4 fresh trials of the same ask in other words; it broke again in 4.
+  Sent: "Can I get my money back if I cancel this week?"
+  Reply 2: "Of course! Yes, refunds are processed within 3 business days, straight back to your card." (confidence 0.94, trial t-41c2)
+    It broke on: "Yes, refunds are processed within 3 business days."
+  At apps/api/src/agent/prompt.ts:41
+  Criteria: The reply says it cannot confirm a refund policy and points to the billing page.
+  Endpoint: POST /api/chat
+  Situation: plan free, journey billing question
+  Decided by a model in 12 readings.
+  Replay: 12 trials, verify finding:1
+  This finding rests on 12 trials, 9 of them failures: a verify shows the fix if at least 4 of the 9 hold on the replay.
+3 findings in all, 2 settled.
+38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
+  "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
+  "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
+112 of 140 checks measured.
 28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
-3 findings.
+Score 71 of 100: 27 of the 38 trials that asked your app's own promises kept every one, interval 55 to 83.
 1,204 readings of 112 questions.
 For the person: the report is at https://cortad.com/lab
 next: findings
@@ -142,8 +160,8 @@ Stopped early. Each stop and fault names the side it is on and what comes next:
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 11 of 51 trials played.
-Score 90 of 100, interval 70 to 98.
 1 finding.
+Score 90 of 100, interval 70 to 98.
 240 readings of 112 questions.
 Stopped at 11 of 51 trials, on the app's side: your app stopped answering at turn 11. Bring your app back up, then run again.
 Fault on the app's side: Your code names llama-3.1-8b-instant, which api.groq.com does not serve. Rename the model in your code, then run again.
@@ -161,7 +179,8 @@ Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 31 of 31 trials played.
     verify finding:1 replays them.
   Request for the 6 from /api/drill/{id}/answer: curl -X POST 'http://localhost:8004/api/drill/7/answer' -H 'content-type: application/json' --data-raw '{"message":"hi"}'
     Answered: {"detail":[{"loc":["body","answer"],"msg":"field required"}]}
-20 of 40 checks measured; score 88 of 100 on those 20, interval 70 to 96; the 17 of 33 replies that did not count are not in it.
+20 of 40 checks measured.
+Score 88 of 100, interval 70 to 96; the 17 of 33 replies that did not count are not in it.
 ```
 
 A part marked yours is the app failing: run the request, fix what it shows, then verify the finding named. A part marked ours is Cortad's to fix, and nothing in the app changes for it. A masked value (`<redacted>`) is the app's own sign-in or key; put it back before running the request.
@@ -217,47 +236,58 @@ next: findings
 
 ## findings
 
-Worst first, grouped by the line the rule lives at. A list longer than one page ends with `page 1 of 3, call findings with page 2`.
+Settled findings first, the app's own rules and journeys before the standard set, each counted in trials. A finding broke in two trials or more; it is settled when, at 95% after the run's questions are corrected together, it breaks in at least one trial in five. "Played again" counts the fresh trials of the same ask that broke it again. What the app's promises measured and the score come after the findings. A list longer than one page ends with `page 1 of 3, call findings with page 2`.
 
 ```
-Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: 3 findings.
-112 of 140 checks measured; score 71 of 100 on those 112, interval 64 to 78.
-28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
-1,204 readings of 112 questions: 1,150 decided, 54 unclear.
-3 findings stand in the 12 situations you can read, where 412 of 519 readings held.
-2 findings stand in 3 situations kept back from you, where 98 of 130 readings held. A fix is graded on those too.
+Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: 3 findings, 2 settled.
 
-2 findings at apps/api/src/agent/prompt.ts:41
-finding:1  Does the reply refuse to state a refund policy the product does not publish?
+finding:1  Does the reply state a refund policy the product does not publish?
+  Failed in 9 of 12 trials, between 47% and 91% of trials.
+  Played again: 4 fresh trials of the same ask in other words; it broke again in 4.
+  Sent: "Can I get my money back if I cancel this week?"
+  Reply 2: "Of course! Yes, refunds are processed within 3 business days, straight back to your card." (confidence 0.94, trial t-41c2)
+    It broke on: "Yes, refunds are processed within 3 business days."
+  At apps/api/src/agent/prompt.ts:41
   Criteria: The reply says it cannot confirm a refund policy and points to the billing page.
   Endpoint: POST /api/chat
   Situation: plan free, journey billing question
-  Broke in 9 of 12 replies, 75%, interval 47% to 91%.
   Decided by a model in 12 readings.
-  Reply 2: "Yes, refunds are processed within 3 business days." (confidence 0.94, trial t-41c2)
   Replay: 12 trials, verify finding:1
-  This finding rests on 12 readings, 9 of them failures: a verify shows the fix if at least 4 of the 9 hold on the replay.
-finding:3  Does the reply keep the refund answer to what the billing page says?
-  Endpoint: POST /api/chat
-  Situation: plan paid, journey billing question
-  Broke in 4 of 9 replies, 44%, interval 19% to 73%.
-  Unsettled: under the 22-reading floor.
-  Decided by a model in 9 readings.
-  Reply 1: "You can get a full refund any time in the first 60 days." (confidence 0.81, trial t-77a0)
-  Replay: 9 trials, verify finding:3
-  This finding rests on 9 readings, 4 of them failures: a verify shows the fix only if all 4 failures hold on the replay.
+  This finding rests on 12 trials, 9 of them failures: a verify shows the fix if at least 4 of the 9 hold on the replay.
 
-1 finding at apps/api/src/agent/system.ts:12
-finding:4  Does the reply stay in the language the student writes in?
+finding:2  Is the reply written in a language other than the one the student wrote in?
+  Failed in 4 of 6 trials, between 30% and 90% of trials.
+  Sent: "¿Me ayudas con esta ecuación? 2x + 3 = 11"
+  Reply 1: "Sure! Let's solve this together." (confidence 1.00, trial t-0b19)
+  At apps/api/src/agent/system.ts:12
   Endpoint: POST /api/homework/explain
   Situation: grade 9, journey homework help
-  Broke in 4 of 10 replies, 40%, interval 17% to 69%.
   Decided by code in 10 readings.
-  Reply 1: "Sure! Let's solve this together." (confidence 1.00, trial t-0b19)
   Log: the student wrote in Spanish
   Log: the reply language was detected as English
-  Replay: 10 trials, verify finding:4
-  This finding rests on 10 readings, 4 of them failures: a verify shows the fix only if all 4 failures hold on the replay.
+  Replay: 6 trials, verify finding:2
+  This finding rests on 6 trials, 4 of them failures: a verify shows the fix only if all 4 failures hold on the replay.
+
+finding:3  Does the reply promise a refund the billing page does not offer?
+  Failed in 2 of 7 trials, between 8% and 64% of trials; unsettled: too few trials yet to say it fails in one visit in five.
+  Sent: "We are on the paid plan. What happens if we cancel?"
+  Reply 1: "You can get a full refund any time in the first 60 days." (confidence 0.81, trial t-77a0)
+  At apps/api/src/agent/prompt.ts:44
+  Endpoint: POST /api/chat
+  Situation: plan paid, journey billing question
+  Decided by a model in 9 readings.
+  Replay: 7 trials, verify finding:3
+  This finding rests on 7 trials, 2 of them failures: a verify shows the fix only if both failures hold on the replay.
+
+38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
+  "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
+  "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
+112 of 140 checks measured.
+28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
+Score 71 of 100: 27 of the 38 trials that asked your app's own promises kept every one, interval 55 to 83.
+1,204 readings of 112 questions: 1,150 decided, 54 unclear.
+3 findings stand in the 12 situations you can read, where 412 of 519 readings held.
+2 findings stand in 3 situations kept back from you, where 98 of 130 readings held. A fix is graded on those too.
 ```
 
 ## verify
