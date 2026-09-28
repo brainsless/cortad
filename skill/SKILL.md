@@ -49,18 +49,16 @@ Take the person through them worst first, each with its file and line. A long li
 
 ## Fixing one finding
 
-Each finding ends with what a verify of it can show. When the trials it replays read the question too few times for a rate, the verify plays up to 12 more trials itself, in the finding's situations that were read least, counted as verify trials, and the finding says how many before one is spent. A finding listed in several situations is verified in all of them.
+Each finding says what a verify of it replays and how many clean replays would show the failure gone.
 
 1. One change, in the file and near the line the finding names.
-2. `verify <findingId>`. It answers within a second, and `run_status` follows it. When the app's code changed since the app started and nothing reloaded it, Cortad starts the app again first and the answer says so, so the saved edit is what plays; `run_status` names when the app started against the last change. When it also plays new trials in the finding's situation, the answer says how many.
-3. Read the verify's text. It opens with what came back on the replayed trials before and now (errors, refusals, replies that got no answer), so a fix that broke the endpoint shows first. It closes on whether the evidence supports keeping the fix:
-   - `supports keeping the fix`: the behavior moved outside the noise, with the held-out line moving too or `no pair`. The change stays.
-   - `does not support keeping the fix`: the pairs, or the rate on the same trials, could have shown a fix and nothing moved, or it moved the wrong way. The file goes back to how it was.
-   - `cannot tell`: not a verdict against the change, and the sentence says why and what would; most often the reader could not settle enough of the replies, which is on Cortad's side. A change the app's own tests support may stay, said as not yet verified by Cortad.
-   - Where the replies cannot be paired reply for reply, the verify compares the question's failure rate on the same trials before and now, with the new trials it played in the situation, and says both. Readings the reader could not settle are named and count on neither side.
-   - A reply that failed before and no longer meets the question's condition is counted as gone on its own, not as a pass.
-   - A verify that played no trial says so and compares nothing; the file stays as it was left.
-   - An `Overfit:` line: the visible trials moved and the held-out trials stayed where they were, so the change fits the trials it could see. The file goes back, and the next change aims at the behavior the question asks about.
+2. `verify <findingId>`. It replays the trials the finding failed on, word for word, against the saved edit; Cortad starts the app again first when its code changed. Undecided after a round, it replays them again by itself, and `run_status` follows every round under the same id. A `crash:N` finding replays the requests that were out when the app stopped.
+3. Read the verify's text. Replies the app refused or failed on the replay come first: a change that broke the endpoint shows there. Then one of three:
+   - `The failure is gone`: the fix stays.
+   - `The failure stayed`: look again at the reply it quotes and decide what to change next.
+   - `Cannot tell yet`: never a reason to undo the change; it says how many more clean replays would decide, or why it stopped.
+
+   The change is undone only when the held-out line says the fix broke it there; the next change then aims at the behavior the question asks about.
 4. Then the next finding.
 
 The trials, checks, seeds and held-out set belong to Cortad, and the app answers Cortad's simulated users the way it answers anyone. A number moves when the app's behavior moves.
