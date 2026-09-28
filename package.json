@@ -15,6 +15,7 @@
     "lib/fresh.mjs",
     "lib/health.mjs",
     "lib/home.mjs",
+    "lib/env-secrets.mjs",
     "lib/identities.mjs",
     "lib/keys.mjs",
     "lib/listing.mjs",

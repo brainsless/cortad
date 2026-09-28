@@ -26,6 +26,7 @@ import { commandText, RELOADER, sourceOf } from "./lib/fresh.mjs";
 import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawnTied, stopTree, supervisorOf } from "./lib/proc.mjs";
 import { claimRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
 import { registerAll } from "./lib/register.mjs";
+import { secretValues } from "./lib/env-secrets.mjs";
 import { finished } from "./lib/text.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
@@ -173,21 +174,6 @@ function carriesKey(rel) {
   try { return holdsKeys(readFileSync(join(root, rel), "utf8"), envKeys); } catch { return false; }
 }
 
-// Values from your env files, read here and only here, so nothing a command prints can carry one.
-function secretValues(envFiles) {
-  const values = new Set();
-  for (const file of envFiles) {
-    let text = "";
-    try { text = readFileSync(file, "utf8"); } catch { continue; }
-    for (const line of text.split("\n")) {
-      const m = /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/.exec(line);
-      if (!m) continue;
-      const v = m[1].trim().replace(/^(['"])(.*)\1$/, "$2");
-      if (v.length >= 8 && !/^(true|false|localhost|development|production|\d+)$/i.test(v)) values.add(v);
-    }
-  }
-  return [...values].sort((a, b) => b.length - a.length);
-}
 // Origins your environment names (FRONTEND_URL, CORS_ORIGIN, ...): an app that trusts a browser
 // Origin is asked as that browser. Sent as origins only, never the variable's full value.
 function envOrigins(envFiles) {
