@@ -933,7 +933,7 @@ if (explain) {
     `env files       values read here only: to hide them in replies, to sign in a test account, and to ask your providers what your keys reach. Variable names and whether a switch is on or off go up; no value does`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
-    `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records the one request during which your app calls a model`,
+    `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records each request during which your app calls a model, what it answered and the model calls on the way; header values stay here`,
     `your files      never written by this program; your own coding agent edits them`,
     `your database   a database file your env or code names is copied to this program's temp folder and your app is started on the copy; a database server is named, not copied`,
     `test shell      confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
@@ -946,12 +946,13 @@ if (explain) {
 if (kept.length) say(`kept on this machine, ${kept.length === 1 ? "it holds" : "they hold"} keys: ${kept.join(", ")}`);
 const keepSecret = (v) => { if (v && v.length >= 12 && !secrets.includes(v)) secrets.push(v); };
 identities = makeIdentities({ root, work, envFiles, sourceFiles: () => files, say, keepSecret, appDir: () => appDir });
-// One message sent in their own app tells us the door for certain. The route and the body go up,
-// masked like everything else; the sign-in that message carried stays here.
-capture = makeCapture({ work, keepSecret, writes: join(homeOf(projectOf(root)), "writes"), root, onDoor: (door) => {
-  let body = door.body;
-  try { body = JSON.parse(mask(JSON.stringify(door.body))); } catch { /* sent as it is */ }
-  call("POST", `/local/${box}/captured`, { ...door, body }).catch(() => {});
+// A real request that reached their model proves its door (lib/proof.mjs). What it proved goes up,
+// masked like everything else, and nothing goes up that the mask could not read; the sign-in each
+// request carried stays here.
+capture = makeCapture({ work, keepSecret, writes: join(homeOf(projectOf(root)), "writes"), root, files: () => files, appFolder: () => relative(root, appDir), onProof: (proof) => {
+  let masked;
+  try { masked = JSON.parse(mask(JSON.stringify(proof))); } catch { return; }
+  call("POST", `/local/${box}/proof`, masked).catch(() => {});
 } });
 if (!files.length) fail("no source files here to read.");
 

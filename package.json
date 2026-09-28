@@ -20,6 +20,7 @@
     "lib/lock.mjs",
     "lib/mcp.mjs",
     "lib/mint.mjs",
+    "lib/proof.mjs",
     "lib/pyhook/sitecustomize.py",
     "lib/read-text.mjs",
     "lib/register.mjs",
