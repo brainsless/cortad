@@ -2,7 +2,7 @@
 
 Each result exactly as the tool returns it. The numbers are from a walk of a tutoring app; yours differ. Every tool is also `npx {{cortad}} <tool>` in a shell, with the same output.
 
-A reading is one question checked against one reply. A line that starts with `For the person:` is for the person. The last line of a run_status result is the next call.
+A reading is one question checked against one reply. The last line of a run_status result is the next call.
 
 ## status
 
@@ -16,7 +16,28 @@ No run yet.
 Production: not connected.
 ```
 
-Once the read is done and the first run is playing. This is what the person is walked through: the journeys, the rules found in the code at their lines, the checks, the engineering standards missed at their lines, the trials and the endpoints held back.
+After the agent sent one real request to each endpoint that reaches the model, two on the chat, and before any run:
+
+```
+Cortad · tutor-app
+Free: 1 of 1 run left this month, 60 of 60 verify trials left.
+App: Your app answered on port 3100.
+Endpoints your own requests proved (1):
+  POST /api/chat: 2 requests reached gpt-4o-mini, 2 model calls each, 3.1 seconds a reply.
+    The prompts carried 9 of the 46 rules read from your code, for example apps/api/src/agent/prompt.ts:41 "Never state a refund policy the product does not publish.".
+    Tools that ran: search_lessons.
+    Passages handed to the model: 3.
+    Problem at apps/api/src/agent/system.ts:30: The reply carried "</student_profile>", markup from the prompt your app sent the model.
+    Last request: "and the second question?", answered "For question 2, start by writing what the angle is opposite to.".
+Endpoints the read found that no request has reached (1):
+  POST /api/homework/explain  apps/api/src/routes/homework.ts:18
+A run on the proven endpoints: 36 trials, 72 replies, about 6 minutes, about $0.38 on your OpenAI key for gpt-4o-mini.
+No run yet.
+Production: not connected.
+A run starts only when the person asks: from Run in the browser, or from the run verb.
+```
+
+Once a run is playing, the read and the run:
 
 ```
 Cortad · tutor-app
@@ -81,7 +102,7 @@ The app is still starting. `run_status` holds until the run has an id:
 Starting your app for the run. Call run_status; it answers as soon as the run has an id.
 ```
 
-The plan is spent. The ledger is the numbers; the checkout link is for the person:
+The plan is spent, and nothing ran:
 
 ```
 Refused: 1 of 1 run used on the Free plan.

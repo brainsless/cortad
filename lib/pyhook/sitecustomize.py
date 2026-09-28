@@ -1,8 +1,9 @@
 # Loaded into your Python app by the command that started it (through PYTHONPATH), and only then.
-# The same job as trace.cjs does for Node: it watches for a request to your app during which your
-# app called a model. That request is your AI's door, with the exact body it takes and the sign-in
-# it carried. What it sees is written to a file only you can read, in the command's own folder on
-# this machine. Nothing here talks to a network, and nothing here may ever stop your app starting.
+# The same job as trace.cjs does for Node: it watches for requests to your app during which your app
+# called a model. Each is an exchange: the exact body, the sign-in it carried, what your app answered
+# and the model calls it made, so the door is proven by a message rather than guessed. What it sees
+# is written to a file only you can read, in the command's own folder on this machine. Nothing here
+# talks to a network, and nothing here may ever stop your app starting.
 # ponytail: shadows a sitecustomize of the project's own, which is rare; chain to it if one shows up.
 import os
 
@@ -108,6 +109,7 @@ def _install_writes():
 def _install():
     import contextvars
     import importlib.abc
+    import itertools
     import importlib.util
     import json
     import re
@@ -117,7 +119,6 @@ def _install():
 
     ctx = contextvars.ContextVar("cortad_request", default=None)
     limit = 65536
-    said = set()
     model_host = re.compile(r"(?:^|\.)(?:openai\.com|anthropic\.com|fireworks\.ai|openrouter\.ai|groq\.com|mistral\.ai|together\.xyz|together\.ai|deepseek\.com|cohere\.ai|cohere\.com|perplexity\.ai|x\.ai|openai\.azure\.com|cognitiveservices\.azure\.com|replicate\.com|huggingface\.co|cerebras\.ai|deepinfra\.com|novita\.ai|moonshot\.cn|dashscope\.aliyuncs\.com|bigmodel\.cn|ai-gateway\.vercel\.sh|gateway\.ai\.cloudflare\.com|helicone\.ai|portkey\.ai)$", re.I)
     model_path = re.compile(r"/(?:chat/completions|completions|responses|messages|embeddings)$|:(?:generateContent|streamGenerateContent)|/invoke(?:-with-response-stream)?$|/api/(?:chat|generate)$", re.I)
 
@@ -125,9 +126,11 @@ def _install():
     # model call and its prompt can be pinned to the reply they produced while turns overlap.
     turn_ok = re.compile(r"^[A-Za-z0-9:_.-]{1,80}$")
 
-    def turn_now():
-        req = ctx.get()
-        return req.get("turn") if req else None
+    # The request a row was made inside: its exchange id, and the run's turn tag when it has one.
+    def inside_of(req):
+        if not req:
+            return {}
+        return {"ex": req["id"], **({"turn": req["turn"]} if req.get("turn") else {})}
 
     # The customer's own rule sentences, written beside the trace by the run, so each model call can
     # say which of them its prompt carried. Absent file, nothing is claimed. Reloaded on change.
@@ -791,7 +794,8 @@ def _install():
 
     def rules_in(sent):
         found = rules_now()
-        if found is None:
+        # An empty list claims nothing either way: "carried none" needs rules to carry.
+        if not found:
             return None
         body = norm(sent)
         return [rid for rid, parts in found if all(p in body for p in parts)]
@@ -824,12 +828,28 @@ def _install():
         b = parsed(raw)
         return json.dumps(scrub(b), ensure_ascii=False) if isinstance(b, (dict, list)) else mask_text(raw)
 
+    # A reply is JSON, or a stream of JSON events: masked the same way, event by event, so a stream
+    # whose events say {"token": "..."} keeps its words.
+    def reply_scrubbed(raw):
+        whole = parsed(raw)
+        if isinstance(whole, (dict, list)):
+            return json.dumps(scrub(whole), ensure_ascii=False)
+        out = []
+        for line in raw.split("\n"):
+            m = re.match(r"^(data:\s?)?([{\[].*)$", line)
+            out.append((m.group(1) or "") + body_scrubbed(m.group(2)) if m else mask_text(line))
+        return "\n".join(out)
+
     def write(row):
         try:
             if not (row.get("hello") or row.get("listen") or row.get("routes")):
                 out = scrub(row)
                 if isinstance(row.get("body"), str):
                     out["body"] = body_scrubbed(row["body"])
+                if isinstance(row.get("reply"), str):
+                    out["reply"] = reply_scrubbed(row["reply"])
+                if isinstance(row.get("sent"), list):
+                    out["sent"] = [body_scrubbed(x) for x in row["sent"] if isinstance(x, str)]
                 row = out
             fd = os.open(_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, "a", encoding="utf-8") as f:
@@ -840,13 +860,15 @@ def _install():
     # Every other outbound call: the host and what it answered, never a byte of it. A search
     # provider over its limit for a whole run was invisible until this row existed.
     # A store on this machine (a local Qdrant or Chroma) is said too when it answered with passages.
-    def dep(url, status, code=None, passages=None, turn=None):
+    # A retrieval says so, with the app's line that asked, so one that came back empty has an address.
+    def dep(url, status, code=None, passages=None, req=None, caller=None):
         try:
             host = (urlsplit(str(url)).hostname or "").lower()
-            if not host or (host in ("localhost", "127.0.0.1", "::1") and not passages):
+            retrieval = is_retrieval(url)
+            if not host or (host in ("localhost", "127.0.0.1", "::1") and not passages and not retrieval):
                 return
-            turn = turn or turn_now()
-            write({"dep": {"at": int(time.time() * 1000), "host": host[:253], "status": int(status or 0), **({"code": str(code)[:40]} if code else {}), **({"turn": turn} if turn else {}), **({"passages": passages} if passages else {})}})
+            write({"dep": {"at": int(time.time() * 1000), "host": host[:253], "status": int(status or 0), **({"code": str(code)[:40]} if code else {}), **inside_of(req or ctx.get()),
+                           **({"retrieval": True} if retrieval else {}), **({"caller": caller} if retrieval and caller else {}), **({"passages": passages} if passages else {})}})
         except Exception:
             pass
     def is_model_call(url):
@@ -877,17 +899,47 @@ def _install():
         except (TypeError, ValueError):
             return ""
 
+    # An exchange is kept when the request makes its first model call, for the first few requests per
+    # route, and written once the app has answered. Model calls and tool rows carry the request's id
+    # whether kept or not; the command joins them to the exchange it has.
+    exchanges_per_route, routes_kept, sent_max, model_words = 4, 1000, 4, 4000
+    per_route = {}
+    id_segment = re.compile(r"^\d+$|^(?=.{8,}$).*\d")
+
+    # One route whatever id its path carries: a conversation in the path is a new path every trial.
+    def route_key(method, path):
+        return method + " " + "/".join("{id}" if id_segment.match(s) else s for s in path.split("?")[0].split("/"))
+
     def note(url, body):
         req = ctx.get()
-        if not req or req["noted"] or not is_model_call(url):
+        if not req or not is_model_call(url):
             return
-        req["noted"] = True
-        key = req["method"] + " " + req["path"].split("?")[0]
-        if key in said:
+        if not req["noted"]:
+            req["noted"] = True
+            key = route_key(req["method"], req["path"])
+            n = per_route.get(key, 0)
+            if n < exchanges_per_route and (n or len(per_route) < routes_kept):
+                per_route[key] = n + 1
+                req["kept"] = True
+        if req["kept"] and len(req["sent"]) < sent_max:
+            req["sent"].append(text(body))
+
+    def answered(req):
+        if not req.get("kept") or req.get("written"):
             return
-        said.add(key)
-        write({"at": int(time.time() * 1000), "method": req["method"], "path": req["path"], "headers": req["headers"],
-               "body": b"".join(req["chunks"]).decode("utf-8", "replace")[:limit], "sent": text(body)})
+        req["written"] = True
+        headers = req.get("reply_headers") or []
+        said = lambda name: [v for k, v in headers if k == name]
+        row = {"ex": req["id"], "at": req["at"], "ms": int(time.time() * 1000) - req["at"], "method": req["method"], "path": req["path"], "headers": req["headers"],
+               "body": b"".join(req["chunks"]).decode("utf-8", "replace")[:limit], "sent": req["sent"], "status": int(req.get("status") or 0),
+               "type": (said("content-type") or [""])[0], "writes": req["writes"],
+               "reply": unpacked(b"".join(req["reply"]), (said("content-encoding") or [""])[0])[:limit]}
+        cookies = [c.split(";")[0].split("=")[0].strip() for c in said("set-cookie")][:20]
+        if cookies:
+            row["cookies"] = cookies
+        if req.get("turn"):
+            row["turn"] = req["turn"]
+        write(row)
 
     # The meter: one row per model call your app makes, with the provider's own token counts and
     # never the reply's text.
@@ -1032,16 +1084,20 @@ def _install():
             pass
         return out or None
 
-    def meter(url, sent, status, kind, raw, turn=None, caller=None):
+    def meter(url, sent, status, kind, raw, req=None, caller=None, t0=None):
         try:
             tokens, model, events = read_reply(kind, (raw or "")[:reply_max])
             parts = urlsplit(str(url))
-            row = {"at": int(time.time() * 1000), "host": parts.netloc.replace(":443", ""), "model": str(asked_for(url, sent) or model or "")[:160],
+            now = int(time.time() * 1000)
+            row = {"at": now, "ms": now - int(t0 * 1000) if t0 else 0, "host": parts.netloc.replace(":443", ""), "model": str(asked_for(url, sent) or model or "")[:160],
                    "status": int(status or 0), "usage": tokens is not None}
             row.update(tokens or {"promptTokens": 0, "cachedTokens": 0, "completionTokens": 0})
-            turn = turn or turn_now()
-            if turn:
-                row["turn"] = turn
+            if embedding.search(parts.path or ""):
+                row["embedding"] = True
+            req = req or ctx.get()
+            row.update(inside_of(req))
+            if req and req.get("kept"):
+                row["reply"] = reply_text(events)[:model_words]
             as_text = sent if isinstance(sent, str) else text(sent)
             found = rules_in(as_text)
             if found is not None:
@@ -1107,7 +1163,7 @@ def _install():
         kind = "list of %d" % len(v) if isinstance(v, (list, tuple)) else "object" if isinstance(v, dict) or hasattr(v, "model_dump") else "value"
         return "%s: %s" % (kind, json.dumps(clipped(plain_of(v), 0, tool_text), ensure_ascii=False, separators=(",", ":")))
 
-    def tool_row(name, sig, a, k, value, error, turn):
+    def tool_row(name, sig, a, k, value, error, req):
         try:
             try:
                 named = dict(sig.bind_partial(*a, **k).arguments) if sig else None
@@ -1119,8 +1175,7 @@ def _install():
             row = {"at": int(time.time() * 1000), "host": "in-app", "status": 200,
                    "called": [{"name": name, "arguments": args_text(plain_of(named))}],
                    "tools": [{"name": name, "text": str(text)[:tool_text]}]}
-            if turn:
-                row["turn"] = turn
+            row.update(inside_of(req))
             write({"dep": row})
         except Exception:
             pass
@@ -1134,23 +1189,23 @@ def _install():
             sig = None
         if inspect.iscoroutinefunction(fn):
             async def wrapped(*a, **k):
-                turn = turn_now()
+                req = ctx.get()
                 try:
                     out = await fn(*a, **k)
                 except Exception as e:
-                    tool_row(name, sig, a, k, None, e, turn)
+                    tool_row(name, sig, a, k, None, e, req)
                     raise
-                tool_row(name, sig, a, k, out, None, turn)
+                tool_row(name, sig, a, k, out, None, req)
                 return out
         else:
             def wrapped(*a, **k):
-                turn = turn_now()
+                req = ctx.get()
                 try:
                     out = fn(*a, **k)
                 except Exception as e:
-                    tool_row(name, sig, a, k, None, e, turn)
+                    tool_row(name, sig, a, k, None, e, req)
                     raise
-                tool_row(name, sig, a, k, out, None, turn)
+                tool_row(name, sig, a, k, out, None, req)
                 return out
         functools.update_wrapper(wrapped, fn)
         wrapped.__cortad_tool__ = fn
@@ -1235,19 +1290,30 @@ def _install():
                         if hit is not None and hit[0] is vv:
                             v[kk] = hit[1]
 
+    serial = itertools.count(1)
+
     def started(method, path, headers):
         try:
             sweep_tools()
         except Exception:
             pass
         turn = headers.pop("x-cortad-turn", None)
-        return {"method": method, "path": path, "headers": headers, "chunks": [], "size": 0, "noted": False,
+        return {"id": "%d.%d" % (os.getpid(), next(serial)), "at": int(time.time() * 1000), "method": method, "path": path, "headers": headers,
+                "chunks": [], "size": 0, "noted": False, "kept": False, "sent": [], "reply": [], "reply_size": 0, "writes": 0,
                 "turn": turn if isinstance(turn, str) and turn_ok.match(turn) else None}
 
     def keep(req, chunk):
         if chunk and req["size"] < limit:
             req["chunks"].append(bytes(chunk))
             req["size"] += len(chunk)
+
+    # What the app sends back, as it sends it.
+    def replied(req, chunk):
+        if chunk:
+            req["writes"] += 1
+            if req["reply_size"] < limit:
+                req["reply"].append(bytes(chunk))
+                req["reply_size"] += len(chunk)
 
     # Inbound, ASGI: FastAPI, Starlette, Django under uvicorn, Quart, Litestar.
     class Asgi:
@@ -1267,11 +1333,23 @@ def _install():
                     keep(req, message.get("body") or b"")
                 return message
 
+            async def sending(message):
+                try:
+                    if message.get("type") == "http.response.start":
+                        req["status"] = message.get("status") or 0
+                        req["reply_headers"] = [(k.decode("latin-1").lower(), v.decode("latin-1")) for k, v in message.get("headers") or []]
+                    elif message.get("type") == "http.response.body":
+                        replied(req, message.get("body") or b"")
+                except Exception:
+                    pass
+                return await send(message)
+
             token = ctx.set(req)
             try:
-                return await self.app(scope, seen, send)
+                return await self.app(scope, seen, sending)
             finally:
                 ctx.reset(token)
+                answered(req)
 
     # Inbound, WSGI: Flask, Django's runserver, anything under werkzeug.
     class Tee:
@@ -1308,11 +1386,13 @@ def _install():
                     return
                 finally:
                     ctx.reset(token)
+                replied(req, item)
                 yield item
         finally:
             close = getattr(iterable, "close", None)
             if close:
                 close()
+            answered(req)
 
     def wsgi(app):
         if getattr(app, "_brainsless", False):
@@ -1329,9 +1409,18 @@ def _install():
             req = started(method, (environ.get("SCRIPT_NAME", "") + environ.get("PATH_INFO", "/")) + ("?" + query if query else ""), headers)
             if environ.get("wsgi.input") is not None:
                 environ["wsgi.input"] = Tee(environ["wsgi.input"], req)
+
+            def starting(status, response_headers, *a):
+                try:
+                    req["status"] = int(str(status).split(" ", 1)[0])
+                    req["reply_headers"] = [(str(k).lower(), str(v)) for k, v in response_headers]
+                except Exception:
+                    pass
+                return start_response(status, response_headers, *a)
+
             token = ctx.set(req)
             try:
-                return inside(req, app(environ, start_response))
+                return inside(req, app(environ, starting))
             finally:
                 ctx.reset(token)
 
@@ -1604,7 +1693,7 @@ def _install():
                 finally:
                     self.finish()
 
-        def watch(request, response, sent, caller):
+        def watch(request, response, sent, caller, t0):
             model = is_model_call(request.url)
             if not model and not is_retrieval(request.url):
                 dep(request.url, response.status_code)
@@ -1612,24 +1701,24 @@ def _install():
             kind = response.headers.get("content-type", "")
             if getattr(response, "_content", None) is not None:
                 if model:
-                    meter(request.url, sent, response.status_code, kind, response.content.decode("utf-8", "replace"), caller=caller)
+                    meter(request.url, sent, response.status_code, kind, response.content.decode("utf-8", "replace"), caller=caller, t0=t0)
                 else:
-                    dep(request.url, response.status_code, passages=passages_from(response.content.decode("utf-8", "replace")))
+                    dep(request.url, response.status_code, passages=passages_from(response.content.decode("utf-8", "replace")), caller=caller)
                 return response
-            turn = turn_now()
+            req = ctx.get()
             if model:
-                done = lambda raw: meter(request.url, sent, response.status_code, kind, unpacked(raw, response.headers.get("content-encoding")), turn, caller)
+                done = lambda raw: meter(request.url, sent, response.status_code, kind, unpacked(raw, response.headers.get("content-encoding")), req, caller, t0)
             else:
-                done = lambda raw: dep(request.url, response.status_code, passages=passages_from(unpacked(raw, response.headers.get("content-encoding"))), turn=turn)
+                done = lambda raw: dep(request.url, response.status_code, passages=passages_from(unpacked(raw, response.headers.get("content-encoding"))), req=req, caller=caller)
             stream = response.stream
             if hasattr(stream, "__aiter__") and hasattr(stream, "aclose"):
                 response.stream = AsyncKept(stream, done)
             elif hasattr(stream, "__iter__"):
                 response.stream = SyncKept(stream, done)
             elif model:
-                meter(request.url, sent, response.status_code, kind, "", caller=caller)
+                meter(request.url, sent, response.status_code, kind, "", caller=caller, t0=t0)
             else:
-                dep(request.url, response.status_code)
+                dep(request.url, response.status_code, caller=caller)
             return response
 
         for cls in (module.Client, module.AsyncClient):
@@ -1637,7 +1726,8 @@ def _install():
             if cls is module.Client:
                 def sync_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
-                    caller = callers_now(request.url) if is_model_call(request.url) else None
+                    caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
+                    t0 = time.time()
                     try:
                         note(request.url, sent)
                     except Exception:
@@ -1646,19 +1736,20 @@ def _install():
                         response = _send(self, request, *a, **k)
                     except Exception as err:
                         if is_model_call(request.url):
-                            meter(request.url, sent, 0, "", "", caller=caller)
+                            meter(request.url, sent, 0, "", "", caller=caller, t0=t0)
                         else:
-                            dep(request.url, 0, type(err).__name__)
+                            dep(request.url, 0, type(err).__name__, caller=caller)
                         raise
                     try:
-                        return watch(request, response, sent, caller)
+                        return watch(request, response, sent, caller, t0)
                     except Exception:
                         return response
                 cls.send = sync_send
             else:
                 async def async_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
-                    caller = callers_now(request.url) if is_model_call(request.url) else None
+                    caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
+                    t0 = time.time()
                     try:
                         note(request.url, sent)
                     except Exception:
@@ -1667,12 +1758,12 @@ def _install():
                         response = await _send(self, request, *a, **k)
                     except Exception as err:
                         if is_model_call(request.url):
-                            meter(request.url, sent, 0, "", "", caller=caller)
+                            meter(request.url, sent, 0, "", "", caller=caller, t0=t0)
                         else:
-                            dep(request.url, 0, type(err).__name__)
+                            dep(request.url, 0, type(err).__name__, caller=caller)
                         raise
                     try:
-                        return watch(request, response, sent, caller)
+                        return watch(request, response, sent, caller, t0)
                     except Exception:
                         return response
                 cls.send = async_send
@@ -1681,7 +1772,8 @@ def _install():
         send = module.Session.send
 
         def sent(self, request, *a, **k):
-            caller = callers_now(request.url) if is_model_call(request.url) else None
+            caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
+            t0 = time.time()
             try:
                 note(request.url, request.body)
             except Exception:
@@ -1689,17 +1781,19 @@ def _install():
             try:
                 response = send(self, request, *a, **k)
             except Exception as err:
-                if not is_model_call(request.url):
-                    dep(request.url, 0, type(err).__name__)
+                if is_model_call(request.url):
+                    meter(request.url, text(request.body, reply_max), 0, "", "", caller=caller, t0=t0)
+                else:
+                    dep(request.url, 0, type(err).__name__, caller=caller)
                 raise
             try:
                 if not is_model_call(request.url):
                     read = is_retrieval(request.url) and not k.get("stream")
-                    dep(request.url, response.status_code, passages=passages_from(response.content.decode("utf-8", "replace")) if read else None)
+                    dep(request.url, response.status_code, passages=passages_from(response.content.decode("utf-8", "replace")) if read else None, caller=caller)
                 if is_model_call(request.url):
                     # A streamed reply is counted as a call whose counts were not read.
                     raw = response.content.decode("utf-8", "replace") if getattr(response, "_content_consumed", False) else ""
-                    meter(request.url, text(request.body, reply_max), response.status_code, response.headers.get("content-type", ""), raw, caller=caller)
+                    meter(request.url, text(request.body, reply_max), response.status_code, response.headers.get("content-type", ""), raw, caller=caller, t0=t0)
             except Exception:
                 pass
             return response
@@ -1711,6 +1805,8 @@ def _install():
 
         async def requested(self, method, str_or_url, *a, **k):
             body = k.get("json") if k.get("json") is not None else k.get("data")
+            caller = callers_now(str_or_url) if is_model_call(str_or_url) or is_retrieval(str_or_url) else None
+            t0 = time.time()
             try:
                 note(str_or_url, body)
             except Exception:
@@ -1718,13 +1814,15 @@ def _install():
             try:
                 response = await request(self, method, str_or_url, *a, **k)
             except Exception as err:
-                if not is_model_call(str_or_url):
-                    dep(str_or_url, 0, type(err).__name__)
+                if is_model_call(str_or_url):
+                    meter(str_or_url, text(body, reply_max), 0, "", "", caller=caller, t0=t0)
+                else:
+                    dep(str_or_url, 0, type(err).__name__, caller=caller)
                 raise
             if is_model_call(str_or_url):
-                response._cortad = (str_or_url, text(body, reply_max), turn_now(), callers_now(str_or_url))
+                response._cortad = (str_or_url, text(body, reply_max), ctx.get(), caller, t0)
             elif is_retrieval(str_or_url):
-                response._cortad_dep = (str_or_url, turn_now())
+                response._cortad_dep = (str_or_url, ctx.get(), caller)
             else:
                 dep(str_or_url, response.status)
             return response
@@ -1737,22 +1835,22 @@ def _install():
             store = getattr(self, "_cortad_dep", None)
             if store:
                 self._cortad_dep = None
-                dep(store[0], self.status, passages=passages_from((raw or b"").decode("utf-8", "replace")), turn=store[1])
+                dep(store[0], self.status, passages=passages_from((raw or b"").decode("utf-8", "replace")), req=store[1], caller=store[2])
             call = getattr(self, "_cortad", None)
             if call:
                 self._cortad = None
-                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), (raw or b"").decode("utf-8", "replace"), call[2], call[3])
+                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), (raw or b"").decode("utf-8", "replace"), *call[2:])
             return raw
 
         def release_kept(self, *a, **k):
             store = getattr(self, "_cortad_dep", None)
             if store:
                 self._cortad_dep = None
-                dep(store[0], self.status, turn=store[1])
+                dep(store[0], self.status, req=store[1], caller=store[2])
             call = getattr(self, "_cortad", None)
             if call:
                 self._cortad = None
-                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), "", call[2], call[3])
+                meter(call[0], call[1], self.status, self.headers.get("content-type", ""), "", *call[2:])
             return release(self, *a, **k)
 
         module.ClientSession._request = requested

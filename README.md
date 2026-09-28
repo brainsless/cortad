@@ -6,7 +6,7 @@ Runs Cortad's test conversations against the AI app on your machine, and gives y
 npx cortad <code>
 ```
 
-Run it in your app's folder with the code from cortad.com. It starts your app, connects it to Cortad, and adds Cortad to Claude Code, Codex, Cursor and Copilot on this machine. The first run starts on its own. Ctrl-C disconnects.
+Run it in your app's folder with the code from cortad.com. It starts your app, connects it to Cortad, and adds Cortad to Claude Code, Codex, Cursor and Copilot on this machine. A run starts when you press Run in the browser or ask your agent for one. Ctrl-C disconnects.
 
 ## Your coding agent
 
