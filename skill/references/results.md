@@ -279,7 +279,7 @@ finding:3  Does the reply promise a refund the billing page does not offer?
 112 of 140 checks measured.
 28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
 Score 71 of 100: 27 of the 38 trials that asked your app's own promises kept every one, interval 55 to 83.
-1,204 readings of 112 questions: 1,150 decided, 54 unclear.
+1,204 readings of 112 questions: 1,100 held, 54 unclear.
 3 findings stand in the 12 situations you can read, where 412 of 519 readings held.
 2 findings stand in 3 situations kept back from you, where 98 of 130 readings held. A fix is graded on those too.
 ```
