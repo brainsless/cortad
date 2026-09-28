@@ -277,6 +277,9 @@ async function inventoryOf(listings) {
   return { providers: providers.filter(Boolean), flags: switchStates(values) };
 }
 let secrets = [];
+// The cookies each trial's own turns were handed, newest trials kept.
+const trialJars = new Map();
+const TRIAL_JARS = 500;
 let identities = null;
 let capture = null;
 // The app's life, shared by the code that starts it, watches it and restarts it.
@@ -389,7 +392,10 @@ async function verb(job) {
       // the session your app just handed out. The cookie is kept here and never leaves this machine.
       const url = hostUrl(port, path);
       const yours = (to) => { try { const u = new URL(to, url); return ["127.0.0.1", "::1", "[::1]", "localhost"].includes(u.hostname) && u.port === String(port) ? u.href : null; } catch { return null; } };
-      let jar = "";
+      // Each trial keeps the cookies your app set on its own earlier turns, so a conversation your app
+      // holds in a cookie carries from one turn to the next and never into another trial.
+      const trial = String(Object.entries(headers).find(([k]) => k.toLowerCase() === "x-cortad-turn")?.[1] ?? "").replace(/:\d+$/, "");
+      let jar = trial ? trialJars.get(trial) ?? "" : "";
       // Held as long as the run waits for this reply: a course generator that takes ninety seconds
       // a reply is waited on for three of them. A run that says nothing gets the old 170 seconds.
       const holdMs = Math.min(Math.max(Number(b.waitMs) || 170_000, 1_000), 630_000);
@@ -398,7 +404,13 @@ async function verb(job) {
         headers: { ...headers, ...(over.headers ?? {}), ...(jar ? { cookie: [headers.cookie, jar].filter(Boolean).join("; ") } : {}) },
         signal: AbortSignal.timeout(holdMs),
       });
-      const keep = (res) => { const set = res.headers.getSetCookie?.() ?? []; if (set.length) jar = [jar, ...set.map((c) => c.split(";")[0])].filter(Boolean).join("; "); };
+      const keep = (res) => {
+        const set = res.headers.getSetCookie?.() ?? [];
+        if (!set.length) return;
+        const pairs = new Map([...jar.split(/;\s*/), ...set.map((c) => c.split(";")[0])].filter(Boolean).map((pair) => [pair.split("=")[0].trim(), pair]));
+        jar = [...pairs.values()].join("; ");
+        if (trial) { trialJars.delete(trial); trialJars.set(trial, jar); if (trialJars.size > TRIAL_JARS) trialJars.delete(trialJars.keys().next().value); }
+      };
       const sentBack = (res) => (res.status >= 300 && res.status < 400 ? yours(res.headers.get("location") ?? "") : null);
       const warm = async () => {
         let at = url;
