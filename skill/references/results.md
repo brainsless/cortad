@@ -108,7 +108,7 @@ The plan is spent, and nothing ran:
 Refused: 1 of 1 run used on the Free plan.
 Last run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: score 71 of 100, interval 64 to 78, 3 findings, 51 of 51 trials played.
 1 fix verified since that run:
-  apps/api/src/agent/prompt.ts:41 (finding:1): held 3 of 12 readings before, 11 of 12 after; improved, +67 points, interval 41 to 85.
+  apps/api/src/agent/prompt.ts:41 (finding:1): gone; 0 of 3 replays failed, against 3 of 3 before.
 The next run would play 58 trials, 7 held out, 5 new from the changes.
 The Hobby plan, $99 a month, includes 10 runs.
 Production: not connected.
@@ -143,7 +143,7 @@ finding:1  Does the reply state a refund policy the product does not publish?
   Situation: plan free, journey billing question
   Decided by a model in 12 readings.
   Replay: 12 trials, verify finding:1
-  This finding rests on 12 trials, 9 of them failures: a verify shows the fix if at least 4 of the 9 hold on the replay.
+  A verify replays its 9 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 3 findings in all, 2 settled.
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
@@ -185,51 +185,45 @@ Score 88 of 100, interval 70 to 96; the 17 of 33 replies that did not count are 
 
 A part marked yours is the app failing: run the request, fix what it shows, then verify the finding named. A part marked ours is Cortad's to fix, and nothing in the app changes for it. A masked value (`<redacted>`) is the app's own sign-in or key; put it back before running the request.
 
-Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes. It has no trials to replay, so `verify` refuses it; the next run that finishes without it is the proof. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
+Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes, then `verify crash:1`: it replays the requests that were out when the app stopped, and the failure is gone only when each comes back 2xx with an answer and the app does not stop again. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
 
-A verify that holds: both intervals are above zero and the held-out trials moved with the visible ones.
+A verify replays the trials the finding failed on, word for word, and decides with an exact test against those same trials before the fix. The failure is gone:
 
 ```
-Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 12 of 12 trials played.
+Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
-Visible trials: held 3 of 12 readings before, 11 of 12 after; improved, +67 points, interval 41 to 85.
-Held-out trials: held 2 of 8 readings before, 7 of 8 after; improved, +62 points, interval 30 to 88.
-On the 12 trials replayed, 0 of 12 replies were errors before and 0 of 12 now. 3 of 12 readings held before and 11 of 12 now. On the 12 readings both runs settled, it gained 67 points, and the real move is between 41 points and 85 points. That is outside the 18 points that come back different on temperature alone. The evidence supports keeping the fix: 3 of 12 held before and 11 of 12 now, 67 points up.
+The failure is gone on its own trials: none of 3 replays failed, against 3 of 3 trials in the run it was found in. Held out, the same question in situations you cannot see: 1 of 2 trials failed before, 0 of 2 replayed after.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
 
-A verify that overfit: the visible trials moved and the held-out trials did not. The file goes back.
+Undecided after a round, it replays the failing trials again by itself. The call keeps following it; the id stays the same:
 
 ```
-Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 12 of 12 trials played.
+Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: running, 3 of 3 trials played.
+Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
+Cannot tell yet: 1 of 3 replays failed, against 3 of 3 trials in the run it was found in; 1 more clean replay would show it failing less often. Replaying the 3 failing trials again now, round 2.
+next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
+```
+
+A fall beyond chance with some replays still failing is not gone: `The failure shows less often but is not gone: 3 of 20 replays failed, against 12 of 12 trials in the run it was found in, a fall beyond chance.`, with the reply of one that failed quoted.
+
+The failure stayed. The trials still fail more than the same question does elsewhere in the app, and the reply the replay got is quoted:
+
+```
+Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 4 of 4 trials played.
 Verify of finding:4 at apps/api/src/agent/system.ts:12.
-Visible trials: held 6 of 10 readings before, 10 of 10 after; improved, +40 points, interval 12 to 64.
-Held-out trials: held 5 of 9 readings before, 5 of 9 after; no change, 0 points, interval -30 to 30.
-Overfit: the visible trials moved and the held-out trials did not.
+The failure stayed: 4 of 4 replays failed, against 4 of 4 trials in the run it was found in; the same question fails on 3 of 18 trials elsewhere in your app, so these still stand out beyond chance. The replay of trial t-0b19 said at reply 1: "Sure! Let's solve this together."
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
 
-A verify with no pair: the two runs read the finding's question on no common trial, so there is no move to print, and the line says why. It is not a verdict on the change.
+Replies refused or failed on the replay come first. A refusal is not an answer, so the failure has not gone:
 
 ```
-Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 1 of 1 trial played.
+Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:2 at backend/tools/refunds.py.
-Held-out trials: no pair for this question.
-On the 1 trial replayed, 0 of 3 replies were errors before and 0 of 3 now. No reading of this question pairs between the two runs. Not paired: 1 trial (t-5d10): the replay took a different turn at reply 2, and the question was not asked on the replay because its condition did not hold (the customer has reached this step of the journey: Agent states amount, asks consent). The evidence cannot tell whether to keep the fix: no reading of this question pairs between the two runs. This finding rests on 2 readings, 2 of them failures, so a replay of its trials alone cannot leave the noise: even if both failures hold on the replay, 2 readings cannot tell that apart from chance. A verify of it plays 10 more trials in this situation to reach about 22 readings.
-For the person: the report is at https://cortad.com/lab
-next: findings
-```
-
-A verify whose replies did not pair: the replay took other turns and the reader settled other replies, so the question's failure rate on the same trials is compared instead, with the 10 new trials the verify played in the finding's situation. Readings the reader could not settle count on neither side.
-
-```
-Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 11 of 11 trials played.
-Verify of finding:2 at backend/tools/refunds.py.
-Visible trials: failed on 2 of 2 settled readings before, 1 of 29 after, 4 unclear after, over 1 trial replayed and 10 new; improved, +97 points, interval 29 to 99.
-Held-out trials: failed on 2 of 16 settled readings before, 0 of 15 after, 1 unclear after; too few to state a rate (15 of the 22 it needs).
-On the 1 trial replayed, 0 of 3 replies were errors before and 0 of 4 now. On the 10 more trials played in this situation, 0 of 30 replies were errors. Reply for reply, nothing could be paired: the reader could not settle any reply of this question that both runs read. Across the 1 trial replayed in this situation and the 10 more this verify played there, this question failed on 2 of 2 settled readings before and 1 of 29 now; 4 readings now could not be settled either way and count on neither side. As two separate samples the failure rate fell 97 points, and the real fall is between 29 and 99 points. That is outside the 18 points that come back different on temperature alone. The held-out trials have too few readings to say (15 of the 22 each rate needs). The evidence supports keeping the fix: this question failed on 2 of 2 settled readings before and 1 of 29 now, 97 points fewer.
+Your app refused 5 of 5 replays (HTTP 422), so they got no answer: the fix changed what the endpoint accepts. The failure stayed: 5 of 5 replays got no answer, against 5 of 5 trials in the run it was found in; the same question fails on 2 of 16 trials elsewhere in your app, so these still stand out beyond chance.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -253,7 +247,7 @@ finding:1  Does the reply state a refund policy the product does not publish?
   Situation: plan free, journey billing question
   Decided by a model in 12 readings.
   Replay: 12 trials, verify finding:1
-  This finding rests on 12 trials, 9 of them failures: a verify shows the fix if at least 4 of the 9 hold on the replay.
+  A verify replays its 9 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 
 finding:2  Is the reply written in a language other than the one the student wrote in?
   Failed in 4 of 6 trials, between 30% and 90% of trials.
@@ -266,7 +260,7 @@ finding:2  Is the reply written in a language other than the one the student wro
   Log: the student wrote in Spanish
   Log: the reply language was detected as English
   Replay: 6 trials, verify finding:2
-  This finding rests on 6 trials, 4 of them failures: a verify shows the fix only if all 4 failures hold on the replay.
+  A verify replays its 4 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 
 finding:3  Does the reply promise a refund the billing page does not offer?
   Failed in 2 of 7 trials, between 8% and 64% of trials; unsettled: too few trials yet to say it fails in one visit in five.
@@ -277,7 +271,7 @@ finding:3  Does the reply promise a refund the billing page does not offer?
   Situation: plan paid, journey billing question
   Decided by a model in 9 readings.
   Replay: 7 trials, verify finding:3
-  This finding rests on 7 trials, 2 of them failures: a verify shows the fix only if both failures hold on the replay.
+  A verify replays its 2 failing trials word for word, round after round until it decides, up to 20 replays. 3 clean replays show it gone.
 
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
@@ -292,18 +286,11 @@ Score 71 of 100: 27 of the 38 trials that asked your app's own promises kept eve
 
 ## verify
 
-Answers like `run`, with the finding named:
+Answers like `run`, with the finding named and what it takes to decide:
 
 ```
 Verify of finding:1 started: 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a.
-next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
-```
-
-When the trials it replays read the finding's question too few times for a rate, it says before they play how many new trials it adds in the finding's situation. They are verify trials from the plan.
-
-```
-Verify of finding:2 started: 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a.
-Playing 10 more trials in this situation to reach about 22 readings of this question; the run before read it 2 times here.
+A verify replays its 3 failing trials word for word, and 2 held-out trials once, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
 ```
 
