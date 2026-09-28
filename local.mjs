@@ -21,8 +21,10 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { COMMANDS, main as face } from "./lib/cli.mjs";
-import { clearRunner, homeOf, projectOf, readToken, writeApp, writeDigest, writeRunner, writeToken } from "./lib/home.mjs";
-import { commandText, elapsedMs, RELOADER, sourceOf } from "./lib/fresh.mjs";
+import { homeOf, projectOf, readToken, writeApp, writeDigest, writeToken } from "./lib/home.mjs";
+import { commandText, RELOADER, sourceOf } from "./lib/fresh.mjs";
+import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawnTied, stopTree, supervisorOf } from "./lib/proc.mjs";
+import { claimRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
 import { registerAll } from "./lib/register.mjs";
 import { finished } from "./lib/text.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
@@ -84,6 +86,28 @@ const MANIFEST = ["package.json", "pyproject.toml", "requirements.txt", "go.mod"
 if (!MANIFEST.some((f) => existsSync(join(root, f))) && !workspaces(root).length) {
   fail(`no project here: this folder has no package.json or pyproject.toml, and neither does any folder in it. Run it from your repository's root: ${root}`);
 }
+// Which project this is, as a hash of where it lives: the same folder coming back resumes the same
+// connection, and the path itself never leaves this machine.
+const project = projectOf(root);
+
+// One process holds a project's app up (lib/runner.mjs), and its state is what every reader reports.
+const me = { pid: process.pid, startedAt: startedAtOf(), by: viaToken ? "token" : "connect" };
+const become = (state, fields = {}) => writeRunner(project, { ...me, state, at: new Date().toISOString(), ...fields });
+process.on("exit", () => releaseRunner(project));
+// Started for a run while another process already holds this project's app up: that one serves it.
+// A connect from the screen is the person starting over, so the one before it is ended first.
+async function holdProject() {
+  for (let tries = 0; tries < 2; tries++) {
+    const held = claimRunner(project, { ...me, state: "starting", at: new Date().toISOString() });
+    if (!held) return;
+    if (viaToken) { say(`pid ${held.pid} already holds this project's app up and serves the run`); process.exit(0); }
+    say(`an earlier cortad (pid ${held.pid}) is holding this project's app up; stopping it so only this one runs`);
+    await replaceRunner(held);
+  }
+  fail("another cortad process keeps holding this project's app up. Stop it and run this again.");
+}
+// A verb waits on this record from the moment it starts this process, so it is taken first.
+if (viaToken) await holdProject();
 
 // ---- what leaves the machine: the source git would commit, and nothing git is told to ignore
 const SKIP_DIR = /^(node_modules|\.git|dist|build|out|coverage|vendor|venv|\.venv|env|target|tmp|\.next|\.nuxt|\.turbo|\.cache|__pycache__|\.terraform|\.wrangler|\.svelte-kit|\.output|\.parcel-cache|\.idea|\.vscode|secrets?|\.secrets?)$/i;
@@ -540,10 +564,9 @@ async function serviceUp(group) {
   if (named && named !== app?.port && (await answers(named))) return signedInAt(group.dir, named);
   // Its own port taken by the app leaves nothing to wait on: whatever answers there is the app.
   if (!named || named === app?.port || !group.plan?.cmd) return null;
-  const kid = spawn("/bin/sh", ["-c", group.plan.cmd], {
+  const kid = spawnTied(group.plan.cmd, {
     cwd: group.plan.cwd,
     env: { ...process.env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) },
-    stdio: ["ignore", "pipe", "pipe"], detached: true,
   });
   sidecars.push(kid);
   const keep = (d) => appendFileSync(bootLog, d.toString());
@@ -596,26 +619,37 @@ async function startApp() {
   step(`starting your app: ${cmd}`);
   const up = await launch(180_000);
   if (up.port) return { port: up.port, cmd: launched.cmd, lifted: Object.keys(lifted) };
-  // Already running: a second start dies on the port the first one holds. The one that is running
-  // is the app, so it is used as it stands rather than treated as a failure.
-  // "Another next dev server is already running" is the same fact in a framework's own words: their
-  // app is up, started from the terminal they were already working in, and the port it holds is not
-  // always the one we asked for. Their running app is the app.
-  if (up.exited !== null && /EADDRINUSE|address already in use|port.{0,40}(?:in use|already used|is taken|unavailable)|another .{0,20}(?:dev )?server is already running|already running (?:on|at) (?:http|port)/i.test(up.tail)) {
-    const ports = [...up.tail.matchAll(/(?::|port\s*[:=]?\s*)(\d{4,5})\b/gi)].map((m) => Number(m[1]));
-    for (const port of new Set(ports)) {
-      if (await answers(port)) {
-        launched = null; child = null; data = null;
-        const took = await takeOver(port);
-        if (took) return took;
-        say(`your app is already running on port ${port}, so that one is used; its request limits stay as they are`);
-        return { port, cmd: null };
-      }
+  // Already running: a second start dies on the port the first one holds. Held by a process running
+  // in this repository, started from the terminal the person was already working in, it is the app
+  // and is used as it stands. "Another next dev server is already running" is the same fact in a
+  // framework's own words, and the port it holds is not always the one asked for. A holder running
+  // from any other folder is another program: it is named, never tested as this app.
+  const ports = up.held ? [] : up.exited !== null && ALREADY.test(up.tail) ? [...new Set([...up.tail.matchAll(/(?::|port\s*[:=]?\s*)(\d{4,5})\b/gi)].map((m) => Number(m[1])))] : [];
+  const holders = up.held ? [up.held] : (await Promise.all(ports.map(holderOf))).filter(Boolean);
+  for (const held of holders) {
+    if (!ownFolder(held.cwd)) return { port: null, said: up.tail, why: whyNot({ ...up, held }) };
+    if (await answers(held.port)) {
+      launched = null; child = null; data = null;
+      const took = await takeOver(held.port);
+      if (took) return took;
+      say(`your app is already running on port ${held.port}, so that one is used; its request limits stay as they are`);
+      return { port: held.port, cmd: null };
     }
   }
   if (up.tail) console.error(up.tail);
+  return { port: null, said: up.tail, why: whyNot(up) };
+}
+// A start that failed because another process holds the port, in the words a framework uses.
+const ALREADY = /EADDRINUSE|address already in use|port.{0,40}(?:in use|already used|is taken|unavailable)|another .{0,20}(?:dev )?server is already running|already running (?:on|at) (?:http|port)/i;
+const rootReal = realpathSync(root);
+const ownFolder = (dir) => { try { const at = realpathSync(dir); return at === rootReal || at.startsWith(rootReal + sep); } catch { return false; } };
+// Why a start did not come up, in a sentence that stands without the terminal: the runner's state
+// carries it to the verbs, and the screen gets the app's own words beside it.
+function whyNot(up) {
+  const h = up.held;
+  if (h) return `port ${h.port} is held by another program (pid ${h.pid}${h.command ? `, ${h.command}` : ""}), so your app cannot listen there${up.fixed ? "; your app sets that port in its own code, so it cannot be moved" : ""}. Stop that program, then save a file here: your app is started again by itself.`;
   const wrongNode = pinned.major && !pinned.bin ? ` This project pins Node ${pinned.major} and this shell runs Node ${shellNode}: switch to ${pinned.major}.` : "";
-  return { port: null, said: up.tail, why: `${up.exited !== null ? "your app stopped before it answered" : "your app did not answer within three minutes"}; what it said is above.${wrongNode}` };
+  return `${up.exited !== null ? "your app stopped before it answered" : "your app did not answer within three minutes"}.${wrongNode} Fix it and save a file here: your app is started again by itself.`;
 }
 
 // An app the person started keeps the limits it started with, and a run needs more than a person
@@ -634,7 +668,7 @@ async function takeOver(port) {
   if (answer && !/^y(?:es)?$/i.test(answer)) return null;
   const top = await supervisorOf(pid);
   step(`stopping your app (pid ${top}) to start it with higher limits`);
-  await stopApp(top);
+  await stopTree(top);
   for (let i = 0; i < 50 && (await answers(port)); i++) await new Promise((r) => setTimeout(r, 200));
   if (await answers(port)) { say("your app did not stop, so it is used as it is"); return null; }
   appDir = plan.cwd ?? root;
@@ -648,25 +682,6 @@ async function takeOver(port) {
   if (up.tail) console.error(up.tail);
   return { port: null, said: up.tail, why: "your app did not come back after the restart." };
 }
-// The process listening on a port.
-async function listenerOn(port) {
-  try { return Number((await exec("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"])).stdout.trim().split("\n")[0]) || null; } catch { return null; }
-}
-// The top of the chain that runs the app: nodemon, npm, the sh -c under it. Climbs from the listener
-// while the parent is a runner, never into the person's own shell or terminal.
-const RUNNER = /^(?:\S*\/)?(?:node|npm|npx|pnpm|yarn|bun|deno|python[\d.]*|uvicorn|gunicorn|flask|tsx|ts-node|nodemon|concurrently|pm2)(?:\s|$)|^(?:\/bin\/)?sh -c\b/;
-async function chainOf(pid) {
-  const rows = (await exec("ps", ["-axo", "pid=,ppid=,etime=,args="])).stdout.trim().split("\n").map((l) => l.trim());
-  const table = new Map(rows.map((l) => { const m = /^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(l); return m ? [Number(m[1]), { pid: Number(m[1]), ppid: Number(m[2]), etime: m[3], args: m[4] }] : [0, null]; }));
-  const chain = table.get(pid) ? [table.get(pid)] : [];
-  for (let i = 0; i < 8 && chain.length; i++) {
-    const parent = table.get(chain.at(-1).ppid);
-    if (!parent || !RUNNER.test(parent.args)) break;
-    chain.push(parent);
-  }
-  return chain;
-}
-const supervisorOf = async (pid) => (await chainOf(pid)).at(-1)?.pid ?? pid;
 
 // What the running app was started from, noted in app.json for the verbs, which run in another
 // process (lib/fresh.mjs): when it started, whether this command started it, whether it reloads on
@@ -758,11 +773,11 @@ async function freePortAbove(port) {
   for (let next = port + 1; next < port + 30; next++) if (!lost.has(next) && !(await listenerOn(next))) return next;
   return null;
 }
-// The port a bind failure names, in the app's own words: uvicorn's "('127.0.0.1', 8105): address
-// already in use", Node's "EADDRINUSE: address already in use :::3000".
-const portInError = (said) => Number(/(\d{4,5})\)?:?\s*address already in use/i.exec(said)?.[1] ?? /(?:EADDRINUSE|address already in use)\D{0,40}?(\d{4,5})\b/i.exec(said)?.[1] ?? 0);
+const PORT_FLAG = /(--port[= ]|-p |\bPORT=)(\d{4,5})\b/;
+// The port a start names: its command's flag, or PORT as this command sets it or an env file does.
+const namedPort = (cmd, lifted) => Number(PORT_FLAG.exec(cmd)?.[2] ?? lifted.PORT ?? envExports(envFiles).PORT ?? 0) || 0;
 async function freed(cmd, lifted) {
-  const m = /(--port[= ]|-p |\bPORT=)(\d{4,5})\b/.exec(cmd);
+  const m = PORT_FLAG.exec(cmd);
   // The app's own env file names its port too: yunqiao's PORT=8105 sat in .env, and a stale copy
   // on that port was reported as "your app stopped" instead of moved past.
   const named = m ? Number(m[2]) : Number(lifted.PORT) || Number(envExports(envFiles).PORT) || 0;
@@ -792,7 +807,7 @@ function dataOnce(started) {
   return data;
 }
 
-async function start(waitMs) {
+async function start(waitMs, tries = 3) {
   const { cmd, lifted } = await freed(launched.cmd, launched.lifted ?? {});
   // The record of what the app writes opens with the app: the first run starts itself on the
   // server's side, with no verb here to mark it, and a restart mid-run keeps the record open.
@@ -801,8 +816,9 @@ async function start(waitMs) {
   const note = { own: true, at: Date.now(), reloads: RELOADER.test(commandText(cmd, appDir)), answered: false };
   note.files = sourceOf(root, files);
   loaded = note;
-  child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...dataOnce(true).env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+  child = spawnTied(cmd, { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...dataOnce(true).env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
   const mine = child;
+  become("starting", { app: mine.pid ?? null });
   let seen = "";
   const onData = (d) => {
     const s = d.toString(); appendFileSync(bootLog, s); seen = (seen + s).slice(-20_000); lastSaid = seen; lastOutputAt = Date.now(); if (verbose) process.stdout.write(s);
@@ -822,15 +838,18 @@ async function start(waitMs) {
     if (exited !== null && !taken) return { port: null, exited, tail: tail() };
     // nodemon and its kind outlive the app they watch: the app is gone, the process is not, and
     // the wait ran its whole three minutes on one app with the reason sitting in the output.
-    // Also: the port is taken, under a watcher that does not exit when its app cannot listen. The app
-    // that holds the port is theirs and already running, which startApp turns into attaching to it.
-    if (/app crashed - waiting for file changes|waiting for (?:file )?changes before restart|Failed running|EADDRINUSE|address already in use/i.test(seen)) {
-      await stopApp(mine.pid);
-      // The port this start named was taken between the check and the bind: the next free one, at
-      // most three times, before the failure is theirs to read.
-      const named = /(?:--port[= ]|-p |\bPORT=)(\d{4,5})\b/.exec(cmd)?.[1] ?? lifted.PORT ?? envExports(envFiles).PORT ?? (portInError(seen) || undefined);
-      if (/EADDRINUSE|address already in use/i.test(seen) && named && lost.size < 3) { lost.add(Number(named)); return start(waitMs); }
-      return { port: null, exited: 1, tail: tail() };
+    // Also: the port is taken, under a watcher that does not exit when its app cannot listen. The
+    // holder is named, and startApp attaches to it only when it runs from this repository.
+    if (taken || /app crashed - waiting for file changes|waiting for (?:file )?changes before restart|Failed running/i.test(seen)) {
+      await stopTree(mine.pid);
+      if (!taken) return { port: null, exited: 1, tail: tail() };
+      // Taken between the check and the bind: a port this start names moves to the next free one, a
+      // bounded number of times. A port the app sets in its own code does not follow it, and starting
+      // the app again only meets the same holder, so the holder is named instead.
+      const named = namedPort(cmd, lifted);
+      const port = portInError(seen) || named;
+      if (named && port === named && tries > 1) { lost.add(named); return start(waitMs, tries - 1); }
+      return { port: null, exited: 1, tail: tail(), held: port ? await holderOf(port) : null, fixed: Boolean(port) && port !== named };
     }
     // The port is what the app's own process group listens on. Never a guess: a developer's
     // machine has other things on 3000 and 8080, and one of them answered for the app once.
@@ -847,6 +866,8 @@ async function start(waitMs) {
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
+  // A start given up on is stopped: the next one never runs beside it.
+  await stopTree(mine.pid);
   return { port: null, exited: null, tail: seen.replace(/\x1b\[[0-9;]*m/g, "").split("\n").filter(Boolean).slice(-12).join("\n") };
 }
 
@@ -860,13 +881,18 @@ async function restartNow() {
   if (!launched || !child) return { error: "You started this app yourself, so restart it in your own terminal. Most dev servers reload on save." };
   const port = app.port;
   say("starting your app again so it runs the code you saved, since it does not reload by itself");
-  await stopApp(child.pid);
+  await stopTree(child.pid);
   // Until the port is free, not merely silent: a listener still closing does not answer and still
   // holds the bind, and the restarted app was moved to the next port while the run kept knocking on
   // this one (resumeforge's verify played seven trials against nothing).
   for (let i = 0; i < 75 && (await listenerOn(port)); i++) await new Promise((r) => setTimeout(r, 200));
   const up = await launch(90_000);
-  if (!up.port) return { error: up.exited !== null ? `Your app exited ${up.exited} on restart.\n${up.tail}` : "Your app was restarted but did not answer within 90 seconds." };
+  if (!up.port) {
+    const error = up.held ? sentence(whyNot(up)) : up.exited !== null ? `Your app exited ${up.exited} on restart.\n${up.tail}` : "Your app was restarted but did not answer within 90 seconds.";
+    become("failed", { error: mask(error).slice(-600) });
+    return { error };
+  }
+  become("up", { port: up.port, app: child?.pid ?? null });
   if (up.port !== port) {
     // It moved anyway: the world follows the app, never the other way round.
     app = up;
@@ -876,32 +902,26 @@ async function restartNow() {
   }
   return { restarted: true, port: up.port };
 }
-// TCP ports your app is listening on: every process descended from the one this program started.
-// By descent, not by process group: nodemon, pm2 and concurrently put the real server in a group of
-// its own, and an app started through one of them was never seen to open its port.
-async function familyOf(pid) {
-  const table = (await exec("ps", ["-axo", "pid=,ppid="])).stdout.trim().split("\n").map((l) => l.trim().split(/\s+/).map(Number));
-  const family = new Set([pid]);
-  for (let grew = true; grew;) { grew = false; for (const [p, parent] of table) if (family.has(parent) && !family.has(p)) { family.add(p); grew = true; } }
-  return [...family];
-}
-async function listening(pid) {
+const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+// The last lines the app printed, masked: what the runner's state carries of its own words.
+const lastLines = (said) => mask(String(said ?? "").split("\n").filter(Boolean).slice(-12).join("\n")).slice(-1500);
+const failedWith = (why, said) => become("failed", { error: mask(why), ...(said ? { said: lastLines(said) } : {}) });
+// ---- leaving: every way out stops the app this command started. This orderly path stops it and
+// tells the server; a death no handler sees (SIGKILL) is covered by the watchdog lib/proc.mjs ties
+// to the app, and the exit hook above releases the project either way.
+async function close(code = 0) {
+  if (closing) return;
+  closing = true;
   try {
-    const { stdout } = await exec("lsof", ["-nP", "-a", "-p", (await familyOf(pid)).join(","), "-iTCP", "-sTCP:LISTEN", "-Fn"]);
-    return [...new Set([...stdout.matchAll(/^n.*:(\d+)$/gm)].map((m) => Number(m[1])).filter((p) => p > 0))];
-  } catch { return []; }
+    if (child?.pid) await stopTree(child.pid);
+    for (const kid of sidecars) if (kid.pid) await stopTree(kid.pid);
+    if (box) await call("DELETE", `/local/${box}`, undefined, { timeoutMs: 5000 }).catch(() => {});
+    await exec("rm", ["-rf", work]).catch(() => {});
+  } finally { process.exit(code); }
 }
-// Your app and everything it started, stopped for certain. A process group is not enough: nodemon
-// gives the real server a group of its own, and one app's server outlived this command as an
-// orphan still holding its port and its production connections. Asked first, then made to.
-async function stopApp(pid) {
-  const family = await familyOf(pid).catch(() => [pid]);
-  const signal = (sig) => { for (const p of family) { try { process.kill(p, sig); } catch { /* already gone */ } } try { process.kill(-pid, sig); } catch { /* no group left */ } };
-  const alive = () => family.some((p) => { try { process.kill(p, 0); return true; } catch { return false; } });
-  signal("SIGTERM");
-  for (let i = 0; i < 15 && alive(); i++) await new Promise((r) => setTimeout(r, 200));
-  if (alive()) signal("SIGKILL");
-}
+const quit = (line) => { try { console.error(`cortad  ${line}`); } catch { /* the terminal is gone */ } return close(1); };
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => close(0));
+process.on("uncaughtException", (e) => { void quit(e?.stack ?? String(e)); });
 
 // ---- go
 say("getting ready");
@@ -955,9 +975,6 @@ capture = makeCapture({ work, keepSecret, writes: join(homeOf(projectOf(root)), 
 } });
 if (!files.length) fail("no source files here to read.");
 
-// Which project this is, as a hash of where it lives: the same folder coming back resumes the same
-// connection, and the path itself never leaves this machine.
-const project = projectOf(root);
 try { copyFileSync(join(homeOf(project), "tools.json"), join(work, "tools.json")); } catch { /* no run has read this project's tools yet */ }
 // The key the last connect left for this project, if any: the token face signs in with it. A connect
 // from the screen always asks for a fresh one, since the code may belong to another account or site.
@@ -971,9 +988,8 @@ const attach = await call("POST", "/local/attach", { ...(viaToken ? {} : { code 
 if (!attach.ok) fail(attach.data?.error ?? `could not sign in (${attach.status})`);
 box = attach.data.box;
 key = attach.data.key;
-// This process is the one holding the app up for this project: lib/cli.mjs reads the file before
-// starting another.
-writeRunner(project, { pid: process.pid, startedAt: new Date().toISOString(), by: viaToken ? "token" : "connect" });
+// Taken once the code is accepted: a mistyped one never ends a runner that was working.
+if (!viaToken) await holdProject();
 
 const list = join(work, "files.txt");
 writeFileSync(list, files.join("\n") + "\n");
@@ -1062,17 +1078,20 @@ async function appLife() {
   for (let first = true; ; first = false) {
     const got = await startApp();
     if (got.port) { app = got; if (!launched) await noteAttached(app.port); break; }
+    failedWith(got.why, got.said);
     await call("POST", `/local/${box}/stopped`, { said: mask(got.said || got.why).slice(-2000) }).catch(() => {});
-    say(got.noStart ? got.why : `${got.why} Fix it and save: it is started again by itself.`);
+    say(got.why);
     // Said with the same words the agent prompt waits for, so an agent holding the terminal reports
     // the failure instead of waiting for a line that never comes.
     if (first) say("your app did not start. Go back to the browser; it says what stopped it. Ctrl-C disconnects.");
     await sourceChanged();
+    become("starting");
     say("saw your change, starting your app again");
   }
   const told = await announce();
   clearStep();
-  if (!told.ok) fail(told.data?.error ?? `could not register your app (${told.status})`);
+  if (!told.ok) return quit(told.data?.error ?? `could not register your app (${told.status})`);
+  become("up", { port: app.port, app: launched ? child?.pid ?? null : null });
   say(`your app is answering on port ${app.port}${app.cmd ? ` · ${app.cmd}` : ""}`);
   say("leave this open. Go back to the browser; Ctrl-C disconnects.");
   let downSince = 0;
@@ -1088,6 +1107,7 @@ async function appLife() {
       downSince = 0; toldDown = false;
       // Said until it is heard. Said once, it was lost when their app came back while the network
       // was down, and the screen went on showing an app that had stopped while it answered turns.
+      if (!up) become("up", { port: app.port, app: launched ? child?.pid ?? null : null });
       if (!up || !appTold) { up = true; appTold = Boolean((await announce().catch(() => null))?.ok); }
       continue;
     }
@@ -1107,7 +1127,12 @@ async function appLife() {
     // `exited`: the process this command started is gone or its watcher said it crashed, not a process
     // running and not answering. The run tells the two apart: one is their crash, the other may be our
     // load. An app it only attached to is not its to watch, so nothing is said either way.
-    if (!toldDown) toldDown = Boolean((await call("POST", `/local/${box}/stopped`, { said: mask(lastSaid || "your app stopped answering").slice(-2000), ...(launched ? { exited: Boolean(appGone || crashed) } : {}) }).catch(() => null))?.ok);
+    if (!toldDown) {
+      // Started again below, except an app given by --port, which is picked up when it answers again.
+      if (!launched && flag("--port")) failedWith(`your app stopped answering on port ${app.port}; it is picked up again when it answers`, lastSaid);
+      else become("starting");
+      toldDown = Boolean((await call("POST", `/local/${box}/stopped`, { said: mask(lastSaid || "your app stopped answering").slice(-2000), ...(launched ? { exited: Boolean(appGone || crashed) } : {}) }).catch(() => null))?.ok);
+    }
     // An app that went quiet or exited did not stop because of a save (it was killed, it ran out
     // of memory, it crashed on a request), so waiting for a save would wait forever. It is started
     // here, whoever started it first: an app this command only attached to (yours, from another
@@ -1117,22 +1142,25 @@ async function appLife() {
     if (!launched && flag("--port")) continue;
     restarting = true;
     try {
-      if (child?.pid) await stopApp(child.pid);
+      if (child?.pid) await stopTree(child.pid);
       say(downLine(state, { port: app.port, downMs: downFor, crashed }));
       let back = launched ? await launch(180_000) : await startApp();
       while (!back.port && !closing) {
+        const why = back.why ?? whyNot(back);
+        failedWith(why, back.tail || back.said);
         await call("POST", `/local/${box}/stopped`, { said: mask(back.tail || back.said || lastSaid).slice(-2000) }).catch(() => {});
-        say("your app did not come back. Fix it and save: it is started again by itself.");
+        say(`your app did not come back: ${why}`);
         await sourceChanged();
+        become("starting");
         say("saw your change, starting your app again");
         back = launched ? await launch(180_000) : await startApp();
       }
       if (back.port && !launched) await noteAttached(back.port);
-      if (back.port) { app = { ...app, ...(back.cmd !== undefined ? back : {}), port: back.port }; up = true; downSince = 0; toldDown = false; appTold = Boolean((await announce().catch(() => null))?.ok); say(`your app is answering again on port ${app.port}`); }
+      if (back.port) { app = { ...app, ...(back.cmd !== undefined ? back : {}), port: back.port }; become("up", { port: app.port, app: launched ? child?.pid ?? null : null }); up = true; downSince = 0; toldDown = false; appTold = Boolean((await announce().catch(() => null))?.ok); say(`your app is answering again on port ${app.port}`); }
     } finally { restarting = false; }
   }
 }
-void appLife().catch((e) => fail(String(e?.message ?? e)));
+void appLife().catch((e) => quit(String(e?.message ?? e)));
 
 // Keep the laptop awake while a world stands on it.
 if (process.platform === "darwin") spawn("caffeinate", ["-i", "-w", String(process.pid)], { stdio: "ignore", detached: true }).unref();
@@ -1149,24 +1177,13 @@ if (argv.includes("--until-idle") && stored) {
   }, 60_000).unref();
 }
 
-async function close(code = 0) {
-  if (closing) return;
-  closing = true;
-  clearRunner(project);
-  await call("DELETE", `/local/${box}`).catch(() => {});
-  if (child?.pid) await stopApp(child.pid);
-  for (const kid of sidecars) if (kid.pid) await stopApp(kid.pid);
-  await exec("rm", ["-rf", work]).catch(() => {});
-  process.exit(code);
-}
-process.on("SIGINT", () => close(0));
-process.on("SIGTERM", () => close(0));
 // A verb in another process asks for the app to be started again before a run, because its code
 // changed and nothing reloaded it (lib/fresh.mjs). The new start is noted as the app answers; one
-// that fails is noted with its reason. A restart already under way answers the same way.
+// that fails is the runner's failed state, with its reason. A restart already under way answers the
+// same way.
 process.on("SIGUSR2", () => {
   if (restarting || !app) return;
-  void restartApp().then((out) => { if (out.error) writeApp(project, { runner: process.pid, failedAt: new Date().toISOString(), error: mask(out.error).slice(-600) }); });
+  void restartApp();
 });
 
 let quiet = 0;
