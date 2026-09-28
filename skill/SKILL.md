@@ -52,10 +52,10 @@ Take the person through them worst first, each with its file and line. A long li
 Each finding says what a verify of it replays and how many clean replays would show the failure gone.
 
 1. One change, in the file and near the line the finding names.
-2. `verify <findingId>`. It replays the trials the finding failed on, word for word, against the saved edit; Cortad starts the app again first when its code changed. Undecided after a round, it replays them again by itself, and `run_status` follows every round under the same id. A `crash:N` finding replays the requests that were out when the app stopped.
-3. Read the verify's text. Replies the app refused or failed on the replay come first: a change that broke the endpoint shows there. Then one of three:
-   - `The failure is gone`: the fix stays.
-   - `The failure stayed`: look again at the reply it quotes and decide what to change next.
+2. `verify <findingId>`. It replays the trials the finding failed on, word for word, against the saved edit; Cortad starts the app again first when its code changed. Undecided after a round, it replays them again by itself, and `run_status` follows every round under the same id. A `crash:N` finding replays the requests that were out when the app stopped; it is gone only when every one comes back 2xx with an answer and the app does not stop.
+3. Read the verify's text. Replies the app refused or failed on the replay come first: a change that broke the endpoint shows there. Then one of these:
+   - `The failure is gone`: no replay failed; the fix stays.
+   - `The failure shows less often but is not gone` or `The failure stayed`: look again at the reply it quotes and decide what to change next.
    - `Cannot tell yet`: never a reason to undo the change; it says how many more clean replays would decide, or why it stopped.
 
    The change is undone only when the held-out line says the fix broke it there; the next change then aims at the behavior the question asks about.

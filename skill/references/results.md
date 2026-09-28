@@ -145,7 +145,7 @@ Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 31 of 31 trials played.
 
 A part marked yours is the app failing: run the request, fix what it shows, then verify the finding named. A part marked ours is Cortad's to fix, and nothing in the app changes for it. A masked value (`<redacted>`) is the app's own sign-in or key; put it back before running the request.
 
-Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes, then `verify crash:1`: it replays the requests that were out when the app stopped, and the failure is gone when each comes back 2xx with an answer. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
+Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes, then `verify crash:1`: it replays the requests that were out when the app stopped, and the failure is gone only when each comes back 2xx with an answer and the app does not stop again. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
 
 A verify replays the trials the finding failed on, word for word, and decides with an exact test against those same trials before the fix. The failure is gone:
 
@@ -162,9 +162,11 @@ Undecided after a round, it replays the failing trials again by itself. The call
 ```
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: running, 3 of 3 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
-Cannot tell yet: 1 of 3 replays failed, against 3 of 3 trials in the run it was found in; 1 more clean replay would show it gone. Replaying the 3 failing trials again now, round 2.
+Cannot tell yet: 1 of 3 replays failed, against 3 of 3 trials in the run it was found in; 1 more clean replay would show it failing less often. Replaying the 3 failing trials again now, round 2.
 next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
 ```
+
+A fall beyond chance with some replays still failing is not gone: `The failure shows less often but is not gone: 3 of 20 replays failed, against 12 of 12 trials in the run it was found in, a fall beyond chance.`, with the reply of one that failed quoted.
 
 The failure stayed. The trials still fail more than the same question does elsewhere in the app, and the reply the replay got is quoted:
 
