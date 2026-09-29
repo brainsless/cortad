@@ -10,6 +10,7 @@
 # The request that asked answered only when it ended with none of its calls still running; otherwise
 # the next request tied to it by an id carries the answer, and completes the exchange when it ends.
 import collections
+import contextvars
 import json
 import re
 import time
@@ -22,6 +23,10 @@ RECENT_KEPT, RECENT_MS = 32, 300000
 # turn (a chat UI shows the message with one event, then answers it with the next).
 BEFORE_MS = 60000
 PROMPTS_KEPT, PROMPT_HEAD = 64, 500
+# The ask the last call pinned in this handler's context was made for. A queue runs each handler in a
+# context of its own, so its later calls, which carry none of the person's words, are told apart by
+# it when several asks are open at once. Only a tiebreak: it never outranks what the rules decide.
+_HELD = contextvars.ContextVar("cortad_asker", default=None)
 
 
 def _scalars(v, out, depth=0):
@@ -59,6 +64,9 @@ class Tied:
         # The heads of the prompts this process sent: one arriving at a server in the same process (an
         # app that serves its own model) is a model call, never a person asking.
         self.prompts = collections.deque(maxlen=PROMPTS_KEPT)
+        # The ask each id's last answered turn was made by: no request up to it is a step of a later
+        # turn, even one that never became an exchange.
+        self.answered = collections.OrderedDict()
 
     def _ids(self, req):
         if "ids" not in req:
@@ -94,47 +102,73 @@ class Tied:
         self.open.pop(req["id"], None)
         asker = req.get("asker")
         if asker and not asker.get("written") and not asker.get("calls_open"):
-            before = [p for p in list(self.recent) if p is not asker and p["at"] < asker["at"] and asker["at"] - p["at"] <= BEFORE_MS and self._ids(p) & req["tie"]]
+            since = max([self.answered[i] for i in req["tie"] if self.answered.get(i, asker["at"]) < asker["at"]], default=0)
+            before = [p for p in list(self.recent) if p is not asker and since < p["at"] < asker["at"] and asker["at"] - p["at"] <= BEFORE_MS and self._ids(p) & req["tie"]]
             for s in before + [asker]:
                 try:
                     self.recent.remove(s)
                 except ValueError:
                     pass
+            asker["answered"] = True
+            self._answered(req["tie"], asker["at"])
             return before + [asker]
         if req["method"] != "GET" and self.body_of(req)[:PROMPT_HEAD] not in self.prompts and (not req.get("noted") or req.get("calls_open")):
             self.recent.append(req)
         return None
 
+    def _answered(self, tie, at):
+        for i in tie:
+            self.answered.pop(i, None)
+            self.answered[i] = at
+        while len(self.answered) > RECENT_KEPT * 8:
+            self.answered.popitem(last=False)
+
     def sent(self, prompt):
         self.prompts.append(prompt[:PROMPT_HEAD])
+
+    # Asks reached through one session are one client's turns, the newest the one being answered: a
+    # client holds a second stream open on its session (a heartbeat) that points at an older ask.
+    @staticmethod
+    def _one_client(found):
+        ties = [f[2] for f in found.values()]
+        return all(ties) and bool(set.intersection(*map(set, ties)))
 
     # The request that asked for the call made with `sent`, or None.
     def pinned(self, sent):
         prompt = self.norm(sent)
         found = {}
+        # Each: the ask, the open fetch to tie to it, and the ids of the session it was reached through.
         for r in list(self.open.values()):
             if r.get("asker"):
-                found[id(r["asker"])] = (r["asker"], None)
+                found[id(r["asker"])] = (r["asker"], None, r.get("tie") or set())
             # A request whose own context made a model call is served there; a call outside it is not its.
             elif r["method"] != "GET" and (not r.get("noted") or r.get("pinned")) and self._says(r, prompt):
-                found[id(r)] = (r, None)
+                found[id(r)] = (r, None, set())
             else:
                 asker = self._asker(r)
                 if asker:
-                    found[id(asker[0])] = (asker[0], (r, asker[1]))
+                    found[id(asker[0])] = (asker[0], (r, asker[1]), asker[1])
         if not found:
             sayers = [t for t in list(self.recent) if self._says(t, prompt)]
             if sayers and all(self._ids(t) & self._ids(sayers[-1]) for t in sayers[:-1]):
-                found[id(sayers[-1])] = (sayers[-1], None)
-        if len(found) > 1:
+                found[id(sayers[-1])] = (sayers[-1], None, set())
+        candidates = dict(found)
+        if len(found) > 1 and not self._one_client(found):
             found = {k: f for k, f in found.items() if self._says(f[0], prompt)}
+        if len(found) > 1 and self._one_client(found):
+            newest = max(found.values(), key=lambda f: f[0]["at"])
+            found = {id(newest[0]): newest}
         if len(found) != 1:
-            return None
-        asker, fetch = next(iter(found.values()))
+            held = _HELD.get()
+            if not held or held.get("answered") or (candidates and id(held) not in candidates):
+                return None
+            found = {id(held): candidates.get(id(held), (held, None, set()))}
+        asker, fetch, _ = next(iter(found.values()))
         if fetch:
             fetch[0]["asker"], fetch[0]["tie"] = asker, fetch[1]
         asker["pinned"] = True
         asker["calls_open"] = asker.get("calls_open", 0) + 1
+        _HELD.set(asker)
         return asker
 
     # A pinned call has answered or failed.
