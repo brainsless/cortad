@@ -952,8 +952,15 @@ def _install():
     # read against this, and a block of it the reply repeats is a leak code decides.
     instructions_max, told_min = 12000, 12
     word_char = re.compile(r"[^\W_]")
+    # The fields read below, in the shapes they are read in. A body with none of them is a shape
+    # this hook cannot read: its instructions stay unrecorded, so the run keeps the read's copy of
+    # the prompt, and "" always means the call really carried none.
+    told_fields = {"system": (str, list, dict), "instructions": (str, list, dict), "systemInstruction": dict,
+                   "messages": list, "input": (str, list), "contents": list, "prompt": str}
 
     def instructions_in(body, words):
+        if not any(isinstance(body.get(k), shape) for k, shape in told_fields.items()):
+            return None
         # Longest first, so a short phrase the person repeated never splits a longer message of theirs.
         said = sorted(words, key=len, reverse=True)
         told = []
@@ -1014,7 +1021,10 @@ def _install():
                 entry["does"] = d["does"].strip()[:does_max]
             entry["requires"] = [k for k in required if isinstance(k, str)][:inputs_max] if isinstance(required, list) else []
             declared.append(entry)
-        out = {"instructions": instructions_in(body, words)}
+        out = {}
+        instructions = instructions_in(body, words)
+        if instructions is not None:
+            out["instructions"] = instructions
         if offered:
             out["offered"] = offered
         if declared:
