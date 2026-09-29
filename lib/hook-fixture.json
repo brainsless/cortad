@@ -563,5 +563,120 @@
       }
     ],
     "unwatched": "cortad: calls to refund_policy in shop_tools.%s are not recorded: REFUND_POLICY there is not a function this hook can wrap."
+  },
+  "providerTools": {
+    "path": "/inference/v1/responses?provider-tools",
+    "sent": {
+      "model": "responses-provider-tools",
+      "stream": true,
+      "tools": [
+        {
+          "type": "web_search_preview",
+          "search_context_size": "high"
+        }
+      ],
+      "input": [
+        {
+          "role": "system",
+          "content": "You are a helpful assistant."
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "What happened in the news this week? Please search."
+            }
+          ]
+        }
+      ]
+    },
+    "type": "text/event-stream",
+    "reply": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_d75ada65063d476da7998c90edbb488b\",\"object\":\"response\",\"created_at\":1790672550,\"status\":\"in_progress\",\"model\":\"accounts/fireworks/models/glm-5p3-flash\",\"output\":[],\"previous_response_id\":null,\"usage\":null,\"error\":null,\"incomplete_details\":null,\"instructions\":null,\"max_output_tokens\":null,\"max_tool_calls\":null,\"parallel_tool_calls\":true,\"reasoning\":null,\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"}},\"tool_choice\":\"auto\",\"tools\":[{\"type\":\"web_search_preview\",\"search_context_size\":\"high\"}],\"top_p\":1.0,\"top_logprobs\":null,\"truncation\":\"disabled\",\"user\":null,\"background\":null,\"metadata\":{}}}\n\ndata: {\"type\":\"response.in_progress\",\"sequence_number\":1,\"response\":{\"id\":\"resp_d75ada65063d476da7998c90edbb488b\",\"object\":\"response\",\"created_at\":1790672550,\"status\":\"in_progress\",\"model\":\"accounts/fireworks/models/glm-5p3-flash\",\"output\":[],\"previous_response_id\":null,\"usage\":null,\"error\":null,\"incomplete_details\":null,\"instructions\":null,\"max_output_tokens\":null,\"max_tool_calls\":null,\"parallel_tool_calls\":true,\"reasoning\":null,\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"}},\"tool_choice\":\"auto\",\"tools\":[{\"type\":\"web_search_preview\",\"search_context_size\":\"high\"}],\"top_p\":1.0,\"top_logprobs\":null,\"truncation\":\"disabled\",\"user\":null,\"background\":null,\"metadata\":{}}}\n\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":2,\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_f094ca61fc374b5ba879db6bbfba0baf\",\"status\":\"in_progress\",\"summary\":[]}}\n\ndata: {\"type\":\"response.reasoning_summary_part.added\",\"sequence_number\":3,\"item_id\":\"rs_f094ca61fc374b5ba879db6bbfba0baf\",\"output_index\":0,\"summary_index\":0,\"part\":{\"type\":\"summary_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":83,\"output_index\":1,\"item\":{\"type\":\"message\",\"id\":\"msg_d137e6375aca4dc2afb896d38fb53fc4\",\"status\":\"in_progress\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"sequence_number\":84,\"item_id\":\"msg_d137e6375aca4dc2afb896d38fb53fc4\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\",\"annotations\":[]}}\n\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":104,\"output_index\":2,\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_e5ea5a2178224f1cb811656e0c62975a\",\"status\":\"in_progress\",\"action\":{\"type\":\"search\",\"query\":\"\"}}}\n\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":105,\"output_index\":3,\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_f05efcf1e7f7468eb01989fb1c595fad\",\"status\":\"in_progress\",\"action\":{\"type\":\"search\",\"query\":\"\"}}}\n\ndata: {\"type\":\"response.reasoning_summary_text.done\",\"sequence_number\":106,\"item_id\":\"rs_f094ca61fc374b5ba879db6bbfba0baf\",\"output_index\":0,\"summary_index\":0,\"text\":\"The user wants to know what happened in the news this week. I should search the web for current news. Let me do a few searches to get a good overview. I'll search for \\\"top news this week\\\" and maybe some category-specific searches. Since the searches are independent, I can make them in parallel.\\n\\nI don't know today's date, so let me search generally first.\"}\n\ndata: {\"type\":\"response.reasoning_summary_part.done\",\"sequence_number\":107,\"item_id\":\"rs_f094ca61fc374b5ba879db6bbfba0baf\",\"output_index\":0,\"summary_index\":0,\"part\":{\"type\":\"summary_text\",\"text\":\"The user wants to know what happened in the news this week. I should search the web for current news. Let me do a few searches to get a good overview. I'll search for \\\"top news this week\\\" and maybe some category-specific searches. Since the searches are independent, I can make them in parallel.\\n\\nI don't know today's date, so let me search generally first.\"}}\n\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":108,\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_f094ca61fc374b5ba879db6bbfba0baf\",\"status\":\"completed\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"The user wants to know what happened in the news this week. I should search the web for current news. Let me do a few searches to get a good overview. I'll search for \\\"top news this week\\\" and maybe some category-specific searches. Since the searches are independent, I can make them in parallel.\\n\\nI don't know today's date, so let me search generally first.\"}]}}\n\ndata: {\"type\":\"response.output_text.done\",\"sequence_number\":109,\"item_id\":\"msg_d137e6375aca4dc2afb896d38fb53fc4\",\"output_index\":1,\"content_index\":0,\"text\":\"I'll search for the latest news to give you an overview of this week's top stories.\"}\n\ndata: {\"type\":\"response.content_part.done\",\"sequence_number\":110,\"item_id\":\"msg_d137e6375aca4dc2afb896d38fb53fc4\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"I'll search for the latest news to give you an overview of this week's top stories.\",\"annotations\":[]}}\n\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":111,\"output_index\":1,\"item\":{\"type\":\"message\",\"id\":\"msg_d137e6375aca4dc2afb896d38fb53fc4\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"I'll search for the latest news to give you an overview of this week's top stories.\",\"annotations\":[]}]}}\n\ndata: {\"type\":\"response.web_search_call.in_progress\",\"sequence_number\":112,\"item_id\":\"ws_e5ea5a2178224f1cb811656e0c62975a\",\"output_index\":2}\n\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":113,\"output_index\":2,\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_e5ea5a2178224f1cb811656e0c62975a\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"top news stories this week\"}}}\n\ndata: {\"type\":\"response.web_search_call.in_progress\",\"sequence_number\":114,\"item_id\":\"ws_f05efcf1e7f7468eb01989fb1c595fad\",\"output_index\":3}\n\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":115,\"output_index\":3,\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_f05efcf1e7f7468eb01989fb1c595fad\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"breaking news today world headlines\"}}}\n\ndata: {\"type\":\"response.web_search_call.searching\",\"sequence_number\":116,\"item_id\":\"ws_e5ea5a2178224f1cb811656e0c62975a\",\"output_index\":4}\n\ndata: {\"type\":\"response.web_search_call.searching\",\"sequence_number\":117,\"item_id\":\"ws_f05efcf1e7f7468eb01989fb1c595fad\",\"output_index\":5}\n\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":118,\"output_index\":6,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_387de1d1cab9453483089c763ab7a4dc\",\"status\":\"in_progress\",\"summary\":[]}}\n\ndata: {\"type\":\"response.reasoning_summary_part.added\",\"sequence_number\":119,\"item_id\":\"rs_387de1d1cab9453483089c763ab7a4dc\",\"output_index\":6,\"summary_index\":0,\"part\":{\"type\":\"summary_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"sequence_number\":187,\"output_index\":7,\"item\":{\"type\":\"message\",\"id\":\"msg_c40bf60efef14d33a3ef1d38d8cff1bf\",\"status\":\"in_progress\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"sequence_number\":188,\"item_id\":\"msg_c40bf60efef14d33a3ef1d38d8cff1bf\",\"output_index\":7,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\",\"annotations\":[]}}\n\ndata: {\"type\":\"response.reasoning_summary_text.done\",\"sequence_number\":456,\"item_id\":\"rs_387de1d1cab9453483089c763ab7a4dc\",\"output_index\":6,\"summary_index\":0,\"text\":\"The web search tool is not enabled for this account. I should inform the user that I can't perform the search, and explain the situation. I should not make up news. I should also note that I don't have access to real-time information otherwise, and my training data has a cutoff. Let me be honest and helpful.\"}\n\ndata: {\"type\":\"response.reasoning_summary_part.done\",\"sequence_number\":457,\"item_id\":\"rs_387de1d1cab9453483089c763ab7a4dc\",\"output_index\":6,\"summary_index\":0,\"part\":{\"type\":\"summary_text\",\"text\":\"The web search tool is not enabled for this account. I should inform the user that I can't perform the search, and explain the situation. I should not make up news. I should also note that I don't have access to real-time information otherwise, and my training data has a cutoff. Let me be honest and helpful.\"}}\n\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":458,\"output_index\":6,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_387de1d1cab9453483089c763ab7a4dc\",\"status\":\"completed\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"The web search tool is not enabled for this account. I should inform the user that I can't perform the search, and explain the situation. I should not make up news. I should also note that I don't have access to real-time information otherwise, and my training data has a cutoff. Let me be honest and helpful.\"}]}}\n\ndata: {\"type\":\"response.output_text.done\",\"sequence_number\":459,\"item_id\":\"msg_c40bf60efef14d33a3ef1d38d8cff1bf\",\"output_index\":7,\"content_index\":0,\"text\":\"I'm sorry, but I wasn't able to complete the search. When I tried to look up this week's news, I received an error indicating that **web search is not enabled for this account**.\\n\\nBecause of this, I can't provide you with current news, and I want to be upfront: I don't want to make up or guess at recent events. My own knowledge also has a training cutoff, so I can't reliably tell you what happened this week on my own.\\n\\nHere are a few options you might find helpful:\\n\\n1. **Enable web search** — If you're the account administrator, you may be able to enable the search capability in your account or workspace settings, and I'd be happy to try again.\\n2. **Visit news sources directly** — Sites like [Reuters](https://www.reuters.com), [AP News](https://apnews.com), [BBC News](https://www.bbc.com/news), or [NPR](https://www.npr.org) offer up-to-the-minute coverage.\\n3. **Ask me about a specific topic** — If you tell me a general topic or region you're interested in, I can share background information and context (while being clear about what I may not know regarding the latest developments).\\n\\nWould you like me to try anything else?\"}\n\ndata: {\"type\":\"response.content_part.done\",\"sequence_number\":460,\"item_id\":\"msg_c40bf60efef14d33a3ef1d38d8cff1bf\",\"output_index\":7,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"I'm sorry, but I wasn't able to complete the search. When I tried to look up this week's news, I received an error indicating that **web search is not enabled for this account**.\\n\\nBecause of this, I can't provide you with current news, and I want to be upfront: I don't want to make up or guess at recent events. My own knowledge also has a training cutoff, so I can't reliably tell you what happened this week on my own.\\n\\nHere are a few options you might find helpful:\\n\\n1. **Enable web search** — If you're the account administrator, you may be able to enable the search capability in your account or workspace settings, and I'd be happy to try again.\\n2. **Visit news sources directly** — Sites like [Reuters](https://www.reuters.com), [AP News](https://apnews.com), [BBC News](https://www.bbc.com/news), or [NPR](https://www.npr.org) offer up-to-the-minute coverage.\\n3. **Ask me about a specific topic** — If you tell me a general topic or region you're interested in, I can share background information and context (while being clear about what I may not know regarding the latest developments).\\n\\nWould you like me to try anything else?\",\"annotations\":[]}}\n\ndata: {\"type\":\"response.output_item.done\",\"sequence_number\":461,\"output_index\":7,\"item\":{\"type\":\"message\",\"id\":\"msg_c40bf60efef14d33a3ef1d38d8cff1bf\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"I'm sorry, but I wasn't able to complete the search. When I tried to look up this week's news, I received an error indicating that **web search is not enabled for this account**.\\n\\nBecause of this, I can't provide you with current news, and I want to be upfront: I don't want to make up or guess at recent events. My own knowledge also has a training cutoff, so I can't reliably tell you what happened this week on my own.\\n\\nHere are a few options you might find helpful:\\n\\n1. **Enable web search** — If you're the account administrator, you may be able to enable the search capability in your account or workspace settings, and I'd be happy to try again.\\n2. **Visit news sources directly** — Sites like [Reuters](https://www.reuters.com), [AP News](https://apnews.com), [BBC News](https://www.bbc.com/news), or [NPR](https://www.npr.org) offer up-to-the-minute coverage.\\n3. **Ask me about a specific topic** — If you tell me a general topic or region you're interested in, I can share background information and context (while being clear about what I may not know regarding the latest developments).\\n\\nWould you like me to try anything else?\",\"annotations\":[]}]}}\n\ndata: {\"type\":\"response.completed\",\"sequence_number\":462,\"response\":{\"id\":\"resp_d75ada65063d476da7998c90edbb488b\",\"object\":\"response\",\"created_at\":1790672557,\"status\":\"completed\",\"model\":\"accounts/fireworks/models/glm-5p3-flash\",\"output\":[{\"id\":\"rs_f094ca61fc374b5ba879db6bbfba0baf\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"The user wants to know what happened in the news this week. I should search the web for current news. Let me do a few searches to get a good overview. I'll search for \\\"top news this week\\\" and maybe some category-specific searches. Since the searches are independent, I can make them in parallel.\\n\\nI don't know today's date, so let me search generally first.\"}]},{\"id\":\"msg_d137e6375aca4dc2afb896d38fb53fc4\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"I'll search for the latest news to give you an overview of this week's top stories.\",\"annotations\":[]}],\"status\":\"completed\"},{\"id\":\"ws_e5ea5a2178224f1cb811656e0c62975a\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"top news stories this week\"}},{\"id\":\"ws_f05efcf1e7f7468eb01989fb1c595fad\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"breaking news today world headlines\"}},{\"type\":\"tool_output\",\"tool_call_id\":\"chatcmpl-tool-a76d519b8710dba6\",\"output\":\"Error: Web search is not enabled for this account (allow-search-gateway).\"},{\"type\":\"tool_output\",\"tool_call_id\":\"chatcmpl-tool-8b3db9724bd4515a\",\"output\":\"Error: Web search is not enabled for this account (allow-search-gateway).\"},{\"id\":\"rs_387de1d1cab9453483089c763ab7a4dc\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"The web search tool is not enabled for this account. I should inform the user that I can't perform the search, and explain the situation. I should not make up news. I should also note that I don't have access to real-time information otherwise, and my training data has a cutoff. Let me be honest and helpful.\"}]},{\"id\":\"msg_c40bf60efef14d33a3ef1d38d8cff1bf\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"I'm sorry, but I wasn't able to complete the search. When I tried to look up this week's news, I received an error indicating that **web search is not enabled for this account**.\\n\\nBecause of this, I can't provide you with current news, and I want to be upfront: I don't want to make up or guess at recent events. My own knowledge also has a training cutoff, so I can't reliably tell you what happened this week on my own.\\n\\nHere are a few options you might find helpful:\\n\\n1. **Enable web search** — If you're the account administrator, you may be able to enable the search capability in your account or workspace settings, and I'd be happy to try again.\\n2. **Visit news sources directly** — Sites like [Reuters](https://www.reuters.com), [AP News](https://apnews.com), [BBC News](https://www.bbc.com/news), or [NPR](https://www.npr.org) offer up-to-the-minute coverage.\\n3. **Ask me about a specific topic** — If you tell me a general topic or region you're interested in, I can share background information and context (while being clear about what I may not know regarding the latest developments).\\n\\nWould you like me to try anything else?\",\"annotations\":[]}],\"status\":\"completed\"}],\"previous_response_id\":null,\"usage\":{\"input_tokens\":447,\"output_tokens\":464,\"total_tokens\":911,\"input_tokens_details\":{\"cached_tokens\":0}},\"error\":null,\"incomplete_details\":null,\"instructions\":null,\"max_output_tokens\":null,\"max_tool_calls\":null,\"parallel_tool_calls\":true,\"reasoning\":null,\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"}},\"tool_choice\":\"auto\",\"tools\":[{\"type\":\"web_search_preview\",\"search_context_size\":\"high\"}],\"top_p\":0.95,\"top_logprobs\":null,\"truncation\":\"disabled\",\"user\":null,\"background\":null,\"metadata\":{}}}\n\ndata: [DONE]\n\n",
+    "note": "Recorded 2026-09-29 from a real Responses API stream: an app offers web_search_preview, the provider runs two searches, streams both calls as completed and hands back one error per call as tool_output items in the completed response. Text and reasoning delta events are left out.",
+    "called": [
+      {
+        "name": "web_search_preview",
+        "arguments": "{\"type\":\"search\",\"query\":\"top news stories this week\"}"
+      },
+      {
+        "name": "web_search_preview",
+        "arguments": "{\"type\":\"search\",\"query\":\"breaking news today world headlines\"}"
+      }
+    ],
+    "tools": [
+      {
+        "name": "web_search_preview",
+        "text": "Error: Web search is not enabled for this account (allow-search-gateway).",
+        "provider": true
+      }
+    ]
+  },
+  "refusedArgs": {
+    "note": "The model calls a declared tool without the input its schema requires, and a second tool with everything it needs: only the first is refused.",
+    "path": "/v1/chat/completions?refused",
+    "sent": {
+      "model": "refused-args",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Where is my parcel? My number ends 3721."
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "track_order",
+            "description": "Where an order is.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "order_id": {
+                  "type": "string"
+                },
+                "phone_last4": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "order_id"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "list_orders",
+            "description": "A customer's orders.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "phone_last4": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "phone_last4"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "type": "application/json",
+    "reply": "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": null, \"tool_calls\": [{\"id\": \"call_9\", \"type\": \"function\", \"function\": {\"name\": \"track_order\", \"arguments\": \"{\\\"phone_last4\\\":\\\"3721\\\"}\"}}, {\"id\": \"call_10\", \"type\": \"function\", \"function\": {\"name\": \"list_orders\", \"arguments\": \"{\\\"phone_last4\\\":\\\"3721\\\"}\"}}]}}]}",
+    "called": [
+      {
+        "name": "track_order",
+        "arguments": "{\"phone_last4\":\"3721\"}",
+        "refused": "the required input \"order_id\" is missing"
+      },
+      {
+        "name": "list_orders",
+        "arguments": "{\"phone_last4\":\"3721\"}"
+      }
+    ]
   }
 }
