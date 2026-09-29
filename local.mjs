@@ -487,8 +487,9 @@ async function verb(job) {
     case "lock": return { locked: Array.isArray(b.hosts) ? b.hosts.length : 0 };
     // What your app spent on its providers, from the hook inside it. An app this command did not
     // start has no hook, and the empty answer says the meter is absent rather than that nothing was spent.
-    // Masked like every other reply: a tool's answer can carry a value from their env files.
-    case "usage": return capture ? JSON.parse(mask(JSON.stringify(capture.usage() ?? {}))) : {};
+    // Masked like every other reply: a tool's answer can carry a value from their env files. The
+    // calls of the `turn` asked about also say what their model was told.
+    case "usage": return capture ? JSON.parse(mask(JSON.stringify(capture.usage(b.turn) ?? {}))) : {};
     // Every route your app holds, read by the hook off the app itself, masked like the meter.
     case "routes": return capture ? JSON.parse(mask(JSON.stringify(capture.registry(app?.port)))) : {};
     // A world is ended from this terminal, never from the cloud.
