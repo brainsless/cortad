@@ -1191,8 +1191,9 @@ def _install():
         cookies = [c.split(";")[0].split("=")[0].strip() for c in said_of(req, "set-cookie")][:20]
         if cookies:
             row["cookies"] = cookies
-        # The app began its reply and it never finished, so the row holds part of it (a client that
-        # stopped reading after the first bytes, or an app that broke off mid-stream).
+        # The app began its reply and it never finished, so the row holds part of it. Either side may
+        # have closed it (a client that stopped reading, an app that broke off mid-stream), so nothing
+        # downstream says which.
         if req.get("status") and not req.get("finished"):
             row["cut"] = True
         return row
