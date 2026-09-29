@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from openai import OpenAI
 
 SYSTEM = "You are Rio, a cooking helper. Always name one ingredient you would swap."
+# A block an agent framework adds among the prompt's messages, which the model never says.
+REMINDER = "<system-reminder>The kitchen closes at 22:00.</system-reminder>"
 histories = {}
 
 
@@ -165,6 +167,64 @@ async def ask(request: Request):
         history.append({"role": "assistant", "content": said})
 
     return StreamingResponse(tokens(), media_type="text/event-stream")
+
+
+# The reply streams as named events: the app sends the prompt's reminder as a hint of its own before
+# the model's words, and hands each event on through a generator that only passes them along.
+def streamed(question):
+    yield "event: hint\ndata: %s\n\n" % json.dumps({"text": REMINDER})
+    for chunk in complete([{"role": "system", "content": REMINDER}, {"role": "user", "content": question}], stream=True):
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield "event: delta\ndata: %s\n\n" % json.dumps({"text": chunk.choices[0].delta.content})
+
+
+@app.post("/hinted")
+async def hinted(request: Request):
+    body = await request.json()
+
+    async def relay():
+        for event in streamed(body["question"]):
+            yield event
+
+    return StreamingResponse(relay(), media_type="text/event-stream")
+
+
+# The same stream behind an HTTP middleware, which reads the reply on a task of its own off a stream
+# the response writes into.
+behind = FastAPI()
+
+
+@behind.middleware("http")
+async def passed_through(request: Request, call_next):
+    return await call_next(request)
+
+
+behind.post("/hinted")(hinted)
+app.mount("/behind", behind)
+
+
+# A JSON reply behind an ASGI middleware of the app's own that only passes each request on: the
+# framework renders the reply after the handler has returned, so no line of the app is on the stack
+# that sends it but the middleware's, which wrote nothing.
+class Timed:
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        await self.inner(scope, receive, send)
+
+
+timed = FastAPI()
+
+
+@timed.post("/told")
+async def told(request: Request):
+    body = await request.json()
+    said = complete([{"role": "system", "content": REMINDER}, {"role": "user", "content": body["question"]}]).choices[0].message.content
+    return {"reply": REMINDER + " " + said}
+
+
+app.mount("/timed", Timed(timed))
 
 
 # Looks the question up in a vector store that has nothing, then answers anyway.
