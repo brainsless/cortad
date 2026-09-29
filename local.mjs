@@ -854,16 +854,17 @@ async function start(waitMs, tries = 3) {
   return { port: null, exited: null, tail: seen.replace(/\x1b\[[0-9;]*m/g, "").split("\n").filter(Boolean).slice(-12).join("\n") };
 }
 
+const COPIED = "starting your app again so it runs against the copies made for this session";
 // The same command again, for an app that does not reload on save. Only an app this program
 // started: one you started yourself is yours to restart.
-async function restartApp() {
+async function restartApp(why = "starting your app again so it runs the code you saved, since it does not reload by itself") {
   restarting = true;
-  try { return await restartNow(); } finally { restarting = false; }
+  try { return await restartNow(why); } finally { restarting = false; }
 }
-async function restartNow() {
+async function restartNow(why) {
   if (!launched || !child) return { error: "You started this app yourself, so restart it in your own terminal. Most dev servers reload on save." };
   const port = app.port;
-  say("starting your app again so it runs the code you saved, since it does not reload by itself");
+  say(why);
   await stopTree(child.pid);
   // Until the port is free, not merely silent: a listener still closing does not answer and still
   // holds the bind, and the restarted app was moved to the next port while the run kept knocking on
@@ -897,8 +898,10 @@ async function close(code = 0) {
   closing = true;
   try {
     if (child?.pid) await stopTree(child.pid);
-    for (const kid of sidecars) if (kid.pid) await stopTree(kid.pid);
+    // A copy lives on its store, and a store can be a service of the repository started beside the
+    // app: the copies go first, while it still answers.
     await keeping.close();
+    for (const kid of sidecars) if (kid.pid) await stopTree(kid.pid);
     if (box) await call("DELETE", `/local/${box}`, undefined, { timeoutMs: 5000 }).catch(() => {});
     await exec("rm", ["-rf", work]).catch(() => {});
   } finally { process.exit(code); }
@@ -1087,8 +1090,13 @@ async function appLife() {
   let downSince = 0;
   let toldDown = false;
   let appTold = true;
-  // A second service of this repository its settings call, brought up once the app's own port is known.
-  if (launched && (await keeping.services(app.port).catch(() => false))) appTold = false;
+  // The stores and services its settings name, brought up once the app's own port is known; a
+  // store copied only now is one the app was not started on.
+  if (launched) {
+    const got = await keeping.services(app.port).catch(() => ({}));
+    if (got.copied && child) await restartApp(COPIED);
+    if (got.changed) appTold = false;
+  }
   forgetTold = () => { appTold = false; };
   const health = makeHealth({ host: () => appHost, gone: () => Boolean(launched && appGone), inFlight: () => answering });
   for (let up = true; !closing;) {
@@ -1101,7 +1109,7 @@ async function appLife() {
       // was down, and the screen went on showing an app that had stopped while it answered turns.
       if (!up) become("up", { port: app.port, app: launched ? child?.pid ?? null : null });
       const reach = await keeping.watch(app.port).catch(() => ({}));
-      if (reach.copied && launched && child) await restartApp();
+      if (reach.copied && launched && child) await restartApp(COPIED);
       if (reach.changed) appTold = false;
       if (!up || !appTold) { up = true; appTold = Boolean((await announce().catch(() => null))?.ok); }
       continue;
