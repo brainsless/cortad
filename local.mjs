@@ -939,7 +939,7 @@ if (explain) {
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
     `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records each request during which your app calls a model, what it answered and the model calls on the way; header values stay here`,
     `your files      never written by this program; your own coding agent edits them`,
-    `your database   a database file your env or code names is copied to this program's temp folder; a Postgres or Redis database on this machine is copied on its own server under a name of ours and deleted at the end; your app is started on the copies. Any other store is named, not copied`,
+    `your database   a database file your env or code names is copied to this program's temp folder; a Postgres, Redis or MongoDB database or a Qdrant collection on this machine is copied on its own server under a name of ours and deleted at the end; your app is started on the copies. Any other store is named, not copied`,
     `your services   a store your compose file runs, or a second service of this repository, is started when your app reaches for it and nothing answers there, and stopped at the end`,
     `test shell      confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
     `for your agent  an MCP entry and a skill in each coding agent's own home folder (Claude Code, Codex, Cursor), and a key in ~/.cortad for later runs`,
