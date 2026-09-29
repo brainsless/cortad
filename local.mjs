@@ -292,6 +292,11 @@ let forgetTold = null;
 // The run's requests your app has not answered yet: a slow health probe while any are open is our
 // load on it, not a hang.
 let answering = 0;
+// Closed while a store the app reaches is brought up and copied, until the app runs on the copy: the
+// run's requests wait at it rather than write into the original.
+let gate = null;
+const hold = () => { if (!gate) { let open; gate = new Promise((r) => { open = r; }); gate.open = () => { gate = null; open(); }; } };
+const release = () => gate?.open();
 const mask = (text) => { let s = String(text ?? ""); for (const v of secrets) s = s.split(v).join("[masked]"); return s; };
 
 // ---- the wire
@@ -431,7 +436,7 @@ async function verb(job) {
         const said = Object.fromEntries([...res.headers].filter(([k]) => !/^set-cookie2?$/i.test(k)).map(([k, v]) => [k, mask(v)]));
         return { status: res.status, headers: said, body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
       };
-      const counted = async () => { answering += 1; try { return await ask(); } finally { answering -= 1; } };
+      const counted = async () => { await gate; answering += 1; try { return await ask(); } finally { answering -= 1; } };
       try { return await counted(); }
       catch (e) {
         const code = String(e.cause?.code ?? e.code ?? "");
@@ -700,7 +705,7 @@ async function launch(waitMs) {
   let up = await start(waitMs);
   // Only an app that stopped: one still running has not failed to start, whatever it printed.
   if (up.port || up.exited === null) return up;
-  if (await keeping.backUp(app?.port)) {
+  if (await keeping.backUp(app?.port).finally(release)) {
     up = await start(waitMs);
     if (up.port || up.exited === null) return up;
   }
@@ -776,7 +781,7 @@ async function freed(cmd, lifted) {
 // was copied, started, or left where trials write into it is told in the terminal here and to the
 // run with the app (announce), so status says it beside Run and the report keeps it.
 const keeping = makeKeeping({
-  root, work, ledgerFile: join(homeOf(project), "made.json"), onPath, say,
+  root, work, ledgerFile: join(homeOf(project), "made.json"), onPath, say, hold,
   launch: (plan) => sidecar(plan.cmd, plan.cwd),
   connections: () => capture?.connections() ?? [],
   settings: () => {
@@ -1093,9 +1098,11 @@ async function appLife() {
   // The stores and services its settings name, brought up once the app's own port is known; a
   // store copied only now is one the app was not started on.
   if (launched) {
-    const got = await keeping.services(app.port).catch(() => ({}));
-    if (got.copied && child) await restartApp(COPIED);
-    if (got.changed) appTold = false;
+    try {
+      const got = await keeping.services(app.port).catch(() => ({}));
+      if (got.copied && child) await restartApp(COPIED);
+      if (got.changed) appTold = false;
+    } finally { release(); }
   }
   forgetTold = () => { appTold = false; };
   const health = makeHealth({ host: () => appHost, gone: () => Boolean(launched && appGone), inFlight: () => answering });
@@ -1109,7 +1116,7 @@ async function appLife() {
       // was down, and the screen went on showing an app that had stopped while it answered turns.
       if (!up) become("up", { port: app.port, app: launched ? child?.pid ?? null : null });
       const reach = await keeping.watch(app.port).catch(() => ({}));
-      if (reach.copied && launched && child) await restartApp(COPIED);
+      try { if (reach.copied && launched && child) await restartApp(COPIED); } finally { release(); }
       if (reach.changed) appTold = false;
       if (!up || !appTold) { up = true; appTold = Boolean((await announce().catch(() => null))?.ok); }
       continue;
