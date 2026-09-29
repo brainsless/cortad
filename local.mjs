@@ -873,22 +873,29 @@ const COPIED = "starting your app again so it runs against the copies made for t
 // A restart waits this long for the run's requests already at your app, then goes ahead: one it
 // cuts is sent again once your app answers.
 const DRAIN_MS = 20_000;
-// The same command again, for an app that does not reload on save. Only an app this program
-// started: one you started yourself is yours to restart. New requests wait at the gate meanwhile,
-// and a restart asked for while one is under way is that one.
+// One start of your app at a time, whoever asks for it: a save, a verb, the copies made for this
+// session, or the health loop bringing back an app that stopped. One asked for while another is under
+// way is that one, so a second file saved while a crashed app comes back never kills its start.
 let restartDone = null;
-function restartApp(why = "starting your app again so it runs the code you saved, since it does not reload by itself") {
-  if (!launched || !child) return Promise.resolve({ error: "You started this app yourself, so restart it in your own terminal. Most dev servers reload on save." });
+function restartOnce(work) {
   restartDone ??= (async () => {
     restarting = true;
+    try { return await work(); } finally { restarting = false; restartDone = null; }
+  })();
+  return restartDone;
+}
+// The same command again, for an app that does not reload on save. Only an app this program
+// started: one you started yourself is yours to restart. New requests wait at the gate meanwhile.
+function restartApp(why = "starting your app again so it runs the code you saved, since it does not reload by itself") {
+  if (!launched || !child) return Promise.resolve({ error: "You started this app yourself, so restart it in your own terminal. Most dev servers reload on save." });
+  return restartOnce(async () => {
     hold();
     say(why);
     try {
       for (const end = Date.now() + DRAIN_MS; answering > 0 && Date.now() < end;) await new Promise((r) => setTimeout(r, 250));
       return await restartNow();
-    } finally { restarting = false; restartDone = null; release(); }
-  })();
-  return restartDone;
+    } finally { release(); }
+  });
 }
 // Saved since your app started, in a file it runs: bytes written back as they were are not a change,
 // and neither is a file the app wrote itself.
@@ -1187,8 +1194,7 @@ async function appLife() {
     // knows how it starts. Only an app given by --port is left to you, and picked up when it returns.
     if (launched && !appGone && !crashed && downFor < 25_000) continue;
     if (!launched && flag("--port")) continue;
-    restarting = true;
-    try {
+    await restartOnce(async () => {
       if (child?.pid) await stopTree(child.pid);
       say(downLine(state, { port: app.port, downMs: downFor, crashed }));
       let back = launched ? await launch(180_000) : await startApp();
@@ -1202,9 +1208,15 @@ async function appLife() {
         say("saw your change, starting your app again");
         back = launched ? await launch(180_000) : await startApp();
       }
-      if (back.port && !launched) await noteAttached(back.port);
-      if (back.port) { app = { ...app, ...(back.cmd !== undefined ? back : {}), port: back.port }; become("up", { port: app.port, app: launched ? child?.pid ?? null : null }); up = true; downSince = 0; toldDown = false; appTold = Boolean((await announce().catch(() => null))?.ok); say(`your app is answering again on port ${app.port}`); }
-    } finally { restarting = false; }
+      if (!back.port) return { error: "This command is closing." };
+      if (!launched) await noteAttached(back.port);
+      app = { ...app, ...(back.cmd !== undefined ? back : {}), port: back.port };
+      become("up", { port: app.port, app: launched ? child?.pid ?? null : null });
+      up = true; downSince = 0; toldDown = false;
+      appTold = Boolean((await announce().catch(() => null))?.ok);
+      say(`your app is answering again on port ${app.port}`);
+      return { restarted: true, port: app.port };
+    });
   }
 }
 void appLife().catch((e) => quit(String(e?.message ?? e)));
