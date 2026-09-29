@@ -1058,7 +1058,7 @@ function sourceChanged() {
 // reaching the model is posted as its door's proof, so the run waits for those.
 const announce = async () => {
   const hooked = Boolean(launched && capture?.watching(app.port));
-  return call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: await keeping.lines(Boolean(launched)), watching: hooked, metered: hooked, proves: hooked });
+  return call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: (await keeping.lines(Boolean(launched))).map(mask), watching: hooked, metered: hooked, proves: hooked });
 };
 
 // Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
