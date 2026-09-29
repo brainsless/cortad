@@ -148,10 +148,6 @@ finding:1  Does the reply state a refund policy the product does not publish?
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
-Where each trial ended, at its last reply: resolved 29, partial 14, deflected 5, unresolved 3 of 51 trials; 8 ended deflected or unresolved, 8% to 28%. Most in journey billing question: 4 of 9.
-How the customer sounded at the end, 0 calm to 3 angry: 0: 30, 1: 14, 2: 7, 3: 0 of 51 trials, average 0.55; 7 frustrated, 7% to 26%. Most in segment plan free: 5 of 20. By reply: 1: 0.31, 2 of 51 frustrated; 2: 0.62, 5 of 40 frustrated; 3: 0.88, 6 of 22 frustrated.
-Asked for a person: asked 3, did-not 48 of 51 trials; 3 asked for a person, 2% to 16%. Most in journey billing question: 2 of 9.
-112 questions measured, 9 broke in at least one trial. Every number by journey, segment, situation and reply: findings numbers.
 112 of 140 checks measured.
 28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
 Score 71 of 100: 27 of the 38 trials that asked your app's own promises kept every one, interval 55 to 83.
@@ -280,10 +276,6 @@ finding:3  Does the reply promise a refund the billing page does not offer?
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
-Where each trial ended, at its last reply: resolved 29, partial 14, deflected 5, unresolved 3 of 51 trials; 8 ended deflected or unresolved, 8% to 28%. Most in journey billing question: 4 of 9.
-How the customer sounded at the end, 0 calm to 3 angry: 0: 30, 1: 14, 2: 7, 3: 0 of 51 trials, average 0.55; 7 frustrated, 7% to 26%. Most in segment plan free: 5 of 20. By reply: 1: 0.31, 2 of 51 frustrated; 2: 0.62, 5 of 40 frustrated; 3: 0.88, 6 of 22 frustrated.
-Asked for a person: asked 3, did-not 48 of 51 trials; 3 asked for a person, 2% to 16%. Most in journey billing question: 2 of 9.
-112 questions measured, 9 broke in at least one trial. Every number by journey, segment, situation and reply: findings numbers.
 112 of 140 checks measured.
 28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
 Score 71 of 100: 27 of the 38 trials that asked your app's own promises kept every one, interval 55 to 83.
