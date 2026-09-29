@@ -39,7 +39,9 @@ When the plan is spent, `run` says so and nothing runs.
 
 ## Findings
 
-`findings` lists what failed, worst first, grouped by the file and line the rule lives at. Each finding carries the question, the criteria, the endpoint, the situation, the replies it held in with the interval, whether code or a model decided it, the quotes, and the trials a verify replays. "Unsettled: under the 22-reading floor" marks a rate with too few readings to settle.
+`findings` lists what failed, worst first, grouped by the file and line the rule lives at. Each finding carries the question, the criteria, the endpoint, the situation, the trials it broke in with the interval, whether code or a model decided it, the exchanges, and the trials a verify replays. After the findings: where the trials ended, how their customers sounded, whether they asked for a person, and how much of each ask was answered.
+
+`findings` with show numbers (`npx {{cortad}} findings numbers`) gives every number the run measured: each question and each of those measurements over the run and by journey, persona segment, situation and reply, with its interval and the exchange behind its worst group.
 
 Take the person through them worst first, each with its file and line. A long list comes in pages; the last line names the next page.
 

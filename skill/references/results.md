@@ -148,6 +148,10 @@ finding:1  Does the reply state a refund policy the product does not publish?
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
+Where each trial ended, at its last reply: resolved 29, partial 14, deflected 5, unresolved 3 of 51 trials; 8 ended deflected or unresolved, 8% to 28%. Most in journey billing question: 4 of 9.
+How the customer sounded at the end, 0 calm to 3 angry: 0: 30, 1: 14, 2: 7, 3: 0 of 51 trials, average 0.55; 7 frustrated, 7% to 26%. Most in segment plan free: 5 of 20. By reply: 1: 0.31, 2 of 51 frustrated; 2: 0.62, 5 of 40 frustrated; 3: 0.88, 6 of 22 frustrated.
+Asked for a person: asked 3, did-not 48 of 51 trials; 3 asked for a person, 2% to 16%. Most in journey billing question: 2 of 9.
+112 questions measured, 9 broke in at least one trial. Every number by journey, segment, situation and reply: findings numbers.
 112 of 140 checks measured.
 28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
 Score 71 of 100: 27 of the 38 trials that asked your app's own promises kept every one, interval 55 to 83.
@@ -276,12 +280,39 @@ finding:3  Does the reply promise a refund the billing page does not offer?
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
+Where each trial ended, at its last reply: resolved 29, partial 14, deflected 5, unresolved 3 of 51 trials; 8 ended deflected or unresolved, 8% to 28%. Most in journey billing question: 4 of 9.
+How the customer sounded at the end, 0 calm to 3 angry: 0: 30, 1: 14, 2: 7, 3: 0 of 51 trials, average 0.55; 7 frustrated, 7% to 26%. Most in segment plan free: 5 of 20. By reply: 1: 0.31, 2 of 51 frustrated; 2: 0.62, 5 of 40 frustrated; 3: 0.88, 6 of 22 frustrated.
+Asked for a person: asked 3, did-not 48 of 51 trials; 3 asked for a person, 2% to 16%. Most in journey billing question: 2 of 9.
+112 questions measured, 9 broke in at least one trial. Every number by journey, segment, situation and reply: findings numbers.
 112 of 140 checks measured.
 28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
 Score 71 of 100: 27 of the 38 trials that asked your app's own promises kept every one, interval 55 to 83.
 1,204 readings of 112 questions: 1,100 held, 54 unclear.
 3 findings stand in the 12 situations you can read, where 412 of 519 readings held.
 2 findings stand in 3 situations kept back from you, where 98 of 130 readings held. A fix is graded on those too.
+```
+
+## findings numbers
+
+Every number the run measured, one table per measurement and per question, each group on its own row: its counts in the order the table names, of how many trials or replies, and the 95% interval on the share named. A situation kept back from you shows its numbers and never its exchanges.
+
+```
+Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: every number it measured, 6 measurements and 112 questions over 51 trials, 138 replies and 9,806 readings.
+A trial counts once in each group it played in; a reply split counts each trial at that reply.
+
+Where each trial ended, at its last reply
+  resolved: the assistant delivered what the customer asked for; partial: the assistant delivered some of it, or a workaround; deflected: the assistant declined, redirected, or asked for clarification instead of helping; unresolved: the customer's request was not met and the conversation stalled or ended
+  Counted as: resolved, partial, deflected, unresolved of trials; then how many ended deflected or unresolved, with the 95% interval.
+  All: 29, 14, 5, 3 of 51 trials; 8, 8% to 28%
+  By journey:
+    billing question: 3, 2, 3, 1 of 9 trials; 4, 19% to 73%
+    homework help: 18, 7, 1, 1 of 27 trials; 2, 2% to 23%
+  By reply:
+    reply 1: 22, 17, 9, 3 of 51 trials; 12, 14% to 37%
+    reply 2: 26, 9, 3, 2 of 40 trials; 5, 5% to 26%
+  Worst: journey billing question. Trial t-41c2, reply 2.
+    Sent: "Can I get my money back if I cancel this week?"
+    Reply 2: "Refunds are handled by our billing team."
 ```
 
 ## verify
