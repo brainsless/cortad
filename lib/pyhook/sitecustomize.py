@@ -901,8 +901,11 @@ def _install():
     # them whichever side keeps the conversation. Kept by value, not by request: with trials side by
     # side a trial's opening message sat up to 282 requests back, and a window of the last 32 would
     # have told it as the app's own words on 114 of 132 later turns.
-    heard_kept, heard_max, said_ascii, said_other = 2000, 200, 8, 4
+    # Bounded by characters as well as count: a raw body is one value, and 2000 of them at 64 KB would
+    # hold about 128 MB inside the app.
+    heard_kept, heard_chars, heard_max, said_ascii, said_other = 2000, 2_000_000, 200, 8, 4
     heard = {}
+    held = [0]
     letter = re.compile(r"[^\W\d_]")
     form = re.compile(r"^[^=&\s]+=[^&]*(?:&[^=&\s]+=[^&]*)*$")
 
@@ -938,10 +941,14 @@ def _install():
     def hear(req):
         try:
             for w in heard_in(req):
-                heard.pop(w, None)
+                if heard.pop(w, None):
+                    held[0] -= len(w)
                 heard[w] = True
-            while len(heard) > heard_kept:
-                del heard[next(iter(heard))]
+                held[0] += len(w)
+            while heard and (len(heard) > heard_kept or held[0] > heard_chars):
+                w = next(iter(heard))
+                del heard[w]
+                held[0] -= len(w)
         except Exception:
             pass
 
