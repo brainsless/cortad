@@ -2002,9 +2002,60 @@ def _install():
     write({"hello": "python", "pid": os.getpid()})
 
 
+# Every server the app opens a connection to, once each, by host and port only: a database named in
+# a config file rather than in the environment is seen the first time the app reaches it. A socket
+# connects to an address, so the name a client asked for is read where it is resolved. A driver
+# written in C (psycopg, mysqlclient) opens its own sockets and is not seen here.
+def _install_connects():
+    import json
+    import socket
+
+    seen = set()
+    real_connect, real_connect_ex = socket.socket.connect, socket.socket.connect_ex
+    real_getaddrinfo = socket.getaddrinfo
+
+    def note(address):
+        try:
+            if not isinstance(address, tuple) or len(address) < 2 or len(seen) >= 64:
+                return
+            host, port = str(address[0]).lower()[:253], int(address[1])
+            if (host, port) in seen:
+                return
+            seen.add((host, port))
+            fd = os.open(_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"conn": {"host": host, "port": port}}) + "\n")
+        except Exception:
+            pass
+
+    def connect(self, address):
+        note(address)
+        return real_connect(self, address)
+
+    def connect_ex(self, address):
+        note(address)
+        return real_connect_ex(self, address)
+
+    def getaddrinfo(host, port, *args, **kwargs):
+        if isinstance(host, (str, bytes)) and port is not None:
+            try:
+                note((host.decode() if isinstance(host, bytes) else host, int(port)))
+            except (TypeError, ValueError):
+                pass
+        return real_getaddrinfo(host, port, *args, **kwargs)
+
+    socket.socket.connect = connect
+    socket.socket.connect_ex = connect_ex
+    socket.getaddrinfo = getaddrinfo
+
+
 if _FILE:
     try:
         _install()
+    except Exception:
+        pass
+    try:
+        _install_connects()
     except Exception:
         pass
     if _WRITES and _APP_ROOT:

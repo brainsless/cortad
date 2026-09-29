@@ -32,11 +32,11 @@ import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
 import { CAPTURED, makeCapture } from "./lib/replay.mjs";
 import { sampleHere } from "./lib/sample.mjs";
-import { mintAcross, originFor, waitForPort } from "./lib/service.mjs";
+import { mintAcross, originFor, servicePort, waitForPort } from "./lib/service.mjs";
 import { listingUrl } from "./lib/listing.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
 import { openSwitches } from "./lib/switches.mjs";
-import { keepData } from "./lib/data.mjs";
+import { makeKeeping } from "./lib/keeping.mjs";
 import { downLine, makeHealth } from "./lib/health.mjs";
 import { markRun, writesDirOf } from "./lib/writes.mjs";
 
@@ -527,34 +527,19 @@ let appDir = root;
 // ---- a sign-in mounted in another workspace
 // One app served its AI from apps/api and mounted sign-in in apps/dashboard: a test account can
 // only be made where the sign-in is, and posting a sign-up at the AI's own port is a 404.
-const PORT_IN_SCRIPT = /(?:^|\s)(?:PORT=|-p[ =]|--port[ =])(\d{2,5})\b/;
-// The port a framework serves on when nobody names one. sveltekit and astro before vite: both bring
-// vite with them and neither uses its port.
-const FRAMEWORK_PORT = [["next", 3000], ["nuxt", 3000], ["@remix-run/serve", 3000], ["@remix-run/dev", 3000], ["@sveltejs/kit", 5173], ["astro", 4321], ["vite", 5173]];
-// No scan of the usual ports: whatever answers on 3000 or 8080 on this machine is very often not
-// this workspace, and a test account made against somebody else's service is the worst kind of
-// wrong. Only the port this workspace itself names, and if nothing is there, it is started.
-
-// What that workspace serves on: its own script says so, or the framework it is written in does.
-function servicePort(cwd) {
-  let pkg = null;
-  try { pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")); } catch { /* not a Node workspace */ }
-  const script = ["dev", "develop", "start:dev", "serve", "start"].map((s) => pkg?.scripts?.[s]).find(Boolean) ?? "";
-  const named = Number(PORT_IN_SCRIPT.exec(script)?.[1]);
-  if (named) return named;
-  const deps = Object.keys({ ...pkg?.dependencies, ...pkg?.devDependencies });
-  const framework = FRAMEWORK_PORT.find(([dep]) => deps.includes(dep))?.[1];
-  if (framework) return framework;
-  if (existsSync(join(cwd, "manage.py"))) return 8000;
-  if (existsSync(join(cwd, "Gemfile"))) return 3000;
-  const py = ["requirements.txt", "pyproject.toml"].map((f) => { try { return readFileSync(join(cwd, f), "utf8"); } catch { return ""; } }).join("\n");
-  return /\bdjango\b/i.test(py) ? 8000 : /\bflask\b/i.test(py) ? 5000 : null;
-}
-
 const toldService = new Set();
 const signedInAt = (dir, port) => { if (!toldService.has(dir)) { toldService.add(dir); say(`your sign-in lives in ${dir}, so I signed in there`); } return port; };
-// Everything else this command started, stopped with it.
+// Everything else this command started, stopped with it: each started the way the app is, on the
+// same copies of its data.
 const sidecars = [];
+function sidecar(cmd, cwd) {
+  const kid = spawnTied(cmd, { cwd, env: { ...process.env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}), ...keeping.envNow() } });
+  sidecars.push(kid);
+  const keep = (d) => appendFileSync(bootLog, d.toString());
+  kid.stdout.on("data", keep);
+  kid.stderr.on("data", keep);
+  return kid;
+}
 // The port that workspace's sign-in answers on. One it is already serving on comes first: starting
 // a second copy of a dashboard that is already up costs a minute and takes its port.
 async function serviceUp(group) {
@@ -562,14 +547,7 @@ async function serviceUp(group) {
   if (named && named !== app?.port && (await answers(named))) return signedInAt(group.dir, named);
   // Its own port taken by the app leaves nothing to wait on: whatever answers there is the app.
   if (!named || named === app?.port || !group.plan?.cmd) return null;
-  const kid = spawnTied(group.plan.cmd, {
-    cwd: group.plan.cwd,
-    env: { ...process.env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) },
-  });
-  sidecars.push(kid);
-  const keep = (d) => appendFileSync(bootLog, d.toString());
-  kid.stdout.on("data", keep);
-  kid.stderr.on("data", keep);
+  sidecar(group.plan.cmd, group.plan.cwd);
   return (await waitForPort(named, 90_000)) ? signedInAt(group.dir, named) : null;
 }
 
@@ -627,7 +605,8 @@ async function startApp() {
   for (const held of holders) {
     if (!ownFolder(held.cwd)) return { port: null, said: up.tail, why: whyNot({ ...up, held }) };
     if (await answers(held.port)) {
-      launched = null; child = null; data = null;
+      launched = null; child = null;
+      await keeping.forget();
       const took = await takeOver(held.port);
       if (took) return took;
       say(`your app is already running on port ${held.port}, so that one is used; its request limits stay as they are`);
@@ -715,11 +694,16 @@ let pinned = { major: null, bin: null };
 
 // Their app could not start because its dependencies are not on this machine. That is an install
 // nobody ran, not a broken app: it is installed once, with the manager the project locked, and the
-// app is started again. Every way the app is started comes through here, so it is fixed in one place.
+// app is started again. So is a store or service it reaches that nothing runs yet (backUp). Every
+// way the app is started comes through here, so it is fixed in one place.
 async function launch(waitMs) {
-  const up = await start(waitMs);
+  let up = await start(waitMs);
   // Only an app that stopped: one still running has not failed to start, whatever it printed.
   if (up.port || up.exited === null) return up;
+  if (await keeping.backUp(app?.port)) {
+    up = await start(waitMs);
+    if (up.port || up.exited === null) return up;
+  }
   const ok = await installOnce(up.tail);
   // An install that failed is the reason their app cannot start, and it goes where the app's own
   // output goes: the terminal, and the screen that is waiting for the app.
@@ -787,23 +771,24 @@ async function freed(cmd, lifted) {
   return m ? { cmd: cmd.replace(m[0], `${m[1]}${port}`), lifted } : { cmd, lifted: { ...lifted, PORT: String(port) } };
 }
 
-// Your app's database, read once per session: a copy made before the first start, and every
-// restart after it runs against the same copy, so a crash mid-run does not lose what the run made.
-// Told in the terminal here and to the run with the app (announce), so status and the report say it.
-let data = null;
-function dataOnce(started) {
-  if (data) return data;
-  const values = { ...envExports(envFiles), ...process.env };
-  const from = {};
-  for (const file of envFiles.filter((f) => !/\.(example|sample)$/.test(f))) {
-    let text = "";
-    try { text = readFileSync(file, "utf8"); } catch { continue; }
-    for (const line of text.split("\n")) { const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line); if (m && !(m[1] in process.env)) from[m[1]] = file; }
-  }
-  data = keepData({ values, from, appDir, root, work, sources: files.map((f) => join(root, f)), started });
-  for (const line of data.said) say(line.charAt(0).toLowerCase() + line.slice(1));
-  return data;
-}
+// Your app's data, read once per session: copies made before the first start, and every restart
+// after it runs against the same copies, so a crash mid-run does not lose what the run made. What
+// was copied, started, or left where trials write into it is told in the terminal here and to the
+// run with the app (announce), so status says it beside Run and the report keeps it.
+const keeping = makeKeeping({
+  root, work, ledgerFile: join(homeOf(project), "made.json"), onPath, say,
+  launch: (plan) => sidecar(plan.cmd, plan.cwd),
+  connections: () => capture?.connections() ?? [],
+  settings: () => {
+    const from = {};
+    for (const file of envFiles.filter((f) => !/\.(example|sample)$/.test(f))) {
+      let text = "";
+      try { text = readFileSync(file, "utf8"); } catch { continue; }
+      for (const line of text.split("\n")) { const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line); if (m && !(m[1] in process.env)) from[m[1]] = file; }
+    }
+    return { values: { ...envExports(envFiles), ...process.env }, from, appDir, sources: files.map((f) => join(root, f)) };
+  },
+});
 
 async function start(waitMs, tries = 3) {
   const { cmd, lifted } = await freed(launched.cmd, launched.lifted ?? {});
@@ -814,7 +799,7 @@ async function start(waitMs, tries = 3) {
   const note = { own: true, at: Date.now(), reloads: RELOADER.test(commandText(cmd, appDir)), answered: false };
   note.files = sourceOf(root, files);
   loaded = note;
-  child = spawnTied(cmd, { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...dataOnce(true).env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
+  child = spawnTied(cmd, { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...(await keeping.env(true)), ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
   const mine = child;
   become("starting", { app: mine.pid ?? null });
   let seen = "";
@@ -913,6 +898,7 @@ async function close(code = 0) {
   try {
     if (child?.pid) await stopTree(child.pid);
     for (const kid of sidecars) if (kid.pid) await stopTree(kid.pid);
+    await keeping.close();
     if (box) await call("DELETE", `/local/${box}`, undefined, { timeoutMs: 5000 }).catch(() => {});
     await exec("rm", ["-rf", work]).catch(() => {});
   } finally { process.exit(code); }
@@ -953,7 +939,8 @@ if (explain) {
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
     `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records each request during which your app calls a model, what it answered and the model calls on the way; header values stay here`,
     `your files      never written by this program; your own coding agent edits them`,
-    `your database   a database file your env or code names is copied to this program's temp folder and your app is started on the copy; a database server is named, not copied`,
+    `your database   a database file your env or code names is copied to this program's temp folder; a Postgres or Redis database on this machine is copied on its own server under a name of ours and deleted at the end; your app is started on the copies. Any other store is named, not copied`,
+    `your services   a store your compose file runs, or a second service of this repository, is started when your app reaches for it and nothing answers there, and stopped at the end`,
     `test shell      confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
     `for your agent  an MCP entry and a skill in each coding agent's own home folder (Claude Code, Codex, Cursor), and a key in ~/.cortad for later runs`,
     ``,
@@ -1069,9 +1056,9 @@ function sourceChanged() {
 // `watching` says whether a message sent to this app can be seen arriving: only an app this command
 // started carries the hook, and only a runtime the hook exists for. `proves`: each request seen
 // reaching the model is posted as its door's proof, so the run waits for those.
-const announce = () => {
+const announce = async () => {
   const hooked = Boolean(launched && capture?.watching(app.port));
-  return call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: dataOnce(Boolean(launched)).said.slice(0, 8), watching: hooked, metered: hooked, proves: hooked });
+  return call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: await keeping.lines(Boolean(launched)), watching: hooked, metered: hooked, proves: hooked });
 };
 
 // Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
@@ -1100,6 +1087,8 @@ async function appLife() {
   let downSince = 0;
   let toldDown = false;
   let appTold = true;
+  // A second service of this repository its settings call, brought up once the app's own port is known.
+  if (launched && (await keeping.services(app.port).catch(() => false))) appTold = false;
   forgetTold = () => { appTold = false; };
   const health = makeHealth({ host: () => appHost, gone: () => Boolean(launched && appGone), inFlight: () => answering });
   for (let up = true; !closing;) {
@@ -1111,6 +1100,9 @@ async function appLife() {
       // Said until it is heard. Said once, it was lost when their app came back while the network
       // was down, and the screen went on showing an app that had stopped while it answered turns.
       if (!up) become("up", { port: app.port, app: launched ? child?.pid ?? null : null });
+      const reach = await keeping.watch(app.port).catch(() => ({}));
+      if (reach.copied && launched && child) await restartApp();
+      if (reach.changed) appTold = false;
       if (!up || !appTold) { up = true; appTold = Boolean((await announce().catch(() => null))?.ok); }
       continue;
     }
