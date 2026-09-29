@@ -272,25 +272,33 @@ def _install():
                 v = raw
         return json.dumps(clipped({} if v is None else v), ensure_ascii=False, separators=(",", ":"))[:args_max]
 
-    # What each function tool the request declares requires, off its own JSON schema, by name.
-    def schemas_of(body):
-        out = {}
+    # Each function tool the request declares, in every provider's shape: its name, what its
+    # description says it does, and its JSON schema (None where it declares none).
+    def tool_defs(body):
+        out = []
 
-        def add(name, schema):
-            if isinstance(name, str) and isinstance(schema, dict):
-                out[name] = schema
+        def add(name, does, schema):
+            if isinstance(name, str) and name:
+                out.append({"name": name, "does": does if isinstance(does, str) else "", "schema": schema if isinstance(schema, dict) else None})
 
-        for t in items(body.get("tools")):
-            add(t.get("name"), t.get("parameters") or t.get("input_schema") or t.get("inputSchema"))
+        config = body.get("toolConfig") if isinstance(body.get("toolConfig"), dict) else {}
+        for t in items(body.get("tools")) + items(config.get("tools")):
             if isinstance(t.get("function"), dict):
-                add(t["function"].get("name"), t["function"].get("parameters"))
-            spec = t.get("toolSpec") if isinstance(t.get("toolSpec"), dict) else {}
-            add(spec.get("name"), spec["inputSchema"].get("json") if isinstance(spec.get("inputSchema"), dict) else None)
+                f = t["function"]
+                add(f.get("name"), f.get("description"), f.get("parameters"))
+            elif isinstance(t.get("toolSpec"), dict):
+                spec = t["toolSpec"]
+                add(spec.get("name"), spec.get("description"), spec["inputSchema"].get("json") if isinstance(spec.get("inputSchema"), dict) else None)
+            else:
+                add(t.get("name"), t.get("description"), t.get("parameters") or t.get("input_schema") or t.get("inputSchema"))
             for d in items(t.get("functionDeclarations") or t.get("function_declarations")):
-                add(d.get("name"), d.get("parameters"))
+                add(d.get("name"), d.get("description"), d.get("parameters"))
         for f in items(body.get("functions")):
-            add(f.get("name"), f.get("parameters"))
+            add(f.get("name"), f.get("description"), f.get("parameters"))
         return out
+
+    def schemas_of(body):
+        return {d["name"]: d["schema"] for d in tool_defs(body) if d["schema"]}
 
     # What a tool's declared schema refuses in the arguments the model sent, said plainly, or None.
     # Read before any value is clipped: a clipped value is ours, never the model's.
@@ -420,19 +428,8 @@ def _install():
             if tool_name.fullmatch(v) and not final.fullmatch(v):
                 out.add(v)
 
-        def get(d, k):
-            return d.get(k) if isinstance(d, dict) else None
-
-        for t in items(body.get("tools")):
-            add(t.get("name"))
-            add(get(t.get("function"), "name"))
-            add(get(t.get("toolSpec"), "name"))
-            for d in items(t.get("functionDeclarations") or t.get("function_declarations")):
-                add(d.get("name"))
-        for f in items(body.get("functions")):
-            add(f.get("name"))
-        for t in items(get(body.get("toolConfig"), "tools")):
-            add(get(t.get("toolSpec"), "name"))
+        for d in tool_defs(body):
+            add(d["name"])
         text = prompt_text(body)[:200000]
         for m in re.finditer(r"^[ \t]*Tool Name:[ \t]*([^\n]+)", text, re.I | re.M):
             add(m.group(1))
@@ -550,9 +547,11 @@ def _install():
                     out.append((before[-1][1], (m.group(1) if m.group(1) is not None else m.group(3)).strip()))
         return out
 
-    # The model's own words: the text it answered, whole or streamed, in every provider's shape.
+    # The model's own words: the text it answered, whole or streamed, in every provider's shape. A
+    # responses stream sends its words as deltas and then whole again in its closing event: the
+    # closing copy counts only where no delta came.
     def reply_text(events):
-        s = []
+        s, closing, streamed = [], [], False
         for e in events:
             if not isinstance(e, dict):
                 continue
@@ -565,10 +564,14 @@ def _install():
                     s.append(c["text"])
             if e.get("type") == "response.output_text.delta" and isinstance(e.get("delta"), str):
                 s.append(e["delta"])
+                streamed = True
             resp = e.get("response") if isinstance(e.get("response"), dict) else {}
-            for it in items(e.get("output")) + items(resp.get("output")):
+            for it in items(e.get("output")):
                 if it.get("type") == "message":
                     s.extend(p["text"] for p in items(it.get("content")) if isinstance(p.get("text"), str))
+            for it in items(resp.get("output")):
+                if it.get("type") == "message":
+                    closing.extend(p["text"] for p in items(it.get("content")) if isinstance(p.get("text"), str))
             delta = e.get("delta") if isinstance(e.get("delta"), dict) else {}
             if e.get("type") == "content_block_delta" and isinstance(delta.get("text"), str):
                 s.append(delta["text"])
@@ -585,7 +588,7 @@ def _install():
                         s.append(p["text"])
             if isinstance(e.get("response"), str):
                 s.append(e["response"])
-        return "".join(s)
+        return "".join(s if streamed else s + closing)
 
     # This turn as the prompt carries it: the model's earlier words after the person's latest
     # message, and everything from that message on, where a single-prompt agent keeps its scratchpad.
@@ -893,6 +896,141 @@ def _install():
         body = norm(sent)
         return [rid for rid, parts in found if all(p in body for p in parts)]
 
+    # What the person said to the app: every text value requests carried in their bodies and
+    # addresses, long enough to tell apart, the newest kept. A model call's prompt is told apart from
+    # them whichever side keeps the conversation. Kept by value, not by request: with trials side by
+    # side a trial's opening message sat up to 282 requests back, and a window of the last 32 would
+    # have told it as the app's own words on 114 of 132 later turns.
+    heard_kept, heard_max, said_ascii, said_other = 2000, 200, 8, 4
+    heard = {}
+    letter = re.compile(r"[^\W\d_]")
+    form = re.compile(r"^[^=&\s]+=[^&]*(?:&[^=&\s]+=[^&]*)*$")
+
+    def heard_in(req):
+        from urllib.parse import parse_qsl
+        out = set()
+
+        def add(s):
+            t = s.strip() if isinstance(s, str) else ""
+            if len(out) < heard_max and len(t) >= (said_ascii if t.isascii() else said_other) and letter.search(t):
+                out.add(t)
+
+        def walk(v, depth):
+            if isinstance(v, str):
+                add(v)
+            elif isinstance(v, (dict, list)) and depth < 12:
+                for x in v.values() if isinstance(v, dict) else v:
+                    walk(x, depth + 1)
+
+        raw = body_of(req)
+        body = parsed(raw)
+        if isinstance(body, (dict, list)):
+            walk(body, 0)
+        elif form.match(raw):
+            for _, v in parse_qsl(raw):
+                add(v)
+        else:
+            add(raw)
+        for _, v in parse_qsl(req["path"].partition("?")[2]):
+            add(v)
+        return out
+
+    def hear(req):
+        try:
+            for w in heard_in(req):
+                heard.pop(w, None)
+                heard[w] = True
+            while len(heard) > heard_kept:
+                del heard[next(iter(heard))]
+        except Exception:
+            pass
+
+    # What the app told the model on this call: its system prompt and every block it or its framework
+    # put among the messages (a reminder, injected context, a prompt template), in prompt order. Never
+    # the person's words: what a request carried is taken out of the person's side, and a message
+    # that held only that is not told. Never the model's own words or a tool's answer. A reply is
+    # read against this, and a block of it the reply repeats is a leak code decides.
+    instructions_max, told_min = 12000, 12
+    word_char = re.compile(r"[^\W_]")
+    # The fields read below, in the shapes they are read in. A body with none of them is a shape
+    # this hook cannot read: its instructions stay unrecorded, so the run keeps the read's copy of
+    # the prompt, and "" always means the call really carried none.
+    told_fields = {"system": (str, list, dict), "instructions": (str, list, dict), "systemInstruction": dict,
+                   "messages": list, "input": (str, list), "contents": list, "prompt": str}
+
+    def instructions_in(body, words):
+        if not any(isinstance(body.get(k), shape) for k, shape in told_fields.items()):
+            return None
+        # Longest first, so a short phrase the person repeated never splits a longer message of theirs.
+        said = sorted(words, key=len, reverse=True)
+        told = []
+
+        def own(content):
+            t = text_of(content).strip()
+            if t:
+                told.append(t)
+
+        def added(left):
+            for w in said:
+                if w in left:
+                    left = left.replace(w, " ")
+            if len(word_char.findall(left)) >= told_min:
+                told.append(left.strip())
+
+        def texts(content):
+            return [content] if isinstance(content, str) else [p["text"] for p in items(content) if isinstance(p.get("text"), str)]
+
+        own(body.get("system"))
+        own(body.get("instructions"))
+        if isinstance(body.get("systemInstruction"), dict):
+            own(body["systemInstruction"].get("parts"))
+        for m in items(body.get("messages")):
+            if m.get("role") in ("system", "developer"):
+                own(m.get("content"))
+            elif m.get("role") == "user" and not handed_back.match(text_of(m.get("content"))):
+                for t in texts(m.get("content")):
+                    added(t)
+        inp = body.get("input")
+        for it in [{"role": "user", "content": inp}] if isinstance(inp, str) else items(inp):
+            if it.get("role") in ("system", "developer"):
+                own(it.get("content"))
+            elif it.get("role") == "user":
+                for t in texts(it.get("content")):
+                    added(t)
+        for c in items(body.get("contents")):
+            if c.get("role") != "model":
+                for t in texts(c.get("parts")):
+                    added(t)
+        if isinstance(body.get("prompt"), str):
+            added(body["prompt"])
+        return "\n\n".join(told)[:instructions_max]
+
+    # The tools the call offered its model: each by name, a provider's own tool by its type, and the
+    # declared ones as their schemas say: what each does and the inputs it requires.
+    tools_offered, does_max, inputs_max = 60, 300, 12
+
+    def told_of(body, req):
+        words = heard.keys() | heard_in(req) if req else heard.keys()
+        provider = [t["type"] for t in items(body.get("tools")) if not t.get("name") and not t.get("function") and isinstance(t.get("type"), str) and t["type"] not in ("function", "custom")]
+        offered = list(dict.fromkeys(sorted(declared_in(body)) + provider))[:tools_offered]
+        declared = []
+        for d in list({d["name"]: d for d in tool_defs(body) if d["schema"]}.values())[:tools_offered]:
+            required = d["schema"].get("required")
+            entry = {"name": d["name"][:80]}
+            if d["does"].strip():
+                entry["does"] = d["does"].strip()[:does_max]
+            entry["requires"] = [k for k in required if isinstance(k, str)][:inputs_max] if isinstance(required, list) else []
+            declared.append(entry)
+        out = {}
+        instructions = instructions_in(body, words)
+        if instructions is not None:
+            out["instructions"] = instructions
+        if offered:
+            out["offered"] = offered
+        if declared:
+            out["declared"] = declared
+        return out
+
     # Every value this file writes passes one mask, whichever path wrote it: a key inside a value
     # ("sk-...", a bearer token, a JWT) and what anyone wrote after "password is" or "token:". The
     # door row's sign-in headers are kept on purpose: the command replays them from this machine.
@@ -1053,6 +1191,10 @@ def _install():
         cookies = [c.split(";")[0].split("=")[0].strip() for c in said_of(req, "set-cookie")][:20]
         if cookies:
             row["cookies"] = cookies
+        # The app began its reply and it never finished, so the row holds part of it (a client that
+        # stopped reading after the first bytes, or an app that broke off mid-stream).
+        if req.get("status") and not req.get("finished"):
+            row["cut"] = True
         return row
 
     # An answer that came on a second request is written as that request's row under the id of the
@@ -1076,6 +1218,7 @@ def _install():
 
     def ended(req):
         req["ended"] = int(time.time() * 1000)
+        hear(req)
         steps = tied.closed(req) if tied else None
         if steps:
             answered(req, steps)
@@ -1263,6 +1406,9 @@ def _install():
                 row["passages"] = passages
             if caller:
                 row["caller"] = caller
+            asked = parsed(as_text)
+            if isinstance(asked, dict) and not row.get("embedding"):
+                row.update(told_of(asked, req))
             write({"call": row})
         except Exception:
             pass
@@ -1494,6 +1640,7 @@ def _install():
                         req["reply_headers"] = [(k.decode("latin-1").lower(), v.decode("latin-1")) for k, v in message.get("headers") or []]
                     elif message.get("type") == "http.response.body":
                         replied(req, message.get("body") or b"")
+                        req["finished"] = not message.get("more_body")
                 except Exception:
                     pass
                 return await send(message)
@@ -1539,6 +1686,7 @@ def _install():
                 try:
                     item = next(it)
                 except StopIteration:
+                    req["finished"] = True
                     return
                 finally:
                     if token is not None:
