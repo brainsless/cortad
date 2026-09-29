@@ -144,7 +144,7 @@ finding:1  Does the reply state a refund policy the product does not publish?
   Decided by a model in 12 readings.
   Replay: 12 trials, verify finding:1
   A verify replays its 9 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
-3 findings in all, 2 settled.
+3 findings in all, 2 settled (enough trials to say each fails at least one visit in five; findings lists them first).
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
