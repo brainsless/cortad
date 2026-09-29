@@ -272,7 +272,46 @@ def _install():
                 v = raw
         return json.dumps(clipped({} if v is None else v), ensure_ascii=False, separators=(",", ":"))[:args_max]
 
-    def calls_of(events):
+    # What each function tool the request declares requires, off its own JSON schema, by name.
+    def schemas_of(body):
+        out = {}
+
+        def add(name, schema):
+            if isinstance(name, str) and isinstance(schema, dict):
+                out[name] = schema
+
+        for t in items(body.get("tools")):
+            add(t.get("name"), t.get("parameters") or t.get("input_schema") or t.get("inputSchema"))
+            if isinstance(t.get("function"), dict):
+                add(t["function"].get("name"), t["function"].get("parameters"))
+            spec = t.get("toolSpec") if isinstance(t.get("toolSpec"), dict) else {}
+            add(spec.get("name"), spec["inputSchema"].get("json") if isinstance(spec.get("inputSchema"), dict) else None)
+            for d in items(t.get("functionDeclarations") or t.get("function_declarations")):
+                add(d.get("name"), d.get("parameters"))
+        for f in items(body.get("functions")):
+            add(f.get("name"), f.get("parameters"))
+        return out
+
+    # What a tool's declared schema refuses in the arguments the model sent, said plainly, or None.
+    # Read before any value is clipped: a clipped value is ours, never the model's.
+    def refused_by(schema, raw):
+        args = {} if raw is None else raw
+        if isinstance(args, str):
+            if not args.strip():
+                args = {}
+            else:
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    return "the arguments are not valid JSON"
+        if not isinstance(args, dict):
+            return "the arguments are not a JSON object"
+        required = schema.get("required") if isinstance(schema.get("required"), list) else []
+        missing = next((k for k in required if isinstance(k, str) and k not in args), None)
+        return 'the required input "%s" is missing' % missing if missing else None
+
+    # `schemas`: the request's declared tools, so each call the reply makes is checked against its own.
+    def calls_of(events, schemas=None):
         whole, parts, n = {}, {}, [0]
 
         def put(key, name, args):
@@ -335,7 +374,13 @@ def _install():
                     if isinstance(p.get("functionCall"), dict):
                         put(None, p["functionCall"].get("name"), p["functionCall"].get("args"))
         found = list(whole.values()) + [tuple(p) for p in parts.values()]
-        return [{"name": str(name)[:80], "arguments": args_text(args)} for name, args in found if name]
+        out = []
+        for name, args in found:
+            if not name:
+                continue
+            refused = refused_by(schemas[name], args) if schemas and name in schemas else None
+            out.append(dict({"name": str(name)[:80], "arguments": args_text(args)}, **({"refused": refused} if refused else {})))
+        return out
 
     # This turn's earlier calls, as the prompt resends them after the person's latest message.
     def called_before(body):
@@ -567,15 +612,63 @@ def _install():
             out += [body.get("prompt") if isinstance(body.get("prompt"), str) else "", inp if isinstance(inp, str) else ""]
         return "\x00\n".join(out)
 
-    def called_in(sent, events):
+    def called_in(sent, events, provided=()):
         body = parsed(sent) if isinstance(sent, str) else None
         out = []
         declared = declared_in(body) if isinstance(body, dict) else set()
         written = [{"name": n, "arguments": args_text(a)} for _, n, a in written_calls(turn_texts(body, False, declared) if isinstance(body, dict) else "", declared) + written_calls(reply_text(events), declared)]
-        for c in (called_before(body) if isinstance(body, dict) else []) + calls_of(events) + written:
+        for c in (called_before(body) if isinstance(body, dict) else []) + calls_of(events, schemas_of(body) if isinstance(body, dict) else None) + list(provided) + written:
             if len(out) < calls_max and not any(o["name"] == c["name"] and o["arguments"] == c["arguments"] for o in out):
                 out.append(c)
         return out or None
+
+    # Tools the model's provider runs for the app (a web search, a file search, a code interpreter, a
+    # remote MCP server): the calls come back in the model's own reply, and so does what each answered
+    # where the provider says it. A call it marks failed, or an error it hands back, is the tool failing
+    # there, in the provider's own words. Answers pair with calls in the order the reply lists them.
+    provider_call = re.compile(r"^(web_search|file_search|code_interpreter|image_generation|mcp)_call$")
+    provider_result = re.compile(r"^\w+_tool_result$")
+
+    def provider_in(sent, events):
+        body = parsed(sent) if isinstance(sent, str) else None
+        offered = [t["type"] for t in items(body.get("tools") if isinstance(body, dict) else None) if isinstance(t.get("type"), str) and t["type"] not in ("function", "custom")]
+
+        def named(kind):
+            return next((t for t in offered if t.startswith(kind)), kind)
+
+        calls, names, answers = {}, {}, []
+
+        def answer(name, said):
+            t = text_of(said)[:tool_text]
+            if name and t.strip() and len(answers) < tools_max and not any(a["name"] == name and a["text"] == t for a in answers):
+                answers.append({"name": str(name)[:80], "text": t, "provider": True})
+
+        for e in events:
+            if not isinstance(e, dict):
+                continue
+            order = []
+            resp = e.get("response") if isinstance(e.get("response"), dict) else {}
+            for it in items(e.get("output")) + items([e.get("item")]) + items(resp.get("output")):
+                m = provider_call.match(str(it.get("type") or ""))
+                if m:
+                    name = str(it.get("name") or "mcp") if m.group(1) == "mcp" else named(m.group(1))
+                    order.append(name)
+                    if it.get("id"):
+                        given = it.get("action") if it.get("action") is not None else it.get("arguments")
+                        calls[it["id"]] = {"name": name[:80], "arguments": args_text({} if given is None else given)}
+                    if it.get("status") == "failed" or it.get("error"):
+                        answer(name, it.get("error") or "%s %s" % (it.get("type"), it.get("status")))
+                elif it.get("type") == "tool_output":
+                    answer(order.pop(0) if order else (offered[0] if len(offered) == 1 else ""), it.get("output"))
+            msg = e.get("message") if isinstance(e.get("message"), dict) else {}
+            for b in items(e.get("content")) + items(msg.get("content")) + items([e.get("content_block")]):
+                if b.get("type") in ("server_tool_use", "mcp_tool_use") and b.get("id"):
+                    names[b["id"]] = b.get("name")
+                    calls[b["id"]] = {"name": str(b.get("name"))[:80], "arguments": args_text({} if b.get("input") is None else b.get("input"))}
+                c = b.get("content")
+                if provider_result.match(str(b.get("type") or "")) and (b.get("is_error") is True or (isinstance(c, dict) and str(c.get("type") or "").endswith("_error"))):
+                    answer(names.get(b.get("tool_use_id")) or re.sub(r"_tool_result$", "", b["type"]), c)
+        return list(calls.values()), answers
 
     # What the prompt was handed besides its instructions, of two kinds. What the app retrieved: a
     # block it labels as context, documents, knowledge, sources or search results. And its own
@@ -850,6 +943,8 @@ def _install():
                     out["reply"] = reply_scrubbed(row["reply"])
                 if isinstance(row.get("sent"), list):
                     out["sent"] = [body_scrubbed(x) for x in row["sent"] if isinstance(x, str)]
+                if isinstance(row.get("after"), list):
+                    out["after"] = [{**s, "body": body_scrubbed(raw["body"]), "reply": reply_scrubbed(raw["reply"])} for s, raw in zip(out["after"], row["after"])]
                 row = out
             fd = os.open(_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             with os.fdopen(fd, "a", encoding="utf-8") as f:
@@ -910,10 +1005,21 @@ def _install():
     def route_key(method, path):
         return method + " " + "/".join("{id}" if id_segment.match(s) else s for s in path.split("?")[0].split("/"))
 
+    # The request a model call is pinned to, returned so the call's row carries it: the one it was
+    # made inside, else the request that asked for it (cortad_tied).
     def note(url, body):
         req = ctx.get()
-        if not req or not is_model_call(url):
-            return
+        if not is_model_call(url):
+            return req
+        if tied:
+            tied.sent(text(body))
+        if not req and tied:
+            try:
+                req = tied.pinned(text(body, reply_max))
+            except Exception:
+                req = None
+        if not req:
+            return None
         if not req["noted"]:
             req["noted"] = True
             key = route_key(req["method"], req["path"])
@@ -923,23 +1029,64 @@ def _install():
                 req["kept"] = True
         if req["kept"] and len(req["sent"]) < sent_max:
             req["sent"].append(text(body))
+        return req
 
-    def answered(req):
-        if not req.get("kept") or req.get("written"):
-            return
-        req["written"] = True
-        headers = req.get("reply_headers") or []
-        said = lambda name: [v for k, v in headers if k == name]
-        row = {"ex": req["id"], "at": req["at"], "ms": int(time.time() * 1000) - req["at"], "method": req["method"], "path": req["path"], "headers": req["headers"],
-               "body": b"".join(req["chunks"]).decode("utf-8", "replace")[:limit], "sent": req["sent"], "status": int(req.get("status") or 0),
-               "type": (said("content-type") or [""])[0], "writes": req["writes"],
-               "reply": unpacked(b"".join(req["reply"]), (said("content-encoding") or [""])[0])[:limit]}
-        cookies = [c.split(";")[0].split("=")[0].strip() for c in said("set-cookie")][:20]
+    def noted(url, sent):
+        try:
+            return note(url, sent)
+        except Exception:
+            return ctx.get()
+
+    def said_of(req, name):
+        return [v for k, v in req.get("reply_headers") or [] if k == name]
+
+    def body_of(req):
+        return b"".join(req["chunks"]).decode("utf-8", "replace")[:limit]
+
+    def reply_of(req):
+        return unpacked(b"".join(req["reply"]), (said_of(req, "content-encoding") or [""])[0])[:limit]
+
+    def row_of(req):
+        row = {"at": req["at"], "ms": (req.get("ended") or int(time.time() * 1000)) - req["at"], "method": req["method"], "path": req["path"],
+               "body": body_of(req), "status": int(req.get("status") or 0), "type": (said_of(req, "content-type") or [""])[0], "writes": req["writes"],
+               "reply": reply_of(req)}
+        cookies = [c.split(";")[0].split("=")[0].strip() for c in said_of(req, "set-cookie")][:20]
         if cookies:
             row["cookies"] = cookies
-        if req.get("turn"):
-            row["turn"] = req["turn"]
+        return row
+
+    # An answer that came on a second request is written as that request's row under the id of the
+    # request that asked, with the requests of its turn in `after` (the one that asked last) and the
+    # headers they were sent with: one line, so a reader never sees half a turn.
+    def answered(req, steps=()):
+        asker = steps[-1] if steps else req
+        if not asker.get("kept") or asker.get("written"):
+            return
+        asker["written"] = True
+        headers = {}
+        for step in steps:
+            headers.update(step["headers"])
+        row = {"ex": asker["id"], **row_of(req), "headers": {**headers, **req["headers"]}, "sent": asker["sent"]}
+        if steps:
+            row["after"] = [row_of(step) for step in steps]
+        turn = req.get("turn") or asker.get("turn")
+        if turn:
+            row["turn"] = turn
         write(row)
+
+    def ended(req):
+        req["ended"] = int(time.time() * 1000)
+        steps = tied.closed(req) if tied else None
+        if steps:
+            answered(req, steps)
+        elif not req.get("calls_open"):
+            answered(req)
+
+    try:
+        from cortad_tied import Tied
+        tied = Tied(norm, body_of, reply_of)
+    except Exception:
+        tied = None
 
     # The meter: one row per model call your app makes, with the provider's own token counts and
     # never the reply's text.
@@ -1095,6 +1242,8 @@ def _install():
             if embedding.search(parts.path or ""):
                 row["embedding"] = True
             req = req or ctx.get()
+            if tied:
+                tied.done(req)
             row.update(inside_of(req))
             if req and req.get("kept"):
                 row["reply"] = reply_text(events)[:model_words]
@@ -1102,10 +1251,11 @@ def _install():
             found = rules_in(as_text)
             if found is not None:
                 row["rules"] = found
-            tools = tools_in(as_text)
+            provided_calls, provided = provider_in(as_text, events)
+            tools = (tools_in(as_text) or []) + provided
             if tools:
                 row["tools"] = tools
-            called = called_in(as_text, events)
+            called = called_in(as_text, events, provided_calls)
             if called:
                 row["called"] = called
             passages = passages_in(as_text)
@@ -1298,9 +1448,12 @@ def _install():
         except Exception:
             pass
         turn = headers.pop("x-cortad-turn", None)
-        return {"id": "%d.%d" % (os.getpid(), next(serial)), "at": int(time.time() * 1000), "method": method, "path": path, "headers": headers,
-                "chunks": [], "size": 0, "noted": False, "kept": False, "sent": [], "reply": [], "reply_size": 0, "writes": 0,
-                "turn": turn if isinstance(turn, str) and turn_ok.match(turn) else None}
+        req = {"id": "%d.%d" % (os.getpid(), next(serial)), "at": int(time.time() * 1000), "method": method, "path": path, "headers": headers,
+               "chunks": [], "size": 0, "noted": False, "kept": False, "sent": [], "reply": [], "reply_size": 0, "writes": 0,
+               "turn": turn if isinstance(turn, str) and turn_ok.match(turn) else None}
+        if tied:
+            tied.opened(req)
+        return req
 
     def keep(req, chunk):
         if chunk and req["size"] < limit:
@@ -1315,13 +1468,14 @@ def _install():
                 req["reply"].append(bytes(chunk))
                 req["reply_size"] += len(chunk)
 
-    # Inbound, ASGI: FastAPI, Starlette, Django under uvicorn, Quart, Litestar.
+    # Inbound, ASGI: FastAPI, Starlette, Django under uvicorn, Quart, Litestar. A GET is watched but
+    # never made the context a model call is pinned by: it can only be the step an answer comes on.
     class Asgi:
         def __init__(self, app):
             self.app = app
 
         async def __call__(self, scope, receive, send):
-            if scope.get("type") != "http" or scope.get("method") in ("GET", "HEAD", "OPTIONS"):
+            if scope.get("type") != "http" or scope.get("method") in ("HEAD", "OPTIONS"):
                 return await self.app(scope, receive, send)
             query = scope.get("query_string") or b""
             req = started(scope["method"], scope.get("path", "/") + ("?" + query.decode("latin-1") if query else ""),
@@ -1344,12 +1498,14 @@ def _install():
                     pass
                 return await send(message)
 
-            token = ctx.set(req)
+            asks = scope["method"] != "GET"
+            token = ctx.set(req) if asks else None
             try:
-                return await self.app(scope, seen, sending)
+                return await self.app(scope, seen if asks else receive, sending)
             finally:
-                ctx.reset(token)
-                answered(req)
+                if token is not None:
+                    ctx.reset(token)
+                ended(req)
 
     # Inbound, WSGI: Flask, Django's runserver, anything under werkzeug.
     class Tee:
@@ -1374,25 +1530,26 @@ def _install():
         def __getattr__(self, name):
             return getattr(self.stream, name)
 
-    def inside(req, iterable):
+    def inside(req, iterable, asks):
         # A streamed reply is produced after the handler returns: the model call happens here.
         it = iter(iterable)
         try:
             while True:
-                token = ctx.set(req)
+                token = ctx.set(req) if asks else None
                 try:
                     item = next(it)
                 except StopIteration:
                     return
                 finally:
-                    ctx.reset(token)
+                    if token is not None:
+                        ctx.reset(token)
                 replied(req, item)
                 yield item
         finally:
             close = getattr(iterable, "close", None)
             if close:
                 close()
-            answered(req)
+            ended(req)
 
     def wsgi(app):
         if getattr(app, "_brainsless", False):
@@ -1400,7 +1557,7 @@ def _install():
 
         def wrapped(environ, start_response):
             method = environ.get("REQUEST_METHOD", "GET")
-            if method in ("GET", "HEAD", "OPTIONS"):
+            if method in ("HEAD", "OPTIONS"):
                 return app(environ, start_response)
             headers = {k[5:].replace("_", "-").lower(): v for k, v in environ.items() if k.startswith("HTTP_")}
             if environ.get("CONTENT_TYPE"):
@@ -1418,11 +1575,17 @@ def _install():
                     pass
                 return start_response(status, response_headers, *a)
 
-            token = ctx.set(req)
+            asks = method != "GET"
+            token = ctx.set(req) if asks else None
             try:
-                return inside(req, app(environ, starting))
+                out = app(environ, starting)
+            except BaseException:
+                ended(req)
+                raise
             finally:
-                ctx.reset(token)
+                if token is not None:
+                    ctx.reset(token)
+            return inside(req, out, asks)
 
         wrapped._brainsless = True
         return wrapped
@@ -1693,7 +1856,7 @@ def _install():
                 finally:
                     self.finish()
 
-        def watch(request, response, sent, caller, t0):
+        def watch(request, response, sent, caller, t0, req):
             model = is_model_call(request.url)
             if not model and not is_retrieval(request.url):
                 dep(request.url, response.status_code)
@@ -1701,11 +1864,10 @@ def _install():
             kind = response.headers.get("content-type", "")
             if getattr(response, "_content", None) is not None:
                 if model:
-                    meter(request.url, sent, response.status_code, kind, response.content.decode("utf-8", "replace"), caller=caller, t0=t0)
+                    meter(request.url, sent, response.status_code, kind, response.content.decode("utf-8", "replace"), req, caller, t0)
                 else:
                     dep(request.url, response.status_code, passages=passages_from(response.content.decode("utf-8", "replace")), caller=caller)
                 return response
-            req = ctx.get()
             if model:
                 done = lambda raw: meter(request.url, sent, response.status_code, kind, unpacked(raw, response.headers.get("content-encoding")), req, caller, t0)
             else:
@@ -1716,9 +1878,9 @@ def _install():
             elif hasattr(stream, "__iter__"):
                 response.stream = SyncKept(stream, done)
             elif model:
-                meter(request.url, sent, response.status_code, kind, "", caller=caller, t0=t0)
+                meter(request.url, sent, response.status_code, kind, "", req, caller, t0)
             else:
-                dep(request.url, response.status_code, caller=caller)
+                dep(request.url, response.status_code, req=req, caller=caller)
             return response
 
         for cls in (module.Client, module.AsyncClient):
@@ -1728,20 +1890,17 @@ def _install():
                     sent = sent_of(request)
                     caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
                     t0 = time.time()
-                    try:
-                        note(request.url, sent)
-                    except Exception:
-                        pass
+                    req = noted(request.url, sent)
                     try:
                         response = _send(self, request, *a, **k)
                     except Exception as err:
                         if is_model_call(request.url):
-                            meter(request.url, sent, 0, "", "", caller=caller, t0=t0)
+                            meter(request.url, sent, 0, "", "", req, caller, t0)
                         else:
                             dep(request.url, 0, type(err).__name__, caller=caller)
                         raise
                     try:
-                        return watch(request, response, sent, caller, t0)
+                        return watch(request, response, sent, caller, t0, req)
                     except Exception:
                         return response
                 cls.send = sync_send
@@ -1750,20 +1909,17 @@ def _install():
                     sent = sent_of(request)
                     caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
                     t0 = time.time()
-                    try:
-                        note(request.url, sent)
-                    except Exception:
-                        pass
+                    req = noted(request.url, sent)
                     try:
                         response = await _send(self, request, *a, **k)
                     except Exception as err:
                         if is_model_call(request.url):
-                            meter(request.url, sent, 0, "", "", caller=caller, t0=t0)
+                            meter(request.url, sent, 0, "", "", req, caller, t0)
                         else:
                             dep(request.url, 0, type(err).__name__, caller=caller)
                         raise
                     try:
-                        return watch(request, response, sent, caller, t0)
+                        return watch(request, response, sent, caller, t0, req)
                     except Exception:
                         return response
                 cls.send = async_send
@@ -1774,15 +1930,12 @@ def _install():
         def sent(self, request, *a, **k):
             caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
             t0 = time.time()
-            try:
-                note(request.url, request.body)
-            except Exception:
-                pass
+            req = noted(request.url, request.body)
             try:
                 response = send(self, request, *a, **k)
             except Exception as err:
                 if is_model_call(request.url):
-                    meter(request.url, text(request.body, reply_max), 0, "", "", caller=caller, t0=t0)
+                    meter(request.url, text(request.body, reply_max), 0, "", "", req, caller, t0)
                 else:
                     dep(request.url, 0, type(err).__name__, caller=caller)
                 raise
@@ -1793,7 +1946,7 @@ def _install():
                 if is_model_call(request.url):
                     # A streamed reply is counted as a call whose counts were not read.
                     raw = response.content.decode("utf-8", "replace") if getattr(response, "_content_consumed", False) else ""
-                    meter(request.url, text(request.body, reply_max), response.status_code, response.headers.get("content-type", ""), raw, caller=caller, t0=t0)
+                    meter(request.url, text(request.body, reply_max), response.status_code, response.headers.get("content-type", ""), raw, req, caller, t0)
             except Exception:
                 pass
             return response
@@ -1807,20 +1960,17 @@ def _install():
             body = k.get("json") if k.get("json") is not None else k.get("data")
             caller = callers_now(str_or_url) if is_model_call(str_or_url) or is_retrieval(str_or_url) else None
             t0 = time.time()
-            try:
-                note(str_or_url, body)
-            except Exception:
-                pass
+            req = noted(str_or_url, body)
             try:
                 response = await request(self, method, str_or_url, *a, **k)
             except Exception as err:
                 if is_model_call(str_or_url):
-                    meter(str_or_url, text(body, reply_max), 0, "", "", caller=caller, t0=t0)
+                    meter(str_or_url, text(body, reply_max), 0, "", "", req, caller, t0)
                 else:
                     dep(str_or_url, 0, type(err).__name__, caller=caller)
                 raise
             if is_model_call(str_or_url):
-                response._cortad = (str_or_url, text(body, reply_max), ctx.get(), caller, t0)
+                response._cortad = (str_or_url, text(body, reply_max), req, caller, t0)
             elif is_retrieval(str_or_url):
                 response._cortad_dep = (str_or_url, ctx.get(), caller)
             else:
