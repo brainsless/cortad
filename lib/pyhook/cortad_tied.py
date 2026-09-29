@@ -88,11 +88,12 @@ class Tied:
             req["asker"], req["tie"] = found
 
     # The requests of the exchange this request completes, the one that asked last, or None. A
-    # request that asked and has not answered is kept to be answered on a later one.
+    # request that asked and has not answered is kept to be answered on a later one. Once answered it
+    # leaves, written or not: a later turn's fetch tied by the same id is never pinned to it.
     def closed(self, req):
         self.open.pop(req["id"], None)
         asker = req.get("asker")
-        if asker and asker.get("kept") and not asker.get("written") and not asker.get("calls_open"):
+        if asker and not asker.get("written") and not asker.get("calls_open"):
             before = [p for p in list(self.recent) if p is not asker and p["at"] < asker["at"] and asker["at"] - p["at"] <= BEFORE_MS and self._ids(p) & req["tie"]]
             for s in before + [asker]:
                 try:
