@@ -203,6 +203,30 @@ behind.post("/hinted")(hinted)
 app.mount("/behind", behind)
 
 
+# A JSON reply behind an ASGI middleware of the app's own that only passes each request on: the
+# framework renders the reply after the handler has returned, so no line of the app is on the stack
+# that sends it but the middleware's, which wrote nothing.
+class Timed:
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        await self.inner(scope, receive, send)
+
+
+timed = FastAPI()
+
+
+@timed.post("/told")
+async def told(request: Request):
+    body = await request.json()
+    said = complete([{"role": "system", "content": REMINDER}, {"role": "user", "content": body["question"]}]).choices[0].message.content
+    return {"reply": REMINDER + " " + said}
+
+
+app.mount("/timed", Timed(timed))
+
+
 # Looks the question up in a vector store that has nothing, then answers anyway.
 @app.post("/recipes")
 async def recipes(request: Request):

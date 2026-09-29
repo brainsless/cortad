@@ -65,6 +65,12 @@ def _holds(frame, chunk):
     return any(_same(v, chunk) for v in frame.f_locals.values())
 
 
+# A send wrapper: the frame was called with the message, where the one that wrote it built it.
+def _handed(frame, message):
+    code = frame.f_code
+    return any(frame.f_locals.get(name) is message for name in code.co_varnames[:code.co_argcount + code.co_kwonlyargcount])
+
+
 # The local the last loop before `lasti` in `code` gives each item to: the first store after its header.
 @functools.lru_cache(maxsize=512)
 def _loop_target(code, lasti):
@@ -152,22 +158,27 @@ class Sites:
         if self._room(req, chunk):
             self._note(req, chunk, next(filter(None, (self._made_by(g, chunk) for g in _generators([iterator]))), None))
 
-    # An app frame on the send's stack that wrote the message itself, else the reply's iterator held by
-    # the framework frame that iterates it, which holds the chunk it was given. Looked for once.
+    # The app's line that wrote the message: past the send wrappers that were handed it, the frame that
+    # sent it, when that is the app's, or an app frame above that holds the bytes. Else the reply's
+    # iterator, held by the framework frame that iterates it, which holds the chunk it was given, looked
+    # for once. An app frame above the sender that holds neither, such as a middleware's
+    # `await self.app(scope, receive, send)`, only called into what wrote it.
     def _sender(self, req, message, chunk, frame, stop):
         gen = req.get("iterated")
         if gen:
             return self._made_by(gen, chunk)
+        sender = True
         for _ in range(FRAMES_MAX):
             if frame is None or frame.f_code is stop:
                 break
-            values = list(frame.f_locals.values())
-            at = self.own_at(frame)
-            if at and not any(v is message for v in values):
-                return at
-            at = self._first_made(req, values, chunk) if gen is None and _holds(frame, chunk) else None
-            if at:
-                return at
+            if not _handed(frame, message):
+                at, held = self.own_at(frame), _holds(frame, chunk)
+                if at and (sender or held):
+                    return at
+                sender = False
+                at = self._first_made(req, list(frame.f_locals.values()), chunk) if gen is None and held else None
+                if at:
+                    return at
             frame = frame.f_back
         if gen is None:
             req["iterated"] = False
