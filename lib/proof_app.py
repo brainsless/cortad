@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from openai import OpenAI
 
 SYSTEM = "You are Rio, a cooking helper. Always name one ingredient you would swap."
+# A block an agent framework adds among the prompt's messages, which the model never says.
+REMINDER = "<system-reminder>The kitchen closes at 22:00.</system-reminder>"
 histories = {}
 
 
@@ -165,6 +167,40 @@ async def ask(request: Request):
         history.append({"role": "assistant", "content": said})
 
     return StreamingResponse(tokens(), media_type="text/event-stream")
+
+
+# The reply streams as named events: the app sends the prompt's reminder as a hint of its own before
+# the model's words, and hands each event on through a generator that only passes them along.
+def streamed(question):
+    yield "event: hint\ndata: %s\n\n" % json.dumps({"text": REMINDER})
+    for chunk in complete([{"role": "system", "content": REMINDER}, {"role": "user", "content": question}], stream=True):
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield "event: delta\ndata: %s\n\n" % json.dumps({"text": chunk.choices[0].delta.content})
+
+
+@app.post("/hinted")
+async def hinted(request: Request):
+    body = await request.json()
+
+    async def relay():
+        for event in streamed(body["question"]):
+            yield event
+
+    return StreamingResponse(relay(), media_type="text/event-stream")
+
+
+# The same stream behind an HTTP middleware, which reads the reply on a task of its own off a stream
+# the response writes into.
+behind = FastAPI()
+
+
+@behind.middleware("http")
+async def passed_through(request: Request, call_next):
+    return await call_next(request)
+
+
+behind.post("/hinted")(hinted)
+app.mount("/behind", behind)
 
 
 # Looks the question up in a vector store that has nothing, then answers anyway.

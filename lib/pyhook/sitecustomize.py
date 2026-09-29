@@ -1224,10 +1224,18 @@ def _install():
             row["turn"] = turn
         write(row)
 
+    # Where the app's own code wrote the parts of this reply, under the id its exchange is written by.
+    def written_at(req, steps):
+        asker = steps[-1] if steps else req
+        turn = req.get("turn") or asker.get("turn")
+        if req.get("sites") and (asker.get("kept") or turn):
+            write({"sites": {"ex": asker["id"], **({"turn": turn} if turn else {}), "list": req["sites"]}})
+
     def ended(req):
         req["ended"] = int(time.time() * 1000)
         hear(req)
         steps = tied.closed(req) if tied else None
+        written_at(req, steps)
         if steps:
             answered(req, steps)
         elif not req.get("calls_open"):
@@ -1320,13 +1328,23 @@ def _install():
     callers_max = 5
     installed = re.compile(r"/(?:site-packages|dist-packages|\.venv|venv|__pypackages__)/|/lib/python\d")
 
-    def ours(frame, out):
+    def own_at(frame):
         f = frame.f_code.co_filename.replace(os.sep, "/")
         if f.startswith(root) and not installed.search(f[len(root) - 1:]):
-            at = "%s:%d" % (f[len(root):], frame.f_lineno)
-            if at not in out:
-                out.append(at)
+            return "%s:%d" % (f[len(root):], frame.f_lineno)
+        return None
+
+    def ours(frame, out):
+        at = own_at(frame)
+        if at and at not in out:
+            out.append(at)
         return len(out) >= callers_max
+
+    try:
+        from cortad_sites import Sites
+        sites = Sites(own_at)
+    except Exception:
+        sites = None
 
     # The task that waits on this one: its wake-up is among this one's callbacks, directly, or behind
     # the future an asyncio.gather callback closes over.
@@ -1396,7 +1414,7 @@ def _install():
             if tied:
                 tied.done(req)
             row.update(inside_of(req))
-            if req and req.get("kept"):
+            if req and (req.get("kept") or req.get("turn")):
                 row["reply"] = reply_text(events)[:model_words]
             as_text = sent if isinstance(sent, str) else text(sent)
             found = rules_in(as_text)
@@ -1649,6 +1667,8 @@ def _install():
                     elif message.get("type") == "http.response.body":
                         replied(req, message.get("body") or b"")
                         req["finished"] = not message.get("more_body")
+                        if sites and not req.get("placed"):
+                            sites.sent(req, message, sys._getframe(1), Asgi.__call__.__code__)
                 except Exception:
                     pass
                 return await send(message)
@@ -1700,6 +1720,11 @@ def _install():
                     if token is not None:
                         ctx.reset(token)
                 replied(req, item)
+                if sites:
+                    try:
+                        sites.iterated(req, iterable, item)
+                    except Exception:
+                        pass
                 yield item
         finally:
             close = getattr(iterable, "close", None)
@@ -2163,7 +2188,31 @@ def _install():
         module.ClientResponse.read = read_kept
         module.ClientResponse.release = release_kept
 
-    exact = {"uvicorn.config": patch_uvicorn, "werkzeug.serving": patch_werkzeug, "django.core.handlers.wsgi": patch_django,
+    # Starlette's streamed response, placed as it sends: behind an HTTP middleware the reply reaches the
+    # server's send on a task of its own, read off a stream this response writes into, by which time
+    # the app's generator has moved on to the next chunk.
+    def patch_starlette_responses(module):
+        call = module.StreamingResponse.__call__
+
+        async def called(self, scope, receive, send):
+            req = ctx.get()
+            if not (sites and req):
+                return await call(self, scope, receive, send)
+            req["placed"] = True
+
+            async def sending(message):
+                if message.get("type") == "http.response.body":
+                    try:
+                        sites.made(req, self.body_iterator, message.get("body") or b"")
+                    except Exception:
+                        pass
+                return await send(message)
+
+            return await call(self, scope, receive, sending)
+
+        module.StreamingResponse.__call__ = called
+
+    exact = {"uvicorn.config": patch_uvicorn, "starlette.responses": patch_starlette_responses, "werkzeug.serving": patch_werkzeug, "django.core.handlers.wsgi": patch_django,
              "django.core.servers.basehttp": patch_django_server, "gunicorn.workers.base": patch_gunicorn,
              "hypercorn.asyncio.run": patch_hypercorn, "hypercorn.trio.run": patch_hypercorn, "aiohttp.web": patch_aiohttp_web,
              "requests.sessions": patch_requests, "aiohttp.client": patch_aiohttp}
