@@ -114,7 +114,8 @@ class Tied:
         for r in list(self.open.values()):
             if r.get("asker"):
                 found[id(r["asker"])] = (r["asker"], None)
-            elif r["method"] != "GET" and self._says(r, prompt):
+            # A request whose own context made a model call is served there; a call outside it is not its.
+            elif r["method"] != "GET" and (not r.get("noted") or r.get("pinned")) and self._says(r, prompt):
                 found[id(r)] = (r, None)
             else:
                 asker = self._asker(r)
