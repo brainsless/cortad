@@ -22,7 +22,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { COMMANDS, main as face } from "./lib/cli.mjs";
 import { homeOf, projectOf, readToken, writeApp, writeDigest, writeToken } from "./lib/home.mjs";
-import { commandText, RELOADER, sourceOf } from "./lib/fresh.mjs";
+import { changesOf, commandText, RELOADER, sourceOf } from "./lib/fresh.mjs";
 import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawnTied, stopTree, supervisorOf } from "./lib/proc.mjs";
 import { claimRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
 import { registerAll } from "./lib/register.mjs";
@@ -38,7 +38,8 @@ import { installPlan, missingDependency, startPlan, workspaces } from "./lib/sta
 import { openSwitches } from "./lib/switches.mjs";
 import { makeKeeping } from "./lib/keeping.mjs";
 import { downLine, makeHealth } from "./lib/health.mjs";
-import { markRun, writesDirOf } from "./lib/writes.mjs";
+import { markRun, writesDirOf, writtenPaths } from "./lib/writes.mjs";
+import { makeHeld } from "./lib/held.mjs";
 
 const argv = process.argv.slice(2);
 // The two faces a coding agent uses after the first connect (lib/cli.mjs): the MCP server the
@@ -292,6 +293,7 @@ let forgetTold = null;
 // The run's requests your app has not answered yet: a slow health probe while any are open is our
 // load on it, not a hang.
 let answering = 0;
+const held = makeHeld({ rows: () => capture?.usage()?.rows ?? [], say: (line) => say(line) });
 // Closed while a store the app reaches is brought up and copied, until the app runs on the copy: the
 // run's requests wait at it rather than write into the original.
 let gate = null;
@@ -368,6 +370,9 @@ async function verb(job) {
       const path = typeof b.path === "string" && b.path.startsWith("/") ? b.path : "/";
       const headers = {};
       for (const [k, v] of Object.entries(b.headers ?? {})) if (!/^(host|content-length|connection)$/i.test(k)) headers[k] = String(v);
+      // Held from here, before anything is awaited, so a cancel from the run never arrives first.
+      const turn = String(Object.entries(headers).find(([k]) => k.toLowerCase() === "x-cortad-turn")?.[1] ?? "");
+      const letGo = held.hold(job.id, turn);
       // A request that speaks as one of your app's own callers carries the role, not the token:
       // the token was issued on this machine and is put in here, so it never travels.
       const marker = Object.keys(headers).find((k) => k.toLowerCase() === AS_HEADER);
@@ -399,7 +404,7 @@ async function verb(job) {
       const yours = (to) => { try { const u = new URL(to, url); return ["127.0.0.1", "::1", "[::1]", "localhost"].includes(u.hostname) && u.port === String(port) ? u.href : null; } catch { return null; } };
       // Each trial keeps the cookies your app set on its own earlier turns, so a conversation your app
       // holds in a cookie carries from one turn to the next and never into another trial.
-      const trial = String(Object.entries(headers).find(([k]) => k.toLowerCase() === "x-cortad-turn")?.[1] ?? "").replace(/:\d+$/, "");
+      const trial = turn.replace(/:\d+$/, "");
       let jar = trial ? trialJars.get(trial) ?? "" : "";
       // Held as long as the run waits for this reply: a course generator that takes ninety seconds
       // a reply is waited on for three of them. A run that says nothing gets the old 170 seconds.
@@ -407,7 +412,7 @@ async function verb(job) {
       const sent = (at, over = {}) => fetch(at, {
         ...init, ...over,
         headers: { ...headers, ...(over.headers ?? {}), ...(jar ? { cookie: [headers.cookie, jar].filter(Boolean).join("; ") } : {}) },
-        signal: AbortSignal.timeout(holdMs),
+        signal: AbortSignal.any([letGo, AbortSignal.timeout(holdMs)]),
       });
       const keep = (res) => {
         const set = res.headers.getSetCookie?.() ?? [];
@@ -436,16 +441,20 @@ async function verb(job) {
         const said = Object.fromEntries([...res.headers].filter(([k]) => !/^set-cookie2?$/i.test(k)).map(([k, v]) => [k, mask(v)]));
         return { status: res.status, headers: said, body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
       };
-      const counted = async () => { await gate; answering += 1; try { return await ask(); } finally { answering -= 1; } };
+      const counted = async () => { await gate; letGo.throwIfAborted(); answering += 1; try { return await ask(); } finally { answering -= 1; } };
       try { return await counted(); }
       catch (e) {
+        if (letGo.aborted) return { error: "cancelled by the run" };
         const code = String(e.cause?.code ?? e.code ?? "");
         if (!/ECONNREFUSED|ECONNRESET|EPIPE|UND_ERR_SOCKET/.test(code)) return { error: `nothing answered at port ${port}: ${code || e.message}` };
-        for (let i = 0; i < 45 && !(await answers(port)); i++) await new Promise((r) => setTimeout(r, 1000));
+        // Held through a restart of ours however long it takes: a request it cut is sent again after it.
+        for (let i = 0; (i < 45 || restarting) && !letGo.aborted && !(await answers(port)); i++) await new Promise((r) => setTimeout(r, 1000));
         try { return { ...(await counted()), heldForRestart: true }; }
-        catch (again) { return { error: `nothing answered at port ${port}: ${String(again.cause?.code ?? again.message)}` }; }
-      }
+        catch (again) { return { error: letGo.aborted ? "cancelled by the run" : `nothing answered at port ${port}: ${String(again.cause?.code ?? again.message)}` }; }
+      } finally { held.done(job.id); }
     }
+    // The run gave up on a request it asked for: its wait ran out, or the run ended.
+    case "cancel": return { cancelled: held.letGo([String(b.id ?? "")]) };
     case "read": {
       const p = readable(b.path);
       if (!p) return { error: "bad path" };
@@ -861,16 +870,42 @@ async function start(waitMs, tries = 3) {
 }
 
 const COPIED = "starting your app again so it runs against the copies made for this session";
+// A restart waits this long for the run's requests already at your app, then goes ahead: one it
+// cuts is sent again once your app answers.
+const DRAIN_MS = 20_000;
 // The same command again, for an app that does not reload on save. Only an app this program
-// started: one you started yourself is yours to restart.
-async function restartApp(why = "starting your app again so it runs the code you saved, since it does not reload by itself") {
-  restarting = true;
-  try { return await restartNow(why); } finally { restarting = false; }
+// started: one you started yourself is yours to restart. New requests wait at the gate meanwhile,
+// and a restart asked for while one is under way is that one.
+let restartDone = null;
+function restartApp(why = "starting your app again so it runs the code you saved, since it does not reload by itself") {
+  if (!launched || !child) return Promise.resolve({ error: "You started this app yourself, so restart it in your own terminal. Most dev servers reload on save." });
+  restartDone ??= (async () => {
+    restarting = true;
+    hold();
+    say(why);
+    try {
+      for (const end = Date.now() + DRAIN_MS; answering > 0 && Date.now() < end;) await new Promise((r) => setTimeout(r, 250));
+      return await restartNow();
+    } finally { restarting = false; restartDone = null; release(); }
+  })();
+  return restartDone;
 }
-async function restartNow(why) {
-  if (!launched || !child) return { error: "You started this app yourself, so restart it in your own terminal. Most dev servers reload on save." };
+// Saved since your app started, in a file it runs: bytes written back as they were are not a change,
+// and neither is a file the app wrote itself.
+const savedSinceStart = () => Boolean(loaded?.files) && changesOf({
+  root, app: { startedAt: new Date(loaded.at).toISOString(), files: loaded.files }, skip: writtenPaths(writesDirOf(homeOf(project))),
+}).changed.length > 0;
+// Every save that changes what your app runs starts it again, when it does not reload by itself: an
+// agent that saved a fix and asked the app eight seconds later was answered by the old code. Looked
+// at again after each restart, for a save made while it was under way.
+async function restartOnSave() {
+  while (!closing) {
+    await sourceChanged();
+    while (!closing && launched && child && !appGone && !loaded?.reloads && savedSinceStart()) await restartApp();
+  }
+}
+async function restartNow() {
   const port = app.port;
-  say(why);
   await stopTree(child.pid);
   // Until the port is free, not merely silent: a listener still closing does not answer and still
   // holds the bind, and the restarted app was moved to the next port while the run kept knocking on
@@ -1106,6 +1141,7 @@ async function appLife() {
     } finally { release(); }
   }
   forgetTold = () => { appTold = false; };
+  void restartOnSave().catch((e) => say(`could not watch your files for a save: ${e?.message ?? e}`));
   const health = makeHealth({ host: () => appHost, gone: () => Boolean(launched && appGone), inFlight: () => answering });
   for (let up = true; !closing;) {
     await new Promise((r) => setTimeout(r, 2000));
