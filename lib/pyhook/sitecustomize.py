@@ -272,7 +272,46 @@ def _install():
                 v = raw
         return json.dumps(clipped({} if v is None else v), ensure_ascii=False, separators=(",", ":"))[:args_max]
 
-    def calls_of(events):
+    # What each function tool the request declares requires, off its own JSON schema, by name.
+    def schemas_of(body):
+        out = {}
+
+        def add(name, schema):
+            if isinstance(name, str) and isinstance(schema, dict):
+                out[name] = schema
+
+        for t in items(body.get("tools")):
+            add(t.get("name"), t.get("parameters") or t.get("input_schema") or t.get("inputSchema"))
+            if isinstance(t.get("function"), dict):
+                add(t["function"].get("name"), t["function"].get("parameters"))
+            spec = t.get("toolSpec") if isinstance(t.get("toolSpec"), dict) else {}
+            add(spec.get("name"), spec["inputSchema"].get("json") if isinstance(spec.get("inputSchema"), dict) else None)
+            for d in items(t.get("functionDeclarations") or t.get("function_declarations")):
+                add(d.get("name"), d.get("parameters"))
+        for f in items(body.get("functions")):
+            add(f.get("name"), f.get("parameters"))
+        return out
+
+    # What a tool's declared schema refuses in the arguments the model sent, said plainly, or None.
+    # Read before any value is clipped: a clipped value is ours, never the model's.
+    def refused_by(schema, raw):
+        args = {} if raw is None else raw
+        if isinstance(args, str):
+            if not args.strip():
+                args = {}
+            else:
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    return "the arguments are not valid JSON"
+        if not isinstance(args, dict):
+            return "the arguments are not a JSON object"
+        required = schema.get("required") if isinstance(schema.get("required"), list) else []
+        missing = next((k for k in required if isinstance(k, str) and k not in args), None)
+        return 'the required input "%s" is missing' % missing if missing else None
+
+    # `schemas`: the request's declared tools, so each call the reply makes is checked against its own.
+    def calls_of(events, schemas=None):
         whole, parts, n = {}, {}, [0]
 
         def put(key, name, args):
@@ -335,7 +374,13 @@ def _install():
                     if isinstance(p.get("functionCall"), dict):
                         put(None, p["functionCall"].get("name"), p["functionCall"].get("args"))
         found = list(whole.values()) + [tuple(p) for p in parts.values()]
-        return [{"name": str(name)[:80], "arguments": args_text(args)} for name, args in found if name]
+        out = []
+        for name, args in found:
+            if not name:
+                continue
+            refused = refused_by(schemas[name], args) if schemas and name in schemas else None
+            out.append(dict({"name": str(name)[:80], "arguments": args_text(args)}, **({"refused": refused} if refused else {})))
+        return out
 
     # This turn's earlier calls, as the prompt resends them after the person's latest message.
     def called_before(body):
@@ -567,15 +612,63 @@ def _install():
             out += [body.get("prompt") if isinstance(body.get("prompt"), str) else "", inp if isinstance(inp, str) else ""]
         return "\x00\n".join(out)
 
-    def called_in(sent, events):
+    def called_in(sent, events, provided=()):
         body = parsed(sent) if isinstance(sent, str) else None
         out = []
         declared = declared_in(body) if isinstance(body, dict) else set()
         written = [{"name": n, "arguments": args_text(a)} for _, n, a in written_calls(turn_texts(body, False, declared) if isinstance(body, dict) else "", declared) + written_calls(reply_text(events), declared)]
-        for c in (called_before(body) if isinstance(body, dict) else []) + calls_of(events) + written:
+        for c in (called_before(body) if isinstance(body, dict) else []) + calls_of(events, schemas_of(body) if isinstance(body, dict) else None) + list(provided) + written:
             if len(out) < calls_max and not any(o["name"] == c["name"] and o["arguments"] == c["arguments"] for o in out):
                 out.append(c)
         return out or None
+
+    # Tools the model's provider runs for the app (a web search, a file search, a code interpreter, a
+    # remote MCP server): the calls come back in the model's own reply, and so does what each answered
+    # where the provider says it. A call it marks failed, or an error it hands back, is the tool failing
+    # there, in the provider's own words. Answers pair with calls in the order the reply lists them.
+    provider_call = re.compile(r"^(web_search|file_search|code_interpreter|image_generation|mcp)_call$")
+    provider_result = re.compile(r"^\w+_tool_result$")
+
+    def provider_in(sent, events):
+        body = parsed(sent) if isinstance(sent, str) else None
+        offered = [t["type"] for t in items(body.get("tools") if isinstance(body, dict) else None) if isinstance(t.get("type"), str) and t["type"] not in ("function", "custom")]
+
+        def named(kind):
+            return next((t for t in offered if t.startswith(kind)), kind)
+
+        calls, names, answers = {}, {}, []
+
+        def answer(name, said):
+            t = text_of(said)[:tool_text]
+            if name and t.strip() and len(answers) < tools_max and not any(a["name"] == name and a["text"] == t for a in answers):
+                answers.append({"name": str(name)[:80], "text": t, "provider": True})
+
+        for e in events:
+            if not isinstance(e, dict):
+                continue
+            order = []
+            resp = e.get("response") if isinstance(e.get("response"), dict) else {}
+            for it in items(e.get("output")) + items([e.get("item")]) + items(resp.get("output")):
+                m = provider_call.match(str(it.get("type") or ""))
+                if m:
+                    name = str(it.get("name") or "mcp") if m.group(1) == "mcp" else named(m.group(1))
+                    order.append(name)
+                    if it.get("id"):
+                        given = it.get("action") if it.get("action") is not None else it.get("arguments")
+                        calls[it["id"]] = {"name": name[:80], "arguments": args_text({} if given is None else given)}
+                    if it.get("status") == "failed" or it.get("error"):
+                        answer(name, it.get("error") or "%s %s" % (it.get("type"), it.get("status")))
+                elif it.get("type") == "tool_output":
+                    answer(order.pop(0) if order else (offered[0] if len(offered) == 1 else ""), it.get("output"))
+            msg = e.get("message") if isinstance(e.get("message"), dict) else {}
+            for b in items(e.get("content")) + items(msg.get("content")) + items([e.get("content_block")]):
+                if b.get("type") in ("server_tool_use", "mcp_tool_use") and b.get("id"):
+                    names[b["id"]] = b.get("name")
+                    calls[b["id"]] = {"name": str(b.get("name"))[:80], "arguments": args_text({} if b.get("input") is None else b.get("input"))}
+                c = b.get("content")
+                if provider_result.match(str(b.get("type") or "")) and (b.get("is_error") is True or (isinstance(c, dict) and str(c.get("type") or "").endswith("_error"))):
+                    answer(names.get(b.get("tool_use_id")) or re.sub(r"_tool_result$", "", b["type"]), c)
+        return list(calls.values()), answers
 
     # What the prompt was handed besides its instructions, of two kinds. What the app retrieved: a
     # block it labels as context, documents, knowledge, sources or search results. And its own
@@ -1102,10 +1195,11 @@ def _install():
             found = rules_in(as_text)
             if found is not None:
                 row["rules"] = found
-            tools = tools_in(as_text)
+            provided_calls, provided = provider_in(as_text, events)
+            tools = (tools_in(as_text) or []) + provided
             if tools:
                 row["tools"] = tools
-            called = called_in(as_text, events)
+            called = called_in(as_text, events, provided_calls)
             if called:
                 row["called"] = called
             passages = passages_in(as_text)
