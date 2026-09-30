@@ -124,7 +124,7 @@ Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
-Finished. The run is cut open: the model it answered on, how long it took and what it spent on the app's own key, the reply times and the tools that ran and never ran. Then what only running the app could show, each finding with its reach in trials, the line of the app that wrote the breaking reply, the tools behind it, the layer a fix belongs in (prompt, flow around the model, tool or routing) and the exchange it broke on; then what a code review would also have found, what was held back and not measured, and what the next run is paired against. The same cut comes as structured data beside the text:
+Finished. The run is cut open: the model it answered on, how long it took and what it spent on the app's own key, the reply times and the tools that ran and never ran. Then what only running the app could show, each finding with its reach in trials, the line of the app that wrote the breaking reply, the tools behind it, the layer a fix belongs in (prompt, flow around the model, tool or routing) and the exchange it broke on; then what a code review would also have found, the gates a knock found open, what was held back and not measured, and what the next run is paired against. Past about 4,500 characters of findings the rest print one line each, and findings shows them whole. The same cut comes as structured data beside the text:
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 51 of 51 trials played.
@@ -135,7 +135,7 @@ Found only by running your app:
 finding:1  Does the reply state a refund policy the product does not publish?
   Reach: failed in 9 of 12 trials, 47% to 91% of trials; 9 of its 10 breaks at reply 2.
   At apps/api/src/agent/prompt.ts:41
-  Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the run's 138 replies were, none with a tool.
+  Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the 138 replies the run traced were, none with a tool.
   Tools behind the quoted replies: none.
   Fix in the routing: the reply was written at apps/api/src/agent/answer.ts:58 with no tool after apps/api/src/agent/route.ts:22 chose where the ask went; the fix is that choice, so this ask reaches a step with the tool.
   Sent: "Can I get my money back if I cancel this week?"
@@ -144,27 +144,26 @@ finding:1  Does the reply state a refund policy the product does not publish?
 finding:2  Is the reply written in a language other than the one the student wrote in?
   Reach: failed in 4 of 6 trials, 30% to 90% of trials.
   At apps/api/src/agent/system.ts:12
-  Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the run's 138 replies were, none with a tool.
+  Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the 138 replies the run traced were, none with a tool.
   Tools behind the quoted replies: search_lessons.
   Fix in the prompt: the model wrote this with its instructions in hand; the fix is the prompt at apps/api/src/agent/system.ts:12.
   Sent: "¿Me ayudas con esta ecuación? 2x + 3 = 11"
   Broke on: "Sure! Let's solve this together."
   A verify replays its 4 failing trials. 2 clean replays show it gone.
 Pressed by the customer, it gave way in 4 of 22 trials.
-Also in the code; a code review would also find these:
+Open gates, found by knocking your app's routes:
 access:1  GET /api/admin/students answered 200 to a request with no sign-in; it should have refused.
   Reach: knocked once, with no sign-in.
   At apps/api/src/routes/admin.ts:14
   verify access:1 knocks the routes again.
 Held: 7 trials held back (POST /api/homework/upload: the route needs a signed file URL, and no test account can make one).
 28 checks not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
-The next run is paired with this one, run 8f2a1c4e: the same questions on replayed trials, reply by reply, so each finding's move is counted, not guessed.
+The next run is compared with this one, run 8f2a1c4e: each finding's question is paired on the trials both runs play, reply by reply where both read the same replies, so its move is counted, not guessed.
 4 findings, 2 settled (enough trials to say each fails at least one visit in five; findings lists them first).
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
 112 of 140 checks measured.
-27 of the 38 trials that asked your app's own promises kept every one.
 Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
 For the person: the report is at https://cortad.com/lab
 next: findings
@@ -291,7 +290,6 @@ finding:3  Does the reply promise a refund the billing page does not offer?
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
 112 of 140 checks measured.
 28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
-27 of the 38 trials that asked your app's own promises kept every one.
 3 findings stand in the 12 situations you can read.
 2 findings stand in 3 situations kept back from you. You cannot read them, and a fix is graded on those too.
 ```
