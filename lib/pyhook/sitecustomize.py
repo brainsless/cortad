@@ -1142,8 +1142,15 @@ def _install():
     # An exchange is kept when the request makes its first model call, for the first few requests per
     # route, and written once the app has answered. Model calls and tool rows carry the request's id
     # whether kept or not; the command joins them to the exchange it has.
-    exchanges_per_route, routes_kept, sent_max, model_words = 4, 1000, 4, 4000
+    exchanges_per_route, canary_per_route, routes_kept, sent_max, model_words = 4, 30, 1000, 4, 4000
     per_route = {}
+
+    # The person's requests, ours (a run's turns, a knock) and the canary's each have their own count,
+    # so a run that knocked first never takes the places of the requests that prove a door.
+    def slot_of(turn):
+        if not turn:
+            return "", exchanges_per_route
+        return ("canary ", canary_per_route) if turn.startswith("canary:") else ("ours ", exchanges_per_route)
     id_segment = re.compile(r"^\d+$|^(?=.{8,}$).*\d")
 
     # One route whatever id its path carries: a conversation in the path is a new path every trial.
@@ -1167,9 +1174,10 @@ def _install():
             return None
         if not req["noted"]:
             req["noted"] = True
-            key = route_key(req["method"], req["path"])
+            cls, most = slot_of(req["turn"])
+            key = cls + route_key(req["method"], req["path"])
             n = per_route.get(key, 0)
-            if n < exchanges_per_route and (n or len(per_route) < routes_kept):
+            if n < most and (n or len(per_route) < routes_kept):
                 per_route[key] = n + 1
                 req["kept"] = True
         if req["kept"] and len(req["sent"]) < sent_max:
