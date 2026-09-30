@@ -1205,6 +1205,12 @@ def _install():
     from urllib.parse import parse_qsl
 
     passed = {"at": -1, "hosts": []}
+    # When the run last sent a request: a write made outside every request (a queue's worker, a
+    # thread) is held while a run is live, since it may be carrying out a trial's ask.
+    # ponytail: while a run is live, a person's own queued write is held too; per-ask pinning of
+    # background writes is the upgrade when that matters.
+    run_seen = {"at": None}
+    run_live_s = 600
     this_machine = re.compile(r"^(?:localhost|127(?:\.\d+){3}|::1|0\.0\.0\.0)$", re.I)
     # ponytail: a sign-in's token refresh is a POST that changes nothing, told apart by its path only.
     token_path = re.compile(r"/(?:oauth2?/)?token(?:[/?]|$)", re.I)
@@ -1237,7 +1243,12 @@ def _install():
     # write is being decided, a failure to decide holds it.
     def held_here(url, method, auth_of):
         req = ctx.get()
-        if not req or not req.get("turn") or str(method or "").upper() not in ("POST", "PUT", "PATCH", "DELETE"):
+        if str(method or "").upper() not in ("POST", "PUT", "PATCH", "DELETE"):
+            return False
+        if req:
+            if not req.get("turn"):
+                return False
+        elif run_seen["at"] is None or time.monotonic() - run_seen["at"] > run_live_s:
             return False
         try:
             parts = urlsplit(str(url))
@@ -1757,6 +1768,8 @@ def _install():
         req = {"id": "%d.%d" % (os.getpid(), next(serial)), "at": int(time.time() * 1000), "method": method, "path": path, "headers": headers,
                "chunks": [], "size": 0, "noted": False, "kept": False, "sent": [], "reply": [], "reply_size": 0, "writes": 0,
                "turn": turn if isinstance(turn, str) and turn_ok.match(turn) else None}
+        if req["turn"]:
+            run_seen["at"] = time.monotonic()
         if tied:
             tied.opened(req)
         return req
