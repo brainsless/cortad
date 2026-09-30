@@ -241,9 +241,10 @@ async function inventoryOf(listings) {
   return { providers: providers.filter(Boolean), flags: switchStates(values) };
 }
 let secrets = [];
-// A run's request to an endpoint your app answers later carries the first (src/customer/endpoint.ts);
-// a reply with no answer says in the second why none came.
-const LATER_HEADER = "x-cortad-answer", LATER_MISSED = "x-cortad-later", LATER_MARGIN_MS = 3_000;
+// A run's request to an endpoint your app answers later carries the first (src/customer/endpoint.ts),
+// with how long the run waits for this reply; a reply with no answer says in the second why none came.
+// The wait here ends a few seconds before the run's own and the wire's hold, so the reason reaches it.
+const LATER_HEADER = "x-cortad-answer", LATER_MISSED = "x-cortad-later", LATER_MARGIN_MS = 5_000;
 // The cookies each trial's own turns were handed, newest trials kept.
 const trialJars = new Map();
 const TRIAL_JARS = 500;
@@ -352,7 +353,8 @@ async function verb(job) {
       // An endpoint your app answers later: it takes the message and its model answers afterwards,
       // outside the request (a queue's worker). Its own reply only says it took the message.
       const laterAt = Object.keys(headers).find((k) => k.toLowerCase() === LATER_HEADER);
-      const later = laterAt !== undefined && headers[laterAt] === "later";
+      const laterMs = laterAt === undefined ? NaN : Number(headers[laterAt]);
+      const later = laterAt !== undefined && (headers[laterAt] === "later" || laterMs > 0);
       if (laterAt !== undefined) delete headers[laterAt];
       if (later) capture?.forget(turn || headers["x-cortad-turn"]);
       // A request that speaks as one of your app's own callers carries the role, not the token:
@@ -430,7 +432,8 @@ async function verb(job) {
       // reply says the status of the model call that gave no words, or the seconds waited.
       const answered = async (got) => {
         if (!later || got.status < 200 || got.status >= 300) return got;
-        const said = capture ? await capture.answered(turn || headers["x-cortad-turn"], began + holdMs - LATER_MARGIN_MS, letGo) : null;
+        const until = began + Math.min(holdMs, laterMs > 0 ? laterMs : Infinity) - LATER_MARGIN_MS;
+        const said = capture ? await capture.answered(turn || headers["x-cortad-turn"], until, letGo) : null;
         if (letGo.aborted) return { error: "cancelled by the run" };
         if (!said?.reply.trim()) return { ...got, headers: { ...got.headers, [LATER_MISSED]: JSON.stringify(said ? { model: said.status } : { waited: Math.round((Date.now() - began) / 1000) }) } };
         return { ...got, headers: { "content-type": "application/json" }, body: mask(JSON.stringify({ reply: said.reply })), truncated: false };
