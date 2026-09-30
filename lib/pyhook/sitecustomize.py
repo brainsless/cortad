@@ -1146,10 +1146,12 @@ def _install():
     per_route = {}
 
     # The person's requests, ours (a run's turns, a knock) and the canary's each have their own count,
-    # so a run that knocked first never takes the places of the requests that prove a door.
+    # so a run that knocked first never takes the places of the requests that prove a door. Every one
+    # of the person's is kept: their newest is the sign-in and the proof a run takes, and the command
+    # keeps only the newest few per door.
     def slot_of(turn):
         if not turn:
-            return "", exchanges_per_route
+            return "", float("inf")
         return ("canary ", canary_per_route) if turn.startswith("canary:") else ("ours ", exchanges_per_route)
     id_segment = re.compile(r"^\d+$|^(?=.{8,}$).*\d")
 
