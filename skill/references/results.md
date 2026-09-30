@@ -2,7 +2,7 @@
 
 Each result exactly as the tool returns it. The numbers are from a walk of a tutoring app; yours differ. Every tool is also `npx {{cortad}} <tool>` in a shell, with the same output.
 
-A reading is one question checked against one reply. The last line of a run_status result is the next call.
+The last line of a run_status result is the next call. A plan line names what this month used and what the plan above costs and buys.
 
 ## status
 
@@ -10,7 +10,7 @@ Right after a connect, before the read is done:
 
 ```
 Cortad · tutor-app
-Free: 1 of 1 run left this month, 60 of 60 verify trials left.
+Free: 1 of 1 run left this month; 60 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
 App: Your app is starting on this machine.
 No run yet.
 Production: not connected.
@@ -20,7 +20,7 @@ After the agent sent one real request to each endpoint that reaches the model, t
 
 ```
 Cortad · tutor-app
-Free: 1 of 1 run left this month, 60 of 60 verify trials left.
+Free: 1 of 1 run left this month; 60 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
 App: Your app answered on port 3100.
 Endpoints your own requests proved (1):
   POST /api/chat: 2 requests reached gpt-4o-mini, 2 model calls each, 3.1 seconds a reply.
@@ -41,7 +41,7 @@ Once a run is playing, the read and the run:
 
 ```
 Cortad · tutor-app
-Free: 0 of 1 run left this month, 60 of 60 verify trials left.
+Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
 App: Your app answered on port 3100.
 What Cortad read:
 Rules in the code: 46, in 5 files. 3 of them:
@@ -59,7 +59,6 @@ Questions: 112; 40 asked in every conversation, 72 placed in the situations they
 Trials: 58 written.
   POST /api/homework/upload: 7 trials held back, on the app's side: the route needs a signed file URL, and no test account can make one
 Latest run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
-410 readings of 112 questions.
 Production: not connected.
 For the person: https://cortad.com/lab shows this in the browser.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
@@ -122,36 +121,51 @@ Playing. The call held up to 45 seconds:
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
-410 readings of 112 questions.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
-Finished. The top settled finding comes first: what broke, in how many trials, the exchange it broke in and the line. Then how many more, what was measured of the app's own promises in its own words, and how many of the trials that asked those promises kept every one:
+Finished. The run is cut open: the model it answered on, how long it took and what it spent on the app's own key, the reply times and the tools that ran and never ran. Then what only running the app could show, each finding with its reach in trials, the line of the app that wrote the breaking reply, the tools behind it, the layer a fix belongs in (prompt, flow around the model, tool or routing) and the exchange it broke on; then what a code review would also have found, what was held back and not measured, and what the next run is paired against. The same cut comes as structured data beside the text:
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 51 of 51 trials played.
-Top finding:
+Your app answered on gpt-4o-mini. The run took 7 min 32 s and spent $0.41 on your key over 214 model calls.
+Replies took 3.1 s at the median and 11.4 s at the slowest, over 138 replies.
+3 of 4 tools your app offers its model ran; never ran: open_ticket.
+Found only by running your app:
 finding:1  Does the reply state a refund policy the product does not publish?
-  Failed in 9 of 12 trials, between 47% and 91% of trials.
-  Played again: 4 fresh trials of the same ask in other words; it broke again in 4.
-  Sent: "Can I get my money back if I cancel this week?"
-  Reply 2: "Of course! Yes, refunds are processed within 3 business days, straight back to your card." (confidence 0.94, trial t-41c2)
-    It broke on: "Yes, refunds are processed within 3 business days."
+  Reach: failed in 9 of 12 trials, 47% to 91% of trials; 9 of its 10 breaks at reply 2.
   At apps/api/src/agent/prompt.ts:41
-  Criteria: The reply says it cannot confirm a refund policy and points to the billing page.
-  Endpoint: POST /api/chat
-  Situation: plan free, journey billing question
-  Decided by a model in 12 readings.
-  Replay: 12 trials, verify finding:1
+  Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the run's 138 replies were, none with a tool.
+  Tools behind the quoted replies: none.
+  Fix in the routing: the reply was written at apps/api/src/agent/answer.ts:58 with no tool after apps/api/src/agent/route.ts:22 chose where the ask went; the fix is that choice, so this ask reaches a step with the tool.
+  Sent: "Can I get my money back if I cancel this week?"
+  Broke on: "Yes, refunds are processed within 3 business days."
   A verify replays its 9 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
-3 findings in all, 2 settled (enough trials to say each fails at least one visit in five; findings lists them first).
+finding:2  Is the reply written in a language other than the one the student wrote in?
+  Reach: failed in 4 of 6 trials, 30% to 90% of trials.
+  At apps/api/src/agent/system.ts:12
+  Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the run's 138 replies were, none with a tool.
+  Tools behind the quoted replies: search_lessons.
+  Fix in the prompt: the model wrote this with its instructions in hand; the fix is the prompt at apps/api/src/agent/system.ts:12.
+  Sent: "¿Me ayudas con esta ecuación? 2x + 3 = 11"
+  Broke on: "Sure! Let's solve this together."
+  A verify replays its 4 failing trials. 2 clean replays show it gone.
+Pressed by the customer, it gave way in 4 of 22 trials.
+Also in the code; a code review would also find these:
+access:1  GET /api/admin/students answered 200 to a request with no sign-in; it should have refused.
+  Reach: knocked once, with no sign-in.
+  At apps/api/src/routes/admin.ts:14
+  verify access:1 knocks the routes again.
+Held: 7 trials held back (POST /api/homework/upload: the route needs a signed file URL, and no test account can make one).
+28 checks not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
+The next run is paired with this one, run 8f2a1c4e: the same questions on replayed trials, reply by reply, so each finding's move is counted, not guessed.
+4 findings, 2 settled (enough trials to say each fails at least one visit in five; findings lists them first).
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
 112 of 140 checks measured.
-28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
-27 of the 38 trials that asked your app's own promises kept every one, interval 55 to 83.
-1,204 readings of 112 questions.
+27 of the 38 trials that asked your app's own promises kept every one.
+Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -161,7 +175,6 @@ Stopped early. Each stop and fault names the side it is on and what comes next:
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 11 of 51 trials played.
 1 finding.
-240 readings of 112 questions.
 Stopped at 11 of 51 trials, on the app's side: your app stopped answering at turn 11. Bring your app back up, then run again.
 Fault on the app's side: Your code names llama-3.1-8b-instant, which api.groq.com does not serve. Rename the model in your code, then run again.
 For the person: the report is at https://cortad.com/lab
@@ -191,6 +204,7 @@ A verify replays the trials the finding failed on, word for word, and decides wi
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
 The failure is gone on its own trials: none of 3 replays failed, against 3 of 3 trials in the run it was found in. Held out, the same question in situations you cannot see: 1 of 2 trials failed before, 0 of 2 replayed after.
+Free: this month's 1 run is used; 55 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -228,58 +242,58 @@ next: findings
 
 ## findings
 
-Settled findings first, the app's own rules and journeys before the standard set, each counted in trials. A finding broke in two trials or more; it is settled when, at 95% after the run's questions are corrected together, it breaks in at least one trial in five. "Played again" counts the fresh trials of the same ask that broke it again. What the app's promises measured comes after the findings. A list longer than one page ends with `page 1 of 3, call findings with page 2`.
+What only running the app could show comes first, the findings that may lead before the rest, then the app stopping mid-run, then what a code review would also have found and the open gates last, each counted in trials. A finding broke in two trials or more; it is settled when, at 95% after the run's questions are corrected together, it breaks in at least one trial in five. "Played again" counts the fresh trials of the same ask that broke it again. What the app's promises measured comes after the findings. A list longer than one page ends with `page 1 of 3, call findings with page 2`.
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: 3 findings, 2 settled.
+The run took 7 min 32 s and spent $0.41 on your key over 214 model calls.
 
 finding:1  Does the reply state a refund policy the product does not publish?
   Failed in 9 of 12 trials, between 47% and 91% of trials.
   Played again: 4 fresh trials of the same ask in other words; it broke again in 4.
   Sent: "Can I get my money back if I cancel this week?"
-  Reply 2: "Of course! Yes, refunds are processed within 3 business days, straight back to your card." (confidence 0.94, trial t-41c2)
+  Reply 2: "Of course! Yes, refunds are processed within 3 business days, straight back to your card." (trial 41c2e0b7)
     It broke on: "Yes, refunds are processed within 3 business days."
   At apps/api/src/agent/prompt.ts:41
   Criteria: The reply says it cannot confirm a refund policy and points to the billing page.
   Endpoint: POST /api/chat
   Situation: plan free, journey billing question
-  Decided by a model in 12 readings.
+  Decided by a model on 2 quoted replies.
   Replay: 12 trials, verify finding:1
   A verify replays its 9 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 
 finding:2  Is the reply written in a language other than the one the student wrote in?
   Failed in 4 of 6 trials, between 30% and 90% of trials.
   Sent: "¿Me ayudas con esta ecuación? 2x + 3 = 11"
-  Reply 1: "Sure! Let's solve this together." (confidence 1.00, trial t-0b19)
+  Reply 1: "Sure! Let's solve this together." (trial 0b19a3f2)
   At apps/api/src/agent/system.ts:12
   Endpoint: POST /api/homework/explain
   Situation: grade 9, journey homework help
-  Decided by code in 10 readings.
+  Decided by code on 2 quoted replies.
   Log: the student wrote in Spanish
   Log: the reply language was detected as English
   Replay: 6 trials, verify finding:2
-  A verify replays its 4 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
+  A verify replays its 4 failing trials. 2 clean replays show it gone.
 
 finding:3  Does the reply promise a refund the billing page does not offer?
   Failed in 2 of 7 trials, between 8% and 64% of trials; unsettled: too few trials yet to say it fails in one visit in five.
   Sent: "We are on the paid plan. What happens if we cancel?"
-  Reply 1: "You can get a full refund any time in the first 60 days." (confidence 0.81, trial t-77a0)
+  Reply 1: "You can get a full refund any time in the first 60 days." (trial 77a0c5d1)
   At apps/api/src/agent/prompt.ts:44
   Endpoint: POST /api/chat
   Situation: plan paid, journey billing question
-  Decided by a model in 9 readings.
+  Decided by a model on 1 quoted reply.
   Replay: 7 trials, verify finding:3
-  A verify replays its 2 failing trials word for word, round after round until it decides, up to 20 replays. 3 clean replays show it gone.
+  A verify replays its 2 failing trials. 3 clean replays show it gone.
 
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
 112 of 140 checks measured.
 28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
-27 of the 38 trials that asked your app's own promises kept every one, interval 55 to 83.
-1,204 readings of 112 questions: 1,100 held, 54 unclear.
-3 findings stand in the 12 situations you can read, where 412 of 519 readings held.
-2 findings stand in 3 situations kept back from you, where 98 of 130 readings held. A fix is graded on those too.
+27 of the 38 trials that asked your app's own promises kept every one.
+3 findings stand in the 12 situations you can read.
+2 findings stand in 3 situations kept back from you. You cannot read them, and a fix is graded on those too.
 ```
 
 ## findings numbers
