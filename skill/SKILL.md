@@ -1,11 +1,15 @@
 ---
 name: cortad
-description: Behavior tests for the AI app in this repository. Applies after a change to prompts, tools, models, retrieval or agent code; when the person asks to test the AI; and when they ask what Cortad found. Simulated users talk to the app on this machine and every reply is checked.
+description: Studies how the AI in this repository behaves. Cortad plays realistic customers against the app on this machine, checks every reply, and hands back what broke with the conversation and the line to fix. Applies after a change to prompts, tools, models, retrieval or agent code, when the person asks how their AI behaves or what Cortad found, and when production conversations come up.
 ---
 
 # Cortad
 
-Cortad tests the AI app in this repository. Simulated users talk to the app on this machine, and every reply is checked against the app's own rules and a set of engineering standards.
+Cortad studies how the AI in this repository behaves with its customers. Instead of evals someone writes and keeps up to date, it plays realistic customers against the app running on this machine, with its real prompts, tools, retrieval and database, and checks every reply against the app's own rules and a set of engineering standards. What breaks comes back with the conversation that shows it, how often it happens, and the file and line to change; `verify` replays those conversations after a change and checks what the change broke elsewhere.
+
+It keeps what it learns. The customers, their situations and the checks are built from the app's code and stay with the app, so one run's numbers compare with the next. Once production is connected, Cortad reads the real conversations with the same checks, shows them on a live dashboard, and brings real customers' openings into the simulated ones, so the trials stay close to how people actually use the app. `field` gives you those production numbers at any time.
+
+In practice it works like tests, for behavior: run it after a change to prompts, tools, models, retrieval or agent code, and before handing that work back. When someone asks how the AI or its users are doing, `findings numbers` and `field` have the numbers.
 
 The person's own instructions come before this skill.
 
