@@ -997,8 +997,10 @@ if (viaToken && !stored) fail("this project has no stored key. Run the command f
 // A network that drops while connecting ends here in a sentence, never a stack trace: running the
 // command again starts a clean connection.
 const unreachable = (err) => fail(`could not reach ${origin.host}: ${err?.name === "TimeoutError" ? "it did not answer in time" : "the connection failed"}. Check your connection and run the command again.`);
+// The key goes up beside a code too: a code that has lapsed while this project's key still holds is
+// the same person coming back, and the server signs them in by the key instead of refusing.
 const attach = await call("POST", "/local/attach", { ...(viaToken ? {} : { code }), name: basename(root), project },
-  viaToken ? { headers: { authorization: `Bearer ${stored}` } } : {}).catch(unreachable);
+  stored ? { headers: { authorization: `Bearer ${stored}` } } : {}).catch(unreachable);
 if (!attach.ok) fail(attach.data?.error ?? `could not sign in (${attach.status})`);
 box = attach.data.box;
 key = attach.data.key;
