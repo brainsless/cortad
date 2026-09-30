@@ -1477,7 +1477,31 @@ def _install():
             if isinstance(part, dict):
                 usage.update(part)
             model = e.get("model") or msg.get("model") or resp.get("model") or e.get("modelVersion") or model
-        return tokens_of(usage or None), model, events
+        return tokens_of(usage or None), model, events, usage
+
+    # The model stopped because it reached the output cap its request set, in each provider's words: its
+    # answer is cut short or, for a reasoning model, may never have been written.
+    def stopped_at_limit(e):
+        if not isinstance(e, dict):
+            return False
+        r = e["response"] if isinstance(e.get("response"), dict) else e
+        delta = e["delta"] if isinstance(e.get("delta"), dict) else {}
+        choices = e["choices"] if isinstance(e.get("choices"), list) else []
+        candidates = e["candidates"] if isinstance(e.get("candidates"), list) else []
+        return (any(isinstance(c, dict) and c.get("finish_reason") == "length" for c in choices)
+                or (r.get("status") == "incomplete" and (r.get("incomplete_details") or {}).get("reason") == "max_output_tokens")
+                or "max_tokens" in (e.get("stop_reason"), delta.get("stop_reason"), e.get("stopReason"))
+                or any(isinstance(c, dict) and c.get("finishReason") == "MAX_TOKENS" for c in candidates))
+
+    def reasoning_of(u):
+        return number((u.get("output_tokens_details") or {}).get("reasoning_tokens") or (u.get("completion_tokens_details") or {}).get("reasoning_tokens") or u.get("thoughtsTokenCount"))
+
+    # The output cap the app's request set, in each provider's field.
+    def cap_of(b):
+        if not isinstance(b, dict):
+            return None
+        return (number(b.get("max_tokens")) or number(b.get("max_completion_tokens")) or number(b.get("max_output_tokens"))
+                or number((b.get("generationConfig") or {}).get("maxOutputTokens")) or number((b.get("inferenceConfig") or {}).get("maxTokens")) or None)
 
     def asked_for(url, sent):
         body = parsed(sent) if isinstance(sent, str) else None
@@ -1584,7 +1608,7 @@ def _install():
 
     def meter(url, sent, status, kind, raw, req=None, caller=None, t0=None):
         try:
-            tokens, model, events = read_reply(kind, (raw or "")[:reply_max])
+            tokens, model, events, usage = read_reply(kind, (raw or "")[:reply_max])
             parts = urlsplit(str(url))
             now = int(time.time() * 1000)
             row = {"at": now, "ms": now - int(t0 * 1000) if t0 else 0, "host": parts.netloc.replace(":443", ""), "model": str(asked_for(url, sent) or model or "")[:160],
@@ -1619,6 +1643,8 @@ def _install():
             if caller:
                 row["caller"] = caller
             asked = parsed(as_text)
+            if any(stopped_at_limit(e) for e in events):
+                row["limit"] = {"cap": cap_of(asked), "reasoning": reasoning_of(usage)}
             if isinstance(asked, dict) and not row.get("embedding"):
                 row.update(told_of(asked, req))
             write({"call": row})
@@ -1884,6 +1910,20 @@ def _install():
             chunk = self.stream.readline(*a)
             keep(self.req, chunk)
             return chunk
+
+        # Werkzeug 3 reads the body into its own buffer when the stream can: without this the read went
+        # past the tee, and every Flask request was written down with an empty body.
+        def readinto(self, b):
+            n = self.stream.readinto(b)
+            if n:
+                keep(self.req, bytes(memoryview(b)[:n]))
+            return n
+
+        def readlines(self, *a):
+            lines = self.stream.readlines(*a)
+            for line in lines:
+                keep(self.req, line)
+            return lines
 
         def __iter__(self):
             for chunk in self.stream:
