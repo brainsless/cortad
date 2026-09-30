@@ -35,7 +35,7 @@ import { sampleHere } from "./lib/sample.mjs";
 import { mintAcross, originFor, servicePort, waitForPort } from "./lib/service.mjs";
 import { listingUrl } from "./lib/listing.mjs";
 import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
-import { openSwitches } from "./lib/switches.mjs";
+import { liftedLimits, sessionLifts } from "./lib/switches.mjs";
 import { makeKeeping } from "./lib/keeping.mjs";
 import { downLine, makeHealth } from "./lib/health.mjs";
 import { markRun, writesDirOf, writtenPaths } from "./lib/writes.mjs";
@@ -194,43 +194,6 @@ function envOrigins(envFiles) {
   }
   return [...out].slice(0, 8);
 }
-// Your app's own request limits, raised for this session only, the way the sandbox raises them:
-// a run asks in twenty minutes what a person asks in a month, and a limiter that fires answers
-// instead of your AI. Numeric values under a limit-shaped name; switches and guards are left alone.
-const THROUGHPUT = /(RATE_?LIMIT|DAILY_LIMIT|HOURLY_LIMIT|MINUTE_LIMIT|REQUESTS_PER|TOKEN_BUDGET|MAX_SSE|MAX_CONCURRENT|THROTTLE|_RPM$|_RPS$|_QPS$)/;
-const GUARDED = /(AUTH|LOGIN|PASSWORD|BREAKER|LOCKOUT|ATTEMPT|FAIL|BAN|BLOCK)/;
-const SWITCH = /_(?:ENABLED|DISABLED|ENABLE|DISABLE)$|^(?:ENABLE|DISABLE)_/;
-// Limit-shaped names the code itself reads (process.env.GUEST_DAILY_LIMIT, os.environ.get("RATE_LIMIT_RPM"))
-// count too: a limit with a default in code and no line in .env is the one that closes on a run.
-const ENV_READ = /(?:process\.env(?:\.|\[\s*['"])|os\.(?:environ\.get|getenv)\(\s*['"]|os\.environ\[\s*['"]|\benv\(\s*['"]|Deno\.env\.get\(\s*['"])([A-Z][A-Z0-9_]*)/g;
-const lifted = (name) => (/(TOKEN_BUDGET|TOKENS)/.test(name) ? "1000000000" : "1000000");
-const liftable = (name) => THROUGHPUT.test(name) && !GUARDED.test(name) && !SWITCH.test(name);
-function liftedLimits(envFiles, sources = []) {
-  // Only a limit the code reads is raised: a line in .env that nothing reads is not a limit, and
-  // naming it as one raised was the tell an engineer caught first.
-  const read = new Set();
-  for (const file of sources) {
-    if (!/\.(?:[cm]?[jt]sx?|py|go|rb|php|rs)$/.test(file)) continue;
-    let text = "";
-    try { if (statSync(file).size > 512_000) continue; text = readFileSync(file, "utf8"); } catch { continue; }
-    for (const m of text.matchAll(ENV_READ)) if (liftable(m[1])) read.add(m[1]);
-  }
-  const out = {};
-  for (const file of envFiles) {
-    let text = "";
-    try { text = readFileSync(file, "utf8"); } catch { continue; }
-    for (const line of text.split("\n")) {
-      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-      if (!m) continue;
-      const [, name, raw] = m;
-      const value = raw.trim().replace(/^(['"])(.*)\1$/, "$2");
-      if (liftable(name) && /^\d+$/.test(value) && (!sources.length || read.has(name))) out[name] = lifted(name);
-    }
-  }
-  for (const name of read) if (!(name in out)) out[name] = lifted(name);
-  return out;
-}
-
 // Every name your env files set, with its value, read here and used only here. An example file is
 // read first so a real one's value wins: a placeholder key asked for a model listing comes back
 // refused, and that would read as your own key being refused.
@@ -323,6 +286,9 @@ const work = join(tmpdir(), `cortad-${process.pid}`);
 // yes they come from.
 const outboundFile = join(work, "outbound.json");
 let consent = {};
+// The person's yes to raising their app's own limits and opening its sign-in switches for this
+// session, from the browser. Until it arrives the app runs with its guards as they are.
+let limitsYes = false;
 mkdirSync(work, { recursive: true });
 const bootLog = join(work, "boot.log");
 writeFileSync(bootLog, "");
@@ -609,9 +575,9 @@ async function startApp() {
   pinned = pinnedNode();
   if (plan?.within) say(`your app is in ${plan.within}, started there with: ${cmd}`);
   const sourceFiles = files.map((f) => join(root, f));
-  const lifted = { ...liftedLimits(envFiles, sourceFiles), ...openSwitches(envFiles, sourceFiles) };
-  const raised = Object.keys(liftedLimits(envFiles, sourceFiles));
-  const opened = Object.keys(openSwitches(envFiles, sourceFiles));
+  const lifted = sessionLifts(limitsYes, envFiles, sourceFiles);
+  const raised = Object.keys(lifted).filter((n) => /^\d+$/.test(lifted[n]));
+  const opened = Object.keys(lifted).filter((n) => !raised.includes(n));
   if (raised.length) say(`higher request limits for this session: ${raised.join(", ")}`);
   // Said out loud, because it changes who their app lets in for as long as this command runs.
   if (opened.length) say(`your app's own sign-in switch, for this session only: ${opened.map((n) => `${n}=${lifted[n]}`).join(", ")}`);
@@ -676,7 +642,7 @@ async function takeOver(port) {
   pinned = pinnedNode();
   if (plan.within) say(`your app is in ${plan.within}, started there with: ${plan.cmd}`);
   say(`higher request limits for this session: ${names.join(", ")}`);
-  launched = { cmd: plan.cmd, lifted };
+  launched = { cmd: plan.cmd, lifted, byTerminal: true };
   step(`starting your app: ${plan.cmd}`);
   const up = await launch(180_000);
   if (up.port) return { port: up.port, cmd: launched.cmd, lifted: names };
@@ -998,7 +964,7 @@ if (explain) {
     `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, data files, node_modules, .git`,
     `env files       values read here only: to hide them in replies, to sign in a test account, and to ask your providers what your keys reach. Variable names and whether a switch is on or off go up; no value does`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
-    `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (for this session only)`}`,
+    `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (only after your yes, for this session only)`}`,
     `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records each request during which your app calls a model, what it answered and the model calls on the way; header values stay here`,
     `your files      never written by this program; your own coding agent edits them`,
     `your database   a database file your env or code names is copied to this program's temp folder; a Postgres, Redis or MongoDB database or a Qdrant collection on this machine is copied on its own server under a name of ours and deleted at the end; your app is started on the copies. Any other store is named, not copied`,
@@ -1134,8 +1100,22 @@ async function allowOutbound(given) {
   if (given && typeof given === "object") {
     const list = (v, re) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && re.test(x)).slice(0, 50) : []);
     consent = { hosts: list(given.hosts, /^[a-z0-9.-]{1,253}$/i).map((h) => h.toLowerCase()), stores: list(given.stores, /^[a-f0-9]{16}$/) };
+    await liftWith(given.limits === true);
   }
   try { writeFileSync(outboundFile, JSON.stringify({ pass: await keeping.outbound(consent) }), { mode: 0o600 }); } catch { /* every write of a trial stays held */ }
+}
+
+// A yes given or taken back in the browser restarts an app this command started with its guards
+// raised or restored; an app raised by the terminal's own yes keeps that.
+async function liftWith(yes) {
+  if (yes === limitsYes) return;
+  limitsYes = yes;
+  if (!launched || !child || launched.byTerminal) return;
+  const lifted = sessionLifts(yes, envFiles, files.map((f) => join(root, f)));
+  if (JSON.stringify(lifted) === JSON.stringify(launched.lifted ?? {})) return;
+  launched = { ...launched, lifted };
+  if (app) app.lifted = Object.keys(lifted);
+  void restartApp(yes ? `starting your app again with its own limits raised for this session: ${Object.keys(lifted).join(", ")}` : "starting your app again with its own limits as they are");
 }
 
 // Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
