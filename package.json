@@ -12,6 +12,7 @@
     "lib/cli.mjs",
     "lib/contact-text.mjs",
     "lib/data.mjs",
+    "lib/dissection-text.mjs",
     "lib/failed-text.mjs",
     "lib/fresh.mjs",
     "lib/health.mjs",
