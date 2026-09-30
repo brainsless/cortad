@@ -241,6 +241,9 @@ async function inventoryOf(listings) {
   return { providers: providers.filter(Boolean), flags: switchStates(values) };
 }
 let secrets = [];
+// A run's request to an endpoint your app answers later carries the first (src/customer/endpoint.ts);
+// a reply with no answer says in the second why none came.
+const LATER_HEADER = "x-cortad-answer", LATER_MISSED = "x-cortad-later", LATER_MARGIN_MS = 3_000;
 // The cookies each trial's own turns were handed, newest trials kept.
 const trialJars = new Map();
 const TRIAL_JARS = 500;
@@ -346,6 +349,12 @@ async function verb(job) {
       // takes one for the person's: it would become the request trials copy and the sign-in they carry.
       if (!turn) headers["x-cortad-turn"] = `cortad-${String(job.id).replace(/[^\w.-]/g, "").slice(0, 64)}`;
       const letGo = held.hold(job.id, turn || headers["x-cortad-turn"]);
+      // An endpoint your app answers later: it takes the message and its model answers afterwards,
+      // outside the request (a queue's worker). Its own reply only says it took the message.
+      const laterAt = Object.keys(headers).find((k) => k.toLowerCase() === LATER_HEADER);
+      const later = laterAt !== undefined && headers[laterAt] === "later";
+      if (laterAt !== undefined) delete headers[laterAt];
+      if (later) capture?.forget(turn || headers["x-cortad-turn"]);
       // A request that speaks as one of your app's own callers carries the role, not the token:
       // the token was issued on this machine and is put in here, so it never travels.
       const marker = Object.keys(headers).find((k) => k.toLowerCase() === AS_HEADER);
@@ -382,6 +391,7 @@ async function verb(job) {
       // Held as long as the run waits for this reply: a course generator that takes ninety seconds
       // a reply is waited on for three of them. A run that says nothing gets the old 170 seconds.
       const holdMs = Math.min(Math.max(Number(b.waitMs) || 170_000, 1_000), 630_000);
+      const began = Date.now();
       const sent = (at, over = {}) => fetch(at, {
         ...init, ...over,
         headers: { ...headers, ...(over.headers ?? {}), ...(jar ? { cookie: [headers.cookie, jar].filter(Boolean).join("; ") } : {}) },
@@ -415,14 +425,24 @@ async function verb(job) {
         return { status: res.status, headers: said, body: mask(buf.subarray(0, LIMIT).toString("utf8")), truncated: buf.length > LIMIT };
       };
       const counted = async () => { await gate; letGo.throwIfAborted(); answering += 1; try { return await ask(); } finally { answering -= 1; } };
-      try { return await counted(); }
+      // The turn's answer on an endpoint your app answers later: the model's last words, once the hook
+      // has seen its calls go quiet, within the time the run waits for this reply. None came: the
+      // reply says the status of the model call that gave no words, or the seconds waited.
+      const answered = async (got) => {
+        if (!later || got.status < 200 || got.status >= 300) return got;
+        const said = capture ? await capture.answered(turn || headers["x-cortad-turn"], began + holdMs - LATER_MARGIN_MS, letGo) : null;
+        if (letGo.aborted) return { error: "cancelled by the run" };
+        if (!said?.reply.trim()) return { ...got, headers: { ...got.headers, [LATER_MISSED]: JSON.stringify(said ? { model: said.status } : { waited: Math.round((Date.now() - began) / 1000) }) } };
+        return { ...got, headers: { "content-type": "application/json" }, body: mask(JSON.stringify({ reply: said.reply })), truncated: false };
+      };
+      try { return await answered(await counted()); }
       catch (e) {
         if (letGo.aborted) return { error: "cancelled by the run" };
         const code = String(e.cause?.code ?? e.code ?? "");
         if (!/ECONNREFUSED|ECONNRESET|EPIPE|UND_ERR_SOCKET/.test(code)) return { error: `nothing answered at port ${port}: ${code || e.message}` };
         // Held through a restart of ours however long it takes: a request it cut is sent again after it.
         for (let i = 0; (i < 45 || restarting) && !letGo.aborted && !(await answers(port)); i++) await new Promise((r) => setTimeout(r, 1000));
-        try { return { ...(await counted()), heldForRestart: true }; }
+        try { return { ...(await answered(await counted())), heldForRestart: true }; }
         catch (again) { return { error: letGo.aborted ? "cancelled by the run" : `nothing answered at port ${port}: ${String(again.cause?.code ?? again.message)}` }; }
       } finally { held.done(job.id); }
     }

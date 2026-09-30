@@ -9,6 +9,9 @@
 #
 # The request that asked answered only when it ended with none of its calls still running; otherwise
 # the next request tied to it by an id carries the answer, and completes the exchange when it ends.
+# A request whose reply went out before any model call was made for it (a webhook that queues the
+# message and answers at once) and that no request comes to fetch is answered later, by its model:
+# the exchange is written once its calls have gone quiet.
 import collections
 import contextvars
 import json
@@ -94,6 +97,7 @@ class Tied:
         found = self._asker(req, pinned_only=True)
         if found:
             req["asker"], req["tie"] = found
+            found[0]["fetched"] = True
 
     # The requests of the exchange this request completes, the one that asked last, or None. A
     # request that asked and has not answered is kept to be answered on a later one. Once answered it
@@ -112,7 +116,7 @@ class Tied:
             asker["answered"] = True
             self._answered(req["tie"], asker["at"])
             return before + [asker]
-        if req["method"] != "GET" and self.body_of(req)[:PROMPT_HEAD] not in self.prompts and (not req.get("noted") or req.get("calls_open")):
+        if req["method"] != "GET" and self.body_of(req)[:PROMPT_HEAD] not in self.prompts and (not req.get("noted") or req.get("calls_open") or req.get("late")):
             self.recent.append(req)
         return None
 
@@ -166,6 +170,9 @@ class Tied:
         asker, fetch, _ = next(iter(found.values()))
         if fetch:
             fetch[0]["asker"], fetch[0]["tie"] = asker, fetch[1]
+            asker["fetched"] = True
+        if not asker.get("noted") and (asker.get("finished") or asker.get("ended")):
+            asker["late"] = True
         asker["pinned"] = True
         asker["calls_open"] = asker.get("calls_open", 0) + 1
         _HELD.set(asker)
@@ -176,3 +183,26 @@ class Tied:
     def done(req):
         if req and req.get("pinned"):
             req["calls_open"] = max(0, req.get("calls_open", 0) - 1)
+
+    # A call made inside the request's own context after its reply went out (a handler that answers,
+    # then does the work) is counted as one pinned to it.
+    @staticmethod
+    def after(req):
+        if not req.get("noted") and (req.get("finished") or req.get("ended")):
+            req["late"] = True
+        if req.get("late"):
+            req["pinned"] = True
+            req["calls_open"] = req.get("calls_open", 0) + 1
+
+    # Whether a request answered later is done, once: it has ended, none of its calls is open, and
+    # no request tied to it came to fetch the answer (that one completes the exchange instead). Once
+    # done it leaves, as a request answered on a second one does.
+    def settled(self, req):
+        if not req or not req.get("late") or not req.get("ended") or req.get("calls_open") or req.get("written") or req.get("fetched"):
+            return False
+        req["written"] = req["answered"] = True
+        try:
+            self.recent.remove(req)
+        except ValueError:
+            pass
+        return True

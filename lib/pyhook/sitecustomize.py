@@ -1175,6 +1175,8 @@ def _install():
                 req = tied.pinned(text(body, reply_max))
             except Exception:
                 req = None
+        elif req and tied:
+            tied.after(req)
         if not req:
             return None
         if not req["noted"]:
@@ -1369,6 +1371,39 @@ def _install():
             row["turn"] = turn
         write(row)
 
+    # A request answered later by its model is written once its calls have gone quiet, marked
+    # `later`, in the time it took to be answered; a run's turn also gets the model's last words, the
+    # answer the command hands the run (lib/trace.cjs does the same).
+    # ponytail: a fixed settle; a tool slower than this between two model calls cuts the answer at
+    # the first. A settle measured per door if that is seen.
+    settle_s = 5.0
+
+    def answered_later(req):
+        status, words = req.get("said") or (0, "")
+        if req.get("kept"):
+            row = {"ex": req["id"], **row_of(req), "ms": int(time.time() * 1000) - req["at"], "later": True, "headers": req["headers"], "sent": req["sent"]}
+            if req.get("turn"):
+                row["turn"] = req["turn"]
+            write(row)
+        if req.get("turn"):
+            write({"answer": {"ex": req["id"], "turn": req["turn"], "status": status, "reply": words}})
+
+    def settle(req):
+        import threading
+
+        def quiet():
+            try:
+                if tied.settled(req):
+                    answered_later(req)
+            except Exception:
+                pass
+        was = req.get("settling")
+        if was:
+            was.cancel()
+        req["settling"] = threading.Timer(settle_s, quiet)
+        req["settling"].daemon = True
+        req["settling"].start()
+
     # Where the app's own code wrote the parts of this reply, under the id its exchange is written by.
     def written_at(req, steps):
         asker = steps[-1] if steps else req
@@ -1383,6 +1418,8 @@ def _install():
         written_at(req, steps)
         if steps:
             answered(req, steps)
+        elif req.get("late"):
+            settle(req)
         elif not req.get("calls_open"):
             answered(req)
 
@@ -1558,6 +1595,10 @@ def _install():
             req = req or ctx.get()
             if tied:
                 tied.done(req)
+                if req and req.get("late"):
+                    if not row.get("embedding"):
+                        req["said"] = (row["status"], reply_text(events)[:model_words])
+                    settle(req)
             row.update(inside_of(req))
             if req and (req.get("kept") or req.get("turn")):
                 row["reply"] = reply_text(events)[:model_words]
