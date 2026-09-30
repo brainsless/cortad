@@ -372,7 +372,10 @@ async function verb(job) {
       for (const [k, v] of Object.entries(b.headers ?? {})) if (!/^(host|content-length|connection)$/i.test(k)) headers[k] = String(v);
       // Held from here, before anything is awaited, so a cancel from the run never arrives first.
       const turn = String(Object.entries(headers).find(([k]) => k.toLowerCase() === "x-cortad-turn")?.[1] ?? "");
-      const letGo = held.hold(job.id, turn);
+      // Every request of ours is tagged, a knock or a revisit as much as a trial, so the hook never
+      // takes one for the person's: it would become the request trials copy and the sign-in they carry.
+      if (!turn) headers["x-cortad-turn"] = `cortad-${String(job.id).replace(/[^\w.-]/g, "").slice(0, 64)}`;
+      const letGo = held.hold(job.id, turn || headers["x-cortad-turn"]);
       // A request that speaks as one of your app's own callers carries the role, not the token:
       // the token was issued on this machine and is put in here, so it never travels.
       const marker = Object.keys(headers).find((k) => k.toLowerCase() === AS_HEADER);
