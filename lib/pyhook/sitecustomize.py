@@ -11,6 +11,9 @@ _FILE = os.environ.get("CORTAD_TRACE_FILE")
 _RULES = os.environ.get("CORTAD_RULES_FILE")
 _WRITES = os.environ.get("CORTAD_WRITES_DIR")
 _APP_ROOT = os.environ.get("CORTAD_APP_ROOT")
+_OUTBOUND = os.environ.get("CORTAD_OUTBOUND_FILE")
+# The port this hook answers held writes on: its own server, never a store the app reached.
+_held_ports = []
 
 
 # What the app writes into its own folder while a run is on: each file copied once before its first
@@ -1192,6 +1195,123 @@ def _install():
         except Exception:
             return ctx.get()
 
+    # Outbound writes a trial makes are held in the app, never sent: a trial that books, charges,
+    # emails or deletes would otherwise do it for real. Held: a call made inside a request the run
+    # tagged, with a writing method, to a host that is not a model, a retrieval, this machine, a copy
+    # of ours or a host the person said yes to. A call carrying a provider's test key goes to that
+    # provider's own sandbox as sent. The app is answered with a success shaped like what it sent,
+    # and the run is told by a dep row with `held` and the clipped call (lib/trace.cjs does the same).
+    import base64
+    from urllib.parse import parse_qsl
+
+    passed = {"at": -1, "hosts": []}
+    this_machine = re.compile(r"^(?:localhost|127(?:\.\d+){3}|::1|0\.0\.0\.0)$", re.I)
+    # ponytail: a sign-in's token refresh is a POST that changes nothing, told apart by its path only.
+    token_path = re.compile(r"/(?:oauth2?/)?token(?:[/?]|$)", re.I)
+    test_setting = re.compile(r"(?:^|_)TEST(?:_|$)", re.I)
+
+    def pass_now():
+        try:
+            at = os.stat(_OUTBOUND).st_mtime_ns
+            if at != passed["at"]:
+                passed["at"] = at
+                with open(_OUTBOUND, encoding="utf-8") as f:
+                    got = json.load(f).get("pass")
+                passed["hosts"] = [h for h in got if isinstance(h, str) and h] if isinstance(got, list) else []
+        except Exception:
+            pass
+        return passed["hosts"]
+
+    # A provider's test-mode key (Stripe's sk_test_), or a value of a setting the app keeps as a test one.
+    def test_key(auth):
+        a = str(auth or "")
+        m = re.match(r"^Basic\s+(\S+)$", a, re.I)
+        if m:
+            try:
+                a = base64.b64decode(m.group(1)).decode("utf-8", "replace")
+            except Exception:
+                pass
+        return bool(a) and (bool(re.search(r"\b[a-z]{2}_test_\w", a)) or any(v and len(v) >= 8 and v in a for k, v in os.environ.items() if test_setting.search(k)))
+
+    def held_here(url, method, auth):
+        req = ctx.get()
+        if not req or not req.get("turn") or str(method or "").upper() not in ("POST", "PUT", "PATCH", "DELETE"):
+            return False
+        try:
+            parts = urlsplit(str(url))
+        except ValueError:
+            return False
+        host = (parts.hostname or "").lower()
+        if this_machine.match(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or test_key(auth):
+            return False
+        return not any(host == p or host.endswith("." + p) for p in pass_now())
+
+    # A GraphQL query reads; only a mutation writes.
+    def reads_only(raw):
+        b = parsed(raw) if raw else None
+        return isinstance(b, dict) and isinstance(b.get("query"), str) and not re.match(r"^\s*mutation\b", b["query"])
+
+    held_count = itertools.count(1)
+
+    def fields_of(raw, kind):
+        try:
+            b = dict(parse_qsl(raw)) if "form" in (kind or "") else json.loads(raw)
+        except Exception:
+            return {}
+        return b if isinstance(b, dict) else {}
+
+    def held_reply(raw, kind):
+        return json.dumps({**fields_of(raw, kind), "id": "cortad-held-%d" % next(held_count), "status": "ok"}).encode("utf-8")
+
+    def held_row(url, method, raw, kind, req):
+        try:
+            parts = urlsplit(str(url))
+            write({"dep": {"at": int(time.time() * 1000), "host": (parts.hostname or "")[:253], "status": 200, "held": True, **inside_of(req),
+                           "called": [{"name": ("%s %s%s" % (str(method).upper(), parts.hostname, parts.path))[:80], "arguments": args_text(fields_of(raw, kind))}]}})
+        except Exception:
+            pass
+
+    # aiohttp builds its own response from a connection, so a held call is sent to a server of this
+    # hook's own on this machine, which answers it.
+    held_server = {"port": None}
+    held_waiting = {}
+    held_sent = itertools.count(1)
+
+    def held_port():
+        if held_server["port"] is None:
+            try:
+                import threading
+                from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+                class Answer(BaseHTTPRequestHandler):
+                    def answer(self):
+                        size = int(self.headers.get("content-length") or 0)
+                        raw = self.rfile.read(min(size, limit)).decode("utf-8", "replace") if size else ""
+                        kind = self.headers.get("content-type", "")
+                        waiting = held_waiting.pop(self.headers.get("x-cortad-held", ""), None)
+                        if waiting:
+                            held_row(waiting[0], waiting[1], raw, kind, waiting[2])
+                        out = held_reply(raw, kind)
+                        self.send_response(200)
+                        self.send_header("content-type", "application/json")
+                        self.send_header("content-length", str(len(out)))
+                        self.end_headers()
+                        self.wfile.write(out)
+
+                    do_POST = do_PUT = do_PATCH = do_DELETE = answer
+
+                    def log_message(self, *a):
+                        pass
+
+                server = ThreadingHTTPServer(("127.0.0.1", 0), Answer)
+                server.daemon_threads = True
+                _held_ports.append(server.server_address[1])
+                threading.Thread(target=server.serve_forever, daemon=True).start()
+                held_server["port"] = server.server_address[1]
+            except Exception:
+                return None
+        return held_server["port"]
+
     def said_of(req, name):
         return [v for k, v in req.get("reply_headers") or [] if k == name]
 
@@ -2074,11 +2194,24 @@ def _install():
                 dep(request.url, response.status_code, req=req, caller=caller)
             return response
 
+        def held_httpx(request, sent):
+            try:
+                if not held_here(request.url, request.method, request.headers.get("authorization")) or reads_only(sent):
+                    return None
+                kind = request.headers.get("content-type", "")
+                held_row(request.url, request.method, sent, kind, ctx.get())
+                return module.Response(200, headers={"content-type": "application/json"}, content=held_reply(sent, kind), request=request)
+            except Exception:
+                return None
+
         for cls in (module.Client, module.AsyncClient):
             send = cls.send
             if cls is module.Client:
                 def sync_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
+                    held = held_httpx(request, sent)
+                    if held is not None:
+                        return held
                     caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
                     t0 = time.time()
                     req = noted(request.url, sent)
@@ -2098,6 +2231,9 @@ def _install():
             else:
                 async def async_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
+                    held = held_httpx(request, sent)
+                    if held is not None:
+                        return held
                     caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
                     t0 = time.time()
                     req = noted(request.url, sent)
@@ -2118,7 +2254,27 @@ def _install():
     def patch_requests(module):
         send = module.Session.send
 
+        def held(request):
+            try:
+                raw = text(request.body, reply_max)
+                if not held_here(request.url, request.method, request.headers.get("authorization")) or reads_only(raw):
+                    return None
+                import datetime
+                models, structures = sys.modules["requests.models"], sys.modules["requests.structures"]
+                kind = request.headers.get("content-type", "")
+                held_row(request.url, request.method, raw, kind, ctx.get())
+                response = models.Response()
+                response.status_code, response.reason, response.url, response.request, response.encoding = 200, "OK", request.url, request, "utf-8"
+                response.headers = structures.CaseInsensitiveDict({"content-type": "application/json"})
+                response._content, response._content_consumed, response.elapsed = held_reply(raw, kind), True, datetime.timedelta(0)
+                return response
+            except Exception:
+                return None
+
         def sent(self, request, *a, **k):
+            answered = held(request)
+            if answered is not None:
+                return answered
             caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
             t0 = time.time()
             req = noted(request.url, request.body)
@@ -2147,8 +2303,27 @@ def _install():
     def patch_aiohttp(module):
         request = module.ClientSession._request
 
+        def auth_of(self, k):
+            given = {str(n).lower(): v for n, v in dict(k.get("headers") or {}).items()}
+            basic = k.get("auth") or getattr(self, "_default_auth", None)
+            defaults = getattr(self, "_default_headers", None) or {}
+            return given.get("authorization") or (basic.encode() if basic else None) or defaults.get("Authorization")
+
         async def requested(self, method, str_or_url, *a, **k):
             body = k.get("json") if k.get("json") is not None else k.get("data")
+            try:
+                hold = held_here(str_or_url, method, auth_of(self, k)) and not reads_only(text(body, reply_max))
+            except Exception:
+                hold = False
+            if hold:
+                port = held_port()
+                if port is None:
+                    raise module.ClientConnectionError("this write was held and could not be answered")
+                parts = urlsplit(str(str_or_url))
+                n = str(next(held_sent))
+                held_waiting[n] = (str(str_or_url), method, ctx.get())
+                k = {**k, "headers": {**dict(k.get("headers") or {}), "x-cortad-held": n}}
+                return await request(self, method, "http://127.0.0.1:%d%s%s" % (port, parts.path or "/", "?" + parts.query if parts.query else ""), *a, **k)
             caller = callers_now(str_or_url) if is_model_call(str_or_url) or is_retrieval(str_or_url) else None
             t0 = time.time()
             req = noted(str_or_url, body)
@@ -2290,7 +2465,7 @@ def _install_connects():
             if not isinstance(address, tuple) or len(address) < 2 or len(seen) >= 64:
                 return
             host, port = str(address[0]).lower()[:253], int(address[1])
-            if (host, port) in seen:
+            if (host, port) in seen or port in _held_ports:
                 return
             seen.add((host, port))
             fd = os.open(_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
