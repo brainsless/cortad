@@ -1576,6 +1576,11 @@ def _install():
             now = int(time.time() * 1000)
             row = {"at": now, "ms": now - int(t0 * 1000) if t0 else 0, "host": parts.netloc.replace(":443", ""), "model": str(asked_for(url, sent) or model or "")[:160],
                    "status": int(status or 0), "usage": tokens is not None}
+            # The model that answered, when a gateway or proxy answered with another than the one asked
+            # for (a dated version of the same model is the same model).
+            asked_model = str(asked_for(url, sent) or "")
+            if model and asked_model and str(model) not in asked_model and asked_model not in str(model):
+                row["answered"] = str(model)[:160]
             row.update(tokens or {"promptTokens": 0, "cachedTokens": 0, "completionTokens": 0})
             if embedding.search(parts.path or ""):
                 row["embedding"] = True
