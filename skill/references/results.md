@@ -31,7 +31,7 @@ Endpoints your own requests proved (1):
     Last request: "and the second question?", answered "For question 2, start by writing what the angle is opposite to.".
 Endpoints the read found that no request has reached (1):
   POST /api/homework/explain  apps/api/src/routes/homework.ts:18
-A run on the proven endpoints: 36 trials, 72 replies, up to about 6 minutes at one request at a time, about $0.38 on your OpenAI key for gpt-4o-mini.
+A run on the proven endpoints: 36 trials, about 72 replies, about 6 minutes, about $0.38 on your OpenAI key for gpt-4o-mini.
 No run yet.
 Production: not connected.
 A run starts only when the person asks: from Run in the browser, or from the run verb.
