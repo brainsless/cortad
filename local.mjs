@@ -319,6 +319,10 @@ async function call(method, path, body, { raw = false, timeoutMs = 60_000, heade
 
 // ---- the box on this machine: your folder, read where it stands
 const work = join(tmpdir(), `cortad-${process.pid}`);
+// Where the hook reads the hosts a trial's writes may reach (lib/trace.cjs, lib/pyhook), and the
+// yes they come from.
+const outboundFile = join(work, "outbound.json");
+let consent = {};
 mkdirSync(work, { recursive: true });
 const bootLog = join(work, "boot.log");
 writeFileSync(bootLog, "");
@@ -496,6 +500,8 @@ async function verb(job) {
         return { text, root, size: all.length, ...(jvm ? { files: files.filter((f) => /\.(?:java|kt|scala|groovy)$/.test(f)).slice(0, 20_000) } : {}) };
       } catch { return { text: "", root, size: 0 }; }
     }
+    // The person changed what they said yes to while this command runs.
+    case "consent": await allowOutbound(b); return { ok: true };
     case "restart": return restartApp();
     case "inventory": return inventoryOf(b.probe && typeof b.probe === "object" ? b.probe : {});
     // Your own pages, read here rather than in a world's shell: that shell is sealed away from
@@ -817,7 +823,9 @@ async function start(waitMs, tries = 3) {
   const note = { own: true, at: Date.now(), reloads: RELOADER.test(commandText(cmd, appDir)), answered: false };
   note.files = sourceOf(root, files);
   loaded = note;
-  child = spawnTied(cmd, { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...(await keeping.env(true)), ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
+  const copies = await keeping.env(true);
+  await allowOutbound();
+  child = spawnTied(cmd, { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...copies, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
   const mine = child;
   become("starting", { app: mine.pid ?? null });
   let seen = "";
@@ -1110,10 +1118,25 @@ function sourceChanged() {
 // `watching` says whether a message sent to this app can be seen arriving: only an app this command
 // started carries the hook, and only a runtime the hook exists for. `proves`: each request seen
 // reaching the model is posted as its door's proof, so the run waits for those.
+// `blocked`: each store off this machine no copy could be made of, which holds Run until the person
+// says yes in the browser. The answer carries that yes (setup.consent), and the hosts it names are
+// written where the hook reads which outbound writes of a trial may leave.
 const announce = async () => {
   const hooked = Boolean(launched && capture?.watching(app.port));
-  return call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: (await keeping.lines(Boolean(launched))).map(mask), watching: hooked, metered: hooked, proves: hooked });
+  const started = Boolean(launched);
+  const told = await call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: (await keeping.lines(started)).map(mask), blocked: await keeping.blocked(started), watching: hooked, metered: hooked, proves: hooked });
+  if (told.ok) await allowOutbound(told.data?.consent);
+  return told;
 };
+
+// What the person said yes to, as the hook reads it: the hosts a trial's writes may reach.
+async function allowOutbound(given) {
+  if (given && typeof given === "object") {
+    const list = (v, re) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && re.test(x)).slice(0, 50) : []);
+    consent = { hosts: list(given.hosts, /^[a-z0-9.-]{1,253}$/i).map((h) => h.toLowerCase()), stores: list(given.stores, /^[a-f0-9]{16}$/) };
+  }
+  try { writeFileSync(outboundFile, JSON.stringify({ pass: await keeping.outbound(consent) }), { mode: 0o600 }); } catch { /* every write of a trial stays held */ }
+}
 
 // Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
 // and starts it again the moment you save a fix, and the browser is told each time it answers, so a
