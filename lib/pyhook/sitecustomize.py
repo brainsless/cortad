@@ -1870,6 +1870,20 @@ def _install():
             keep(self.req, chunk)
             return chunk
 
+        # Werkzeug 3 reads the body into its own buffer when the stream can: without this the read went
+        # past the tee, and every Flask request was written down with an empty body.
+        def readinto(self, b):
+            n = self.stream.readinto(b)
+            if n:
+                keep(self.req, bytes(memoryview(b)[:n]))
+            return n
+
+        def readlines(self, *a):
+            lines = self.stream.readlines(*a)
+            for line in lines:
+                keep(self.req, line)
+            return lines
+
         def __iter__(self):
             for chunk in self.stream:
                 keep(self.req, chunk)
