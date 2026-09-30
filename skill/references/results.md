@@ -10,7 +10,7 @@ Right after a connect, before the read is done:
 
 ```
 Cortad · tutor-app
-Free: 1 of 1 run left this month; 60 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
+Free: 1 of 1 run left this month; 60 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
 App: Your app is starting on this machine.
 No run yet.
 Production: not connected.
@@ -20,7 +20,7 @@ After the agent sent one real request to each endpoint that reaches the model, t
 
 ```
 Cortad · tutor-app
-Free: 1 of 1 run left this month; 60 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
+Free: 1 of 1 run left this month; 60 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
 App: Your app answered on port 3100.
 Endpoints your own requests proved (1):
   POST /api/chat: 2 requests reached gpt-4o-mini, 2 model calls each, 3.1 seconds a reply.
@@ -31,7 +31,7 @@ Endpoints your own requests proved (1):
     Last request: "and the second question?", answered "For question 2, start by writing what the angle is opposite to.".
 Endpoints the read found that no request has reached (1):
   POST /api/homework/explain  apps/api/src/routes/homework.ts:18
-A run on the proven endpoints: 36 trials, 72 replies, about 6 minutes, about $0.38 on your OpenAI key for gpt-4o-mini.
+A run on the proven endpoints: 36 trials, 72 replies, up to about 6 minutes at one request at a time, about $0.38 on your OpenAI key for gpt-4o-mini.
 No run yet.
 Production: not connected.
 A run starts only when the person asks: from Run in the browser, or from the run verb.
@@ -41,7 +41,7 @@ Once a run is playing, the read and the run:
 
 ```
 Cortad · tutor-app
-Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
+Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
 App: Your app answered on port 3100.
 What Cortad read:
 Rules in the code: 46, in 5 files. 3 of them:
@@ -134,6 +134,7 @@ Replies took 3.1 s at the median and 11.4 s at the slowest, over 138 replies.
 Found only by running your app:
 finding:1  Does the reply state a refund policy the product does not publish?
   Reach: failed in 9 of 12 trials, 47% to 91% of trials; 9 of its 10 breaks at reply 2.
+  Harm: wrong answer.
   At apps/api/src/agent/prompt.ts:41
   Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the 138 replies the run traced were, none with a tool.
   Tools behind the quoted replies: none.
@@ -143,6 +144,7 @@ finding:1  Does the reply state a refund policy the product does not publish?
   A verify replays its 9 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 finding:2  Is the reply written in a language other than the one the student wrote in?
   Reach: failed in 4 of 6 trials, 30% to 90% of trials.
+  Harm: tone.
   At apps/api/src/agent/system.ts:12
   Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the 138 replies the run traced were, none with a tool.
   Tools behind the quoted replies: search_lessons.
@@ -154,6 +156,7 @@ Pressed by the customer, it gave way in 4 of 22 trials.
 Open gates, found by knocking your app's routes:
 access:1  GET /api/admin/students answered 200 to a request with no sign-in; it should have refused.
   Reach: knocked once, with no sign-in.
+  Harm: data exposure.
   At apps/api/src/routes/admin.ts:14
   verify access:1 knocks the routes again.
 Held: 7 trials held back (POST /api/homework/upload: the route needs a signed file URL, and no test account can make one).
@@ -164,7 +167,7 @@ The next run is compared with this one, run 8f2a1c4e: each finding's question is
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
 112 of 140 checks measured.
-Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
+Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -203,7 +206,7 @@ A verify replays the trials the finding failed on, word for word, and decides wi
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
 The failure is gone on its own trials: none of 3 replays failed, against 3 of 3 trials in the run it was found in. Held out, the same question in situations you cannot see: 1 of 2 trials failed before, 0 of 2 replayed after.
-Free: this month's 1 run is used; 55 verify trials left. Hobby $99 a month: 10 runs, 600 verify trials, 100,000 production replies read.
+Free: this month's 1 run is used; 55 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
