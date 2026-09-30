@@ -1233,23 +1233,26 @@ def _install():
                 pass
         return bool(a) and (bool(re.search(r"\b[a-z]{2}_test_\w", a)) or any(v and len(v) >= 8 and v in a for k, v in os.environ.items() if test_setting.search(k)))
 
-    def held_here(url, method, auth):
+    # `auth_of()`: the call's credential, read only for a call that is otherwise held. Once a tagged
+    # write is being decided, a failure to decide holds it.
+    def held_here(url, method, auth_of):
         req = ctx.get()
         if not req or not req.get("turn") or str(method or "").upper() not in ("POST", "PUT", "PATCH", "DELETE"):
             return False
         try:
             parts = urlsplit(str(url))
-        except ValueError:
-            return False
-        host = (parts.hostname or "").lower()
-        if this_machine.match(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or test_key(auth):
-            return False
-        return not any(host == p or host.endswith("." + p) for p in pass_now())
+            host = (parts.hostname or "").lower()
+            if this_machine.match(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or test_key(auth_of()):
+                return False
+            return not any(host == p or host.endswith("." + p) for p in pass_now())
+        except Exception:
+            return True
 
-    # A GraphQL query reads; only a mutation writes.
+    # A GraphQL query reads; a mutation writes. A `query` that is not GraphQL (SQL over HTTP) is held.
     def reads_only(raw):
         b = parsed(raw) if raw else None
-        return isinstance(b, dict) and isinstance(b.get("query"), str) and not re.match(r"^\s*mutation\b", b["query"])
+        q = b.get("query") if isinstance(b, dict) else None
+        return isinstance(q, str) and bool(re.match(r"^\s*(?:\{|query\b|fragment\b)", q)) and not re.search(r"\bmutation\b", q)
 
     held_count = itertools.count(1)
 
@@ -1263,11 +1266,12 @@ def _install():
     def held_reply(raw, kind):
         return json.dumps({**fields_of(raw, kind), "id": "cortad-held-%d" % next(held_count), "status": "ok"}).encode("utf-8")
 
+    # Named by method and host only: a webhook's path is its credential.
     def held_row(url, method, raw, kind, req):
         try:
             parts = urlsplit(str(url))
             write({"dep": {"at": int(time.time() * 1000), "host": (parts.hostname or "")[:253], "status": 200, "held": True, **inside_of(req),
-                           "called": [{"name": ("%s %s%s" % (str(method).upper(), parts.hostname, parts.path))[:80], "arguments": args_text(fields_of(raw, kind))}]}})
+                           "called": [{"name": ("%s %s" % (str(method).upper(), parts.hostname))[:80], "arguments": args_text(fields_of(raw, kind))}]}})
         except Exception:
             pass
 
@@ -2194,15 +2198,13 @@ def _install():
                 dep(request.url, response.status_code, req=req, caller=caller)
             return response
 
+        # A held call that cannot be answered fails in the app; it is never sent instead.
         def held_httpx(request, sent):
-            try:
-                if not held_here(request.url, request.method, request.headers.get("authorization")) or reads_only(sent):
-                    return None
-                kind = request.headers.get("content-type", "")
-                held_row(request.url, request.method, sent, kind, ctx.get())
-                return module.Response(200, headers={"content-type": "application/json"}, content=held_reply(sent, kind), request=request)
-            except Exception:
+            if not held_here(request.url, request.method, lambda: request.headers.get("authorization")) or reads_only(sent):
                 return None
+            kind = request.headers.get("content-type", "")
+            held_row(request.url, request.method, sent, kind, ctx.get())
+            return module.Response(200, headers={"content-type": "application/json"}, content=held_reply(sent, kind), request=request)
 
         for cls in (module.Client, module.AsyncClient):
             send = cls.send
@@ -2254,22 +2256,22 @@ def _install():
     def patch_requests(module):
         send = module.Session.send
 
+        # A held call that cannot be answered fails in the app; it is never sent instead.
         def held(request):
-            try:
-                raw = text(request.body, reply_max)
-                if not held_here(request.url, request.method, request.headers.get("authorization")) or reads_only(raw):
-                    return None
-                import datetime
-                models, structures = sys.modules["requests.models"], sys.modules["requests.structures"]
-                kind = request.headers.get("content-type", "")
-                held_row(request.url, request.method, raw, kind, ctx.get())
-                response = models.Response()
-                response.status_code, response.reason, response.url, response.request, response.encoding = 200, "OK", request.url, request, "utf-8"
-                response.headers = structures.CaseInsensitiveDict({"content-type": "application/json"})
-                response._content, response._content_consumed, response.elapsed = held_reply(raw, kind), True, datetime.timedelta(0)
-                return response
-            except Exception:
+            if not held_here(request.url, request.method, lambda: request.headers.get("authorization")):
                 return None
+            raw = text(request.body, reply_max)
+            if reads_only(raw):
+                return None
+            import datetime
+            models, structures = sys.modules["requests.models"], sys.modules["requests.structures"]
+            kind = request.headers.get("content-type", "")
+            held_row(request.url, request.method, raw, kind, ctx.get())
+            response = models.Response()
+            response.status_code, response.reason, response.url, response.request, response.encoding = 200, "OK", request.url, request, "utf-8"
+            response.headers = structures.CaseInsensitiveDict({"content-type": "application/json"})
+            response._content, response._content_consumed, response.elapsed = held_reply(raw, kind), True, datetime.timedelta(0)
+            return response
 
         def sent(self, request, *a, **k):
             answered = held(request)
@@ -2309,21 +2311,33 @@ def _install():
             defaults = getattr(self, "_default_headers", None) or {}
             return given.get("authorization") or (basic.encode() if basic else None) or defaults.get("Authorization")
 
+        # A path relative to the session's base address is decided on the whole address.
+        def whole(self, str_or_url):
+            try:
+                return str(self._build_url(str_or_url))
+            except Exception:
+                return str(str_or_url)
+
         async def requested(self, method, str_or_url, *a, **k):
             body = k.get("json") if k.get("json") is not None else k.get("data")
-            try:
-                hold = held_here(str_or_url, method, auth_of(self, k)) and not reads_only(text(body, reply_max))
-            except Exception:
-                hold = False
-            if hold:
+            url = whole(self, str_or_url)
+            if held_here(url, method, lambda: auth_of(self, k)) and not reads_only(text(body, reply_max)):
                 port = held_port()
                 if port is None:
                     raise module.ClientConnectionError("this write was held and could not be answered")
-                parts = urlsplit(str(str_or_url))
+                parts = urlsplit(url)
                 n = str(next(held_sent))
-                held_waiting[n] = (str(str_or_url), method, ctx.get())
+                held_waiting[n] = (url, method, ctx.get())
                 k = {**k, "headers": {**dict(k.get("headers") or {}), "x-cortad-held": n}}
-                return await request(self, method, "http://127.0.0.1:%d%s%s" % (port, parts.path or "/", "?" + parts.query if parts.query else ""), *a, **k)
+                target = "http://127.0.0.1:%d%s%s" % (port, parts.path or "/", "?" + parts.query if parts.query else "")
+                if getattr(self, "_base_url", None) is None:
+                    return await request(self, method, target, *a, **k)
+                # A session with a base address refuses a whole one on older aiohttp: the held call is
+                # answered through a session of its own, read before that session closes.
+                async with module.ClientSession() as own:
+                    answered = await request(own, method, target, *a, **k)
+                    await answered.read()
+                return answered
             caller = callers_now(str_or_url) if is_model_call(str_or_url) or is_retrieval(str_or_url) else None
             t0 = time.time()
             req = noted(str_or_url, body)
