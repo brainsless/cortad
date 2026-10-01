@@ -509,6 +509,8 @@ async function verb(job) {
     }
     // The person changed what they said yes to while this command runs.
     case "consent": await allowOutbound(b); return { ok: true };
+    // A line for the agent reading this terminal: the read of the code landing, said the moment it does.
+    case "say": { const line = String(b.line ?? "").replace(/\s+/g, " ").trim().slice(0, 400); if (line) say(line); return { ok: true }; }
     case "restart": return restartApp();
     case "inventory": return inventoryOf(b.probe && typeof b.probe === "object" ? b.probe : {});
     // Your own pages, read here rather than in a world's shell: that shell is sealed away from
