@@ -540,7 +540,8 @@ async function verb(job) {
     // One marked news (a run ending) is also kept for the hook, so an agent that was not listening
     // hears it on its next prompt or edit.
     case "say": {
-      const line = String(b.line ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+      // Printed in a terminal and handed to a coding agent: no control characters, no direction overrides.
+      const line = String(b.line ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim().slice(0, 400);
       if (line) say(line);
       if (line && b.news) { try { addNews(project, line); } catch { /* said in this terminal only */ } }
       return { ok: true };

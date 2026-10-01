@@ -40,7 +40,7 @@ The connect command ends with "Go back to the browser". The person is waiting on
 
 `run` answers within a second; when the app is still starting it says so, and `run_status` holds until the run has an id. `run_status` follows the run this machine started last, or the latest run. Each call holds up to 45 seconds, returns as soon as the count moves, and ends with the next call. When the plan is spent, `run` says so and nothing runs.
 
-A run the person pressed in the browser ends with one line in the terminal running the connect command, and the same line reaches you through the hook on your next prompt or edit: `Run 55ee432b finished: 4 findings in 37 conversations. Call findings.` Make that call; `run_status` is for a run you started yourself.
+A run the person pressed in the browser ends with one line in the terminal running the connect command, and the same line reaches you through the hook on your next prompt or edit: `Run 55ee432b finished after 37 conversations. Call findings with jobId 55ee432b-3c9d-4bb3-8c07-04e0386ff52c.` Make the call the line names, with the id it gives: `findings` for a run that finished, `run_status` for one that stopped and for a verify.
 
 ## The first run: the baseline
 
