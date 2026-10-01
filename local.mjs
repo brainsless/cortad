@@ -254,6 +254,8 @@ let secrets = [];
 const LATER_HEADER = "x-cortad-answer", LATER_MISSED = "x-cortad-later", LATER_MARGIN_MS = 5_000;
 // The cookies each trial's own turns were handed, newest trials kept.
 const trialJars = new Map();
+// Endpoints that refused a new visitor: their trials carry the person's own session.
+const ownSession = new Set();
 const TRIAL_JARS = 500;
 let identities = null;
 let capture = null;
@@ -417,6 +419,17 @@ async function verb(job) {
       const cookieAt = Object.keys(headers).find((k) => k.toLowerCase() === "cookie");
       const { [cookieAt ?? ""]: given = "", ...cookieless } = headers;
       const cookie = () => [...new Map([...given.split(/;\s*/), ...jar.split(/;\s*/)].filter(Boolean).map((pair) => [pair.split("=")[0].trim(), pair])).values()].join("; ");
+      // A cookie your app hands any new visitor is that visitor's session: each trial asks for its own,
+      // so one trial's answer in progress never holds another's (AI Answers answers one at a time per
+      // visitor, and every trial carried the agent's one session). An endpoint that refuses a new
+      // visitor keeps the person's session for this trial and every later one.
+      const door = `${method} ${path.split("?")[0]}`;
+      const fresh = Boolean(trial && given && !trialJars.has(trial) && !ownSession.has(door));
+      const visitor = async () => {
+        const res = await fetch(url, { method: "GET", headers: cookieless, redirect: "manual", signal: AbortSignal.any([letGo, AbortSignal.timeout(15_000)]) }).catch(() => null);
+        await res?.arrayBuffer().catch(() => null);
+        return (res?.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]).filter(Boolean).join("; ");
+      };
       const sent = (at, over = {}) => fetch(at, {
         ...init, ...over,
         headers: { ...(jar ? cookieless : headers), ...(over.headers ?? {}), ...(jar ? { cookie: cookie() } : {}) },
@@ -439,8 +452,17 @@ async function verb(job) {
         }
       };
       const ask = async () => {
+        if (fresh) { jar = await visitor(); if (jar) trialJars.set(trial, jar); }
         let res = await sent(url);
         keep(res);
+        if (fresh && jar && (res.status === 401 || res.status === 403)) {
+          ownSession.add(door);
+          jar = "";
+          trialJars.delete(trial);
+          await res.arrayBuffer().catch(() => null);
+          res = await sent(url);
+          keep(res);
+        }
         if (method !== "GET" && sentBack(res)) { await warm(); if (jar) res = await sent(url); }
         const buf = Buffer.from(await res.arrayBuffer());
         // An OpenAPI document can run to megabytes; the caller asks for it whole.
