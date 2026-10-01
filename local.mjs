@@ -376,9 +376,9 @@ async function verb(job) {
       if (marker) {
         const role = headers[marker];
         delete headers[marker];
-        if (role === CAPTURED) {
-          // Speaking as the person who sent the message we watched: every header their own client sent.
-          for (const [name, value] of Object.entries(capture?.headers() ?? {})) { for (const k of Object.keys(headers)) if (k.toLowerCase() === name) delete headers[k]; headers[name] = value; }
+        if (role === CAPTURED || role.startsWith(`${CAPTURED}:`)) {
+          // Speaking as one of the customers whose requests we watched: every header their own client sent.
+          for (const [name, value] of Object.entries(capture?.headers(role) ?? {})) { for (const k of Object.keys(headers)) if (k.toLowerCase() === name) delete headers[k]; headers[name] = value; }
         } else {
           const held = await identities?.headerFor(role);
           if (held) { for (const k of Object.keys(headers)) if (k.toLowerCase() === held.name) delete headers[k]; headers[held.name] = held.value; }
