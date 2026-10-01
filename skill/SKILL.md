@@ -21,17 +21,18 @@ The tools are the `cortad` MCP tools. Where they are missing, each one is `npx {
 
 ## A session, start to finish
 
-The connect command ends with "Go back to the browser".
+The connect command ends with "Go back to the browser". The person is waiting on the other side of it: say what you see at each step, in one or two lines, before you do the next thing. Two minutes of work on their app at most between lines to them.
 
-1. The connect command says whether it started the app and the port to send requests to. If it says the app did not start, fix what it names and save; it starts the app again by itself. Requests are seen in an app the command started, or at the port it says to send them to.
+1. The moment the command says "Go back to the browser", tell the person: connected, the app is up on which port (or did not start, and what the command names), and that you are now sending it one real request per endpoint. If the app did not start, say what you would change and change it only if they say so; the command starts the app again by itself after a save.
 2. Send one real request to each endpoint that reaches the model, the way the app's own client does: its route, its body, its sign-in. On a chat, send a second message in the same conversation. When `status` asks for a request signed in as another customer, send it: each customer you sign in as becomes an account of its own in the run.
-3. `status` then shows what Cortad read (rules, journeys, simulated users, endpoints, standards) and each endpoint your requests reached with what it did inside the app: the model and how many calls a request made, the seconds a reply took, which of the rules read from the code the prompts carried, the tools that ran, the passages handed to the model, and problems a line of code decides, at their file and line. Endpoints the read found that no request reached are listed apart. The line `A run on the proven endpoints:` says how many conversations, about how long and about what it costs on the app's own key; any `Run waits` line says whose side it is on.
-4. The first run is free. Before it, read `status` for what would make the run measure the setup instead of the app:
+3. A reply that is an error, or a `Problem` line in `status` (a provider refusing, a retrieval with no answer, a tool that failed), is the app's own state, not yours to repair in silence. Say it in two lines: what failed, at which file and line, whose side it is on. Then ask whether they want it fixed first or the run as the app stands. Two minutes of reading for the cause at most, then say what you have.
+4. `status` shows what Cortad read (rules, journeys, simulated users, endpoints, standards) and each endpoint your requests reached with what it did inside the app: the model and how many calls a request made, the seconds a reply took, which of the rules read from the code the prompts carried, the tools that ran, the passages handed to the model, and problems a line of code decides, at their file and line. Endpoints the read found that no request reached are listed apart. The line `A run on the proven endpoints:` says how many conversations, about how long and about what it costs on the app's own key; any `Run waits` line says whose side it is on, and a hold on a hosted store is lifted by the person's yes on the card in the browser, not by you moving the store.
+5. The first run is free. Before it, read `status` for what would make the run measure the setup instead of the app:
    - a service down: a `Problem` line where a retrieval got no answer, or a tool came back as an error;
    - a request that ended on a tool call: `The request ended right after ... ran: no model call came after it`, which every conversation on that endpoint would repeat;
    - the sign-in: `Every trial sends the sign-in your agent's own request carried, so all trials act as one account`, or a request your app answered 401 or 403.
-   Fix what applies, send the request again, and read `status` again. A run that measured nothing is not counted against the plan.
-5. Tell the person what you saw, in your own words: which endpoints answered and what `status` shows about them. They can finish setup in the browser and press Run, or ask you to start one.
+   Say what applies and what you would do about it; fix it when they agree, send the request again, and read `status` again. A run that measured nothing is not counted against the plan.
+6. Then tell the person, in your own words: which endpoints answered and what `status` shows about them, and that Run is open in the browser or that you can start it. Stop there; the run is theirs to start.
 
 `status` with `show` lists one section of the read in full: `rules`, `standards`, `journeys`, `endpoints` or `trials` (in a shell, `npx {{cortad}} status rules`).
 
