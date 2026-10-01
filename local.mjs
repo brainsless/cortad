@@ -12,6 +12,7 @@
 // on with the key this connect leaves in ~/.cortad. Nothing here touches git. Your environment
 // never leaves this machine. Ctrl-C ends everything.
 
+import { notAnApp, withoutStores } from "./lib/app-port.mjs";
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -536,7 +537,9 @@ const hostUrl = (port, path = "/") => `http://${appHost === "::1" ? "[::1]" : ap
 const answers = async (port) => {
   for (const host of [appHost, appHost === "::1" ? "127.0.0.1" : "::1"]) {
     try {
-      await fetch(`http://${host === "::1" ? "[::1]" : host}:${port}/`, { method: "GET", signal: AbortSignal.timeout(2500), redirect: "manual" });
+      const res = await fetch(`http://${host === "::1" ? "[::1]" : host}:${port}/`, { method: "GET", signal: AbortSignal.timeout(2500), redirect: "manual" });
+      const head = await res.text().then((t) => t.slice(0, 300), () => "");
+      if (notAnApp(head)) return false;
       appHost = host;
       return true;
     } catch { /* the other family next */ }
@@ -902,7 +905,7 @@ async function start(waitMs, tries = 3) {
     // machine has other things on 3000 and 8080, and one of them answered for the app once.
     const ports = await listening(mine.pid);
     // The socket can open before the server answers; the log line is the tiebreak among several.
-    const plain = seen.replace(/\x1b\[[0-9;]*m/g, "");
+    const plain = withoutStores(seen.replace(/\x1b\[[0-9;]*m/g, ""));
     const said = [...plain.matchAll(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\]):(\d{2,5})\b|\bport\s*[:=]?\s*(\d{4,5})\b/gi)].map((m) => Number(m[1] || m[2]));
     for (const port of [...new Set([...said.reverse().filter((p) => ports.includes(p)), ...ports])]) {
       if (await answers(port)) {
