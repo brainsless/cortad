@@ -23,7 +23,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { COMMANDS, main as face } from "./lib/cli.mjs";
-import { homeOf, projectOf, readToken, writeApp, writeDigest, writeToken } from "./lib/home.mjs";
+import { addNews, homeOf, projectOf, readToken, writeApp, writeDigest, writeToken } from "./lib/home.mjs";
 import { changesOf, commandText, RELOADER, sourceOf } from "./lib/fresh.mjs";
 import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawnTied, stopTree, supervisorOf } from "./lib/proc.mjs";
 import { claimRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
@@ -537,7 +537,14 @@ async function verb(job) {
     // The person changed what they said yes to while this command runs.
     case "consent": await allowOutbound(b); return { ok: true };
     // A line for the agent reading this terminal: the read of the code landing, said the moment it does.
-    case "say": { const line = String(b.line ?? "").replace(/\s+/g, " ").trim().slice(0, 400); if (line) say(line); return { ok: true }; }
+    // One marked news (a run ending) is also kept for the hook, so an agent that was not listening
+    // hears it on its next prompt or edit.
+    case "say": {
+      const line = String(b.line ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+      if (line) say(line);
+      if (line && b.news) { try { addNews(project, line); } catch { /* said in this terminal only */ } }
+      return { ok: true };
+    }
     case "restart": return restartApp();
     case "inventory": return inventoryOf(b.probe && typeof b.probe === "object" ? b.probe : {});
     // Your own pages, read here rather than in a world's shell: that shell is sealed away from

@@ -32,13 +32,15 @@ The connect command ends with "Go back to the browser". The person is waiting on
    - a request that ended on a tool call: `The request ended right after ... ran: no model call came after it`, which every conversation on that endpoint would repeat;
    - the sign-in: `Every trial sends the sign-in your agent's own request carried, so all trials act as one account`, or a request your app answered 401 or 403.
    Say what applies and what you would do about it; fix it when they agree, send the request again, and read `status` again. A run that measured nothing is not counted against the plan.
-6. Then tell the person, in your own words: which endpoints answered and what `status` shows about them, and that Run is open in the browser or that you can start it. Stop there; the run is theirs to start.
+6. Then tell the person, in your own words: which endpoints answered and what `status` shows about them, and that Run is open in the browser or that you can start it. Stop there; the run is theirs to start. When it ends you are told, on your next prompt or edit, what it found and the call to make, if `npx {{cortad}} stick` has been run in this repository (below); say that in one line, and offer to run it.
 
 `status` with `show` lists one section of the read in full: `rules`, `standards`, `journeys`, `endpoints` or `trials` (in a shell, `npx {{cortad}} status rules`).
 
 ## Following a run
 
 `run` answers within a second; when the app is still starting it says so, and `run_status` holds until the run has an id. `run_status` follows the run this machine started last, or the latest run. Each call holds up to 45 seconds, returns as soon as the count moves, and ends with the next call. When the plan is spent, `run` says so and nothing runs.
+
+A run the person pressed in the browser ends with one line in the terminal running the connect command, and the same line reaches you through the hook on your next prompt or edit: `Run 55ee432b finished: 4 findings in 37 conversations. Call findings.` Make that call; `run_status` is for a run you started yourself.
 
 ## The first run: the baseline
 
@@ -83,7 +85,7 @@ Production comes up after the first run. A verify whose failure is gone, and gon
 
 ## Making it stick
 
-After the first run's findings, `npx {{cortad}} stick` makes this part of the repository: one line in AGENTS.md, CLAUDE.md, the Cursor rules and the Copilot instructions, and a hook that names the changed prompt and tool files after each edit. `npx {{cortad}} unstick` takes them out.
+`npx {{cortad}} stick` makes this part of the repository: one line in AGENTS.md, CLAUDE.md, the Cursor rules and the Copilot instructions; a hook after each edit that names the changed prompt and tool files; and a hook on the person's prompt that hands you a run or verify that ended while you were not listening. Run it once the person agrees to the files it writes, at the latest after the first run's findings. `npx {{cortad}} unstick` takes them out.
 
 ## A check that reads wrong
 
