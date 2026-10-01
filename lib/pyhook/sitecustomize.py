@@ -171,7 +171,14 @@ def _install():
     # What the app's tools answered, as the prompt of the next model call carries them (chat tool
     # messages, responses function outputs, Anthropic tool_result blocks, Gemini functionResponse
     # parts): the material a reply's facts rest on. Bounded per call.
-    tool_text, tools_max = 3000, 12
+    # A tool's answer is kept to the cap the reader takes, and one longer says it was cut (wire.cjs toolText).
+    tool_text, tools_max = 12000, 12
+
+    def tool_text_row(name, full, **extra):
+        out = {"name": str(name or "")[:80], "text": full[:tool_text], **extra}
+        if len(full) > tool_text:
+            out["cut"] = True
+        return out
 
     def text_of(v):
         if isinstance(v, str):
@@ -214,9 +221,10 @@ def _install():
         out, names = [], {}
 
         def add(name, text):
-            t = text_of(text)[:tool_text]
+            full = text_of(text)
+            t = full[:tool_text]
             if t.strip() and len(out) < tools_max and all(o["text"] != t for o in out):
-                out.append({"name": str(name or "")[:80], "text": t})
+                out.append(tool_text_row(name, full))
 
         messages = items(body.get("messages"))
         for m in messages:
@@ -645,9 +653,10 @@ def _install():
         calls, names, answers = {}, {}, []
 
         def answer(name, said):
-            t = text_of(said)[:tool_text]
+            full = text_of(said)
+            t = full[:tool_text]
             if name and t.strip() and len(answers) < tools_max and not any(a["name"] == name and a["text"] == t for a in answers):
-                answers.append({"name": str(name)[:80], "text": t, "provider": True})
+                answers.append(tool_text_row(name, full, provider=True))
 
         for e in events:
             if not isinstance(e, dict):
@@ -1731,7 +1740,7 @@ def _install():
             text = "raised %s: %s" % (type(error).__name__, error) if error is not None else returned(value)
             row = {"at": int(time.time() * 1000), "host": "in-app", "status": 200,
                    "called": [{"name": name, "arguments": args_text(plain_of(named))}],
-                   "tools": [{"name": name, "text": str(text)[:tool_text]}]}
+                   "tools": [tool_text_row(name, str(text))]}
             row.update(inside_of(req))
             write({"dep": row})
         except Exception:
