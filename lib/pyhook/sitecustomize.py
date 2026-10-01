@@ -1200,6 +1200,11 @@ def _install():
         except Exception:
             return ctx.get()
 
+    # A model call made for `req` got its response, as it arrives (cortad_tied `replied`).
+    def answered_call(url, req):
+        if req and is_model_call(url):
+            req["heard"] = True
+
     # Outbound writes a trial makes are held in the app, never sent: a trial that books, charges,
     # emails or deletes would otherwise do it for real. Held: a call made inside a request the run
     # tagged, with a writing method, to a host that is not a model, a retrieval, this machine, a copy
@@ -1378,26 +1383,31 @@ def _install():
     # `later`, in the time its model took to answer it; a run's turn also gets the model's last words,
     # the answer the command hands the run. Only an answer settles it: a call that came back 2xx with
     # no words (a model asking for a tool) is a step, and the next call is waited for (lib/trace.cjs).
-    # ponytail: a fixed settle; a model call that answers in words, then another that starts more than
-    # this later, cuts the answer at the first. A settle measured per door if that is seen.
+    # ponytail: a fixed settle; after a step that answers in words, more than this of the app's own
+    # work before the next call cuts the answer at that step. A call whose words match only a request
+    # already settled is the evidence: a settle measured per door when one is seen.
     settle_s = 5.0
 
+    # The turn's answer is written once the calls are quiet even while a read the hook took for a fetch
+    # of it is open (the person's page polling the sender): the answer is the model's words either way.
+    # The exchange is written as answered later only when no fetch came to complete it (tied.settled).
     def answered_later(req):
         status, words, at = req["said"]
-        if req.get("kept"):
+        if req.get("turn") and not req.get("turn_answered"):
+            req["turn_answered"] = True
+            write({"answer": {"ex": req["id"], "turn": req["turn"], "status": status, "reply": words}})
+        if tied.settled(req) and req.get("kept"):
             row = {"ex": req["id"], **row_of(req), "ms": at - req["at"], "later": True, "headers": req["headers"], "sent": req["sent"]}
             if req.get("turn"):
                 row["turn"] = req["turn"]
             write(row)
-        if req.get("turn"):
-            write({"answer": {"ex": req["id"], "turn": req["turn"], "status": status, "reply": words}})
 
     def settle(req):
         import threading
 
         def quiet():
             try:
-                if tied.settled(req):
+                if not req.get("calls_open"):
                     answered_later(req)
             except Exception:
                 pass
@@ -1887,6 +1897,8 @@ def _install():
                     elif message.get("type") == "http.response.body":
                         replied(req, message.get("body") or b"")
                         req["finished"] = not message.get("more_body")
+                        if req["finished"] and tied:
+                            tied.replied(req)
                         if sites and not req.get("placed"):
                             sites.sent(req, message, sys._getframe(1), Asgi.__call__.__code__)
                 except Exception:
@@ -1949,6 +1961,8 @@ def _install():
                     item = next(it)
                 except StopIteration:
                     req["finished"] = True
+                    if tied:
+                        tied.replied(req)
                     return
                 finally:
                     if token is not None:
@@ -2319,6 +2333,7 @@ def _install():
                     req = noted(request.url, sent)
                     try:
                         response = _send(self, request, *a, **k)
+                        answered_call(request.url, req)
                     except Exception as err:
                         if is_model_call(request.url):
                             meter(request.url, sent, 0, "", "", req, caller, t0)
@@ -2341,6 +2356,7 @@ def _install():
                     req = noted(request.url, sent)
                     try:
                         response = await _send(self, request, *a, **k)
+                        answered_call(request.url, req)
                     except Exception as err:
                         if is_model_call(request.url):
                             meter(request.url, sent, 0, "", "", req, caller, t0)
@@ -2382,6 +2398,7 @@ def _install():
             req = noted(request.url, request.body)
             try:
                 response = send(self, request, *a, **k)
+                answered_call(request.url, req)
             except Exception as err:
                 if is_model_call(request.url):
                     meter(request.url, text(request.body, reply_max), 0, "", "", req, caller, t0)
@@ -2443,6 +2460,7 @@ def _install():
             req = noted(str_or_url, body)
             try:
                 response = await request(self, method, str_or_url, *a, **k)
+                answered_call(str_or_url, req)
             except Exception as err:
                 if is_model_call(str_or_url):
                     meter(str_or_url, text(body, reply_max), 0, "", "", req, caller, t0)

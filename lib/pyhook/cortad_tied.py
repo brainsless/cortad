@@ -167,15 +167,18 @@ class Tied:
         prompt = self.norm(sent)
         found = {}
         # Each: the ask, the open fetch to tie to it, and the ids of the session it was reached through.
+        # A read of a request already answered later can complete that request's exchange, never be
+        # the one a new call answers.
         for r in list(self.open.values()):
             if r.get("asker"):
-                found[id(r["asker"])] = (r["asker"], None, r.get("tie") or set())
+                if not r["asker"].get("settled"):
+                    found[id(r["asker"])] = (r["asker"], None, r.get("tie") or set())
             # A request whose own context made a model call is served there; a call outside it is not its.
             elif r["method"] != "GET" and (not r.get("noted") or r.get("pinned")) and self._says(r, prompt):
                 found[id(r)] = (r, None, set())
             else:
                 asker = self._asker(r)
-                if asker:
+                if asker and not asker[0].get("settled"):
                     found[id(asker[0])] = (asker[0], (r, asker[1]), asker[1])
         sayers = []
         if not found:
@@ -205,26 +208,46 @@ class Tied:
         _HELD.set(asker)
         return asker
 
-    # A pinned call has answered or failed.
+    # A call made for the request has answered or failed: one pinned to it, or one of its own still
+    # waiting (`waiting`: its own calls not done yet, counted while it has not been answered later).
     @staticmethod
     def done(req):
         if req and req.get("pinned"):
             req["calls_open"] = max(0, req.get("calls_open", 0) - 1)
+        elif req and req.get("waiting"):
+            req["waiting"] -= 1
 
-    # A call made in a request's own context: its own until the request's reply has gone out. After
-    # that, a loop the request started (a queue drained from its handler) keeps its context while it
-    # works through later messages, so the call is its own only when the prompt carries its words, and
-    # is otherwise pinned as a call made outside every request is, the context breaking a tie. A
-    # request whose reply went out before its first call is answered later.
+    # A call made in a request's own context: its own, unless the request's reply went out before any
+    # model call answered it. Then a loop the request started (a queue drained from its handler) can
+    # keep its context while it works through later messages, so the call is its own only when the
+    # prompt carries its words, and is otherwise pinned as a call made outside every request is, the
+    # context breaking a tie. A request that answered with its own model call keeps every later one
+    # (a title written after the reply). A request whose reply went out before its first call is
+    # answered later.
     def inside(self, req, sent):
-        if req.get("finished") and not self._says(req, self.norm(sent)):
+        if req.get("finished") and (not req.get("noted") or req.get("late")) and not self._says(req, self.norm(sent)):
             return self.pinned(sent, req)
         if not req.get("noted") and req.get("finished"):
             req["late"] = True
         if req.get("late"):
             req["pinned"] = True
             req["calls_open"] = req.get("calls_open", 0) + 1
+        else:
+            req["waiting"] = req.get("waiting", 0) + 1
         return req
+
+    # The request's reply has gone out. One whose model calls are still running and none of them has
+    # answered yet (a task the handler started without waiting on it) is answered later, those calls
+    # with it. `heard`: a model call made for it got its response, set as the response arrives, so a
+    # stream the app passes straight on is never taken for one.
+    @staticmethod
+    def replied(req):
+        req["finished"] = True
+        if req.get("heard") or req.get("late") or not (req.get("waiting") or req.get("calls_open")):
+            return
+        req["late"] = req["pinned"] = True
+        req["calls_open"] = req.get("calls_open", 0) + req.get("waiting", 0)
+        req["waiting"] = 0
 
     # Whether a request answered later is done, once: it has ended, none of its calls is open, and no
     # request tied to it came to fetch the answer. It stays where a fetch that comes later can still
