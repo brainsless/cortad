@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Cortad on your own machine. Run from your repository's root with the code the connect screen
 // showed:
-//   npx cortad ABCD2345   [--port 3000] [--start "npm run dev"] [--verbose]
+//   npx cortad ABCD2345   [--port 3000] [--start "npm run dev"] [--proxy] [--verbose]
 //
 // What it does: signs in with the code, uploads your source files once (never .env, never
 // node_modules) so your code can be read, starts your app the way you start it, then holds one
@@ -34,7 +34,8 @@ import { CAPTURED, makeCapture } from "./lib/replay.mjs";
 import { sampleHere } from "./lib/sample.mjs";
 import { mintAcross, originFor, servicePort, waitForPort } from "./lib/service.mjs";
 import { listingUrl } from "./lib/listing.mjs";
-import { installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
+import { hookable, installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
+import { openProxy } from "./lib/proxy.mjs";
 import { liftedLimits, sessionLifts } from "./lib/switches.mjs";
 import { makeKeeping } from "./lib/keeping.mjs";
 import { downLine, makeHealth } from "./lib/health.mjs";
@@ -54,6 +55,8 @@ const say = (line) => console.log(`cortad  ${line}`);
 const fail = (line) => { console.error(`cortad  ${line}`); process.exit(1); };
 
 const explain = argv.includes("--explain");
+// The app is seen through a local proxy (lib/proxy.mjs) even where the hook could load into it.
+const proxyAsked = argv.includes("--proxy");
 // Started by lib/cli.mjs for a run on a later day: no code, the key the first connect left behind.
 const viaToken = argv.includes("--token");
 // What is happening right now, on one line that rewrites itself. npx spends its own seconds fetching
@@ -68,7 +71,7 @@ const step = (line) => {
 };
 const clearStep = () => { if (process.stdout.isTTY) process.stdout.write("\r\x1b[K"); };
 const stepDone = (line) => { clearStep(); say(line); };
-if (!explain && !viaToken && !/^[A-Z0-9]{8}$/.test(code)) fail("usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"]   |   npx cortad --explain   |   npx cortad status | run | findings | verify <id>");
+if (!explain && !viaToken && !/^[A-Z0-9]{8}$/.test(code)) fail("usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--proxy]   |   npx cortad --explain   |   npx cortad status | run | findings | verify <id>");
 // Where Brainsless is. The host is not on the command line: a code cannot point at an impostor.
 const origin = new URL(process.env.CORTAD_ORIGIN || "https://cortad.com");
 // Ours, and only ours. brainsless.com is the same service under its earlier name and stays trusted
@@ -94,7 +97,9 @@ const project = projectOf(root);
 
 // One process holds a project's app up (lib/runner.mjs), and its state is what every reader reports.
 const me = { pid: process.pid, startedAt: startedAtOf(), by: viaToken ? "token" : "connect" };
-const become = (state, fields = {}) => writeRunner(project, { ...me, state, at: new Date().toISOString(), ...fields });
+// The last record written, so a fact learned while the app is up is added to it.
+let became = null;
+const become = (state, fields = {}) => { became = { state, fields }; writeRunner(project, { ...me, state, at: new Date().toISOString(), ...fields }); };
 process.on("exit", () => releaseRunner(project));
 // Started for a run while another process already holds this project's app up: that one serves it.
 // A connect from the screen is the person starting over, so the one before it is ended first.
@@ -250,6 +255,14 @@ const trialJars = new Map();
 const TRIAL_JARS = 500;
 let identities = null;
 let capture = null;
+// The local proxy an app is seen through when the hook cannot load into it (lib/proxy.mjs).
+let proxy = null;
+// The port the run and the agent send to: the proxy's front when there is one, else the app's own.
+const doorPort = () => proxy?.port ?? app?.port;
+// A request reached the app and no model call came through the proxy yet.
+let unseen = false;
+// The runner's record of where to send: the front, with the app's own port beside it.
+const upAt = (port = app?.port) => (proxy ? { port: proxy.port, proxied: port, ...(unseen && !proxy.seen() ? { unseen: true } : {}) } : { port });
 // The app's life, shared by the code that starts it, watches it and restarts it.
 let closing = false;
 let restarting = false;
@@ -339,8 +352,8 @@ async function verb(job) {
     }
     case "fetch": {
       // Only the app's own port: this machine's other services are not the world.
-      const port = Number(b.port) || app?.port;
-      if (!app || port !== app.port) return { error: `refused: port ${port} is not your app` };
+      const port = Number(b.port) || doorPort();
+      if (!app || (port !== app.port && port !== doorPort())) return { error: `refused: port ${port} is not your app` };
       const path = typeof b.path === "string" && b.path.startsWith("/") ? b.path : "/";
       const headers = {};
       for (const [k, v] of Object.entries(b.headers ?? {})) if (!/^(host|content-length|connection)$/i.test(k)) headers[k] = String(v);
@@ -384,8 +397,9 @@ async function verb(job) {
       // method", which is what your chat looked like from the outside. So the chain is walked the
       // way a browser walks it, one GET with redirects followed, and the request is sent again with
       // the session your app just handed out. The cookie is kept here and never leaves this machine.
-      const url = hostUrl(port, path);
-      const yours = (to) => { try { const u = new URL(to, url); return ["127.0.0.1", "::1", "[::1]", "localhost"].includes(u.hostname) && u.port === String(port) ? u.href : null; } catch { return null; } };
+      // Through the proxy's front when there is one, which is where the request is seen.
+      const url = proxy ? `http://127.0.0.1:${proxy.port}${path}` : hostUrl(port, path);
+      const yours = (to) => { try { const u = new URL(to, url); return ["127.0.0.1", "::1", "[::1]", "localhost"].includes(u.hostname) && u.port === new URL(url).port ? u.href : null; } catch { return null; } };
       // Each trial keeps the cookies your app set on its own earlier turns, so a conversation your app
       // holds in a cookie carries from one turn to the next and never into another trial.
       const trial = turn.replace(/:\d+$/, "");
@@ -444,7 +458,7 @@ async function verb(job) {
         const code = String(e.cause?.code ?? e.code ?? "");
         if (!/ECONNREFUSED|ECONNRESET|EPIPE|UND_ERR_SOCKET/.test(code)) return { error: `nothing answered at port ${port}: ${code || e.message}` };
         // Held through a restart of ours however long it takes: a request it cut is sent again after it.
-        for (let i = 0; (i < 45 || restarting) && !letGo.aborted && !(await answers(port)); i++) await new Promise((r) => setTimeout(r, 1000));
+        for (let i = 0; (i < 45 || restarting) && !letGo.aborted && !(await answers(app.port)); i++) await new Promise((r) => setTimeout(r, 1000));
         try { return { ...(await answered(await counted())), heldForRestart: true }; }
         catch (again) { return { error: letGo.aborted ? "cancelled by the run" : `nothing answered at port ${port}: ${String(again.cause?.code ?? again.message)}` }; }
       } finally { held.done(job.id); }
@@ -581,6 +595,10 @@ async function startApp() {
     const took = await takeOver(wanted);
     if (took) return took;
     say("your app was already running, so its request limits stay as they are; if it answers 429, stop it and run this without --port and they are raised for the session");
+    if (proxyAsked) {
+      await useProxy();
+      say(`to have its model calls seen, start your app with: ${Object.entries(proxy.env({ ...envExports(envFiles), ...process.env })).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+    }
     return { port: wanted, cmd: null };
   }
   const plan = startPlan({ root, typed: flag("--start"), onPath });
@@ -605,6 +623,7 @@ async function startApp() {
   // Said out loud, because it changes who their app lets in for as long as this command runs.
   if (opened.length) say(`your app's own sign-in switch, for this session only: ${opened.map((n) => `${n}=${lifted[n]}`).join(", ")}`);
   launched = { cmd, lifted };
+  if (proxyAsked || !hookable(appDir)) await useProxy();
   step(`starting your app: ${cmd}`);
   const up = await launch(180_000);
   if (up.port) return { port: up.port, cmd: launched.cmd, lifted: Object.keys(lifted) };
@@ -711,6 +730,7 @@ let pinned = { major: null, bin: null };
 // way the app is started comes through here, so it is fixed in one place.
 async function launch(waitMs) {
   let up = await start(waitMs);
+  if (up.port && !proxy && !(await hookedAt(up.port))) up = await startProxied(up.port, waitMs);
   // Only an app that stopped: one still running has not failed to start, whatever it printed.
   if (up.port || up.exited === null) return up;
   if (await keeping.backUp(app?.port).finally(release)) {
@@ -724,6 +744,29 @@ async function launch(waitMs) {
   if (!ok) return installSaid ? { ...up, tail: said(up.tail) } : up;
   const back = await start(waitMs);
   return back.port ? back : { ...back, tail: said(back.tail) };
+}
+// Whether the hook loaded into the process answering on `port`. A machine that cannot name that
+// process leaves the app as it is.
+const hookedAt = async (port) => { const pid = await listenerOn(port); return !pid || capture.hookedAt(port, pid); };
+// The proxy, opened once: the app's model calls are seen there from the next start on.
+async function useProxy() {
+  if (proxy) return;
+  const noted = () => { if (became?.state === "up") become("up", { ...became.fields, ...upAt(became.fields.proxied) }); };
+  // A first model call seen through it is said to the run, for an app this command did not start.
+  proxy = await openProxy({
+    file: capture.file, rulesFile: capture.rulesFile, target: () => ({ host: appHost, port: app?.port }),
+    onSeen: () => { forgetTold?.(); noted(); },
+    onUnseen: () => { unseen = true; noted(); say(UNSEEN); },
+  });
+  say("your app's model calls are seen through a local proxy on this machine, so the line of code that made each call is not known. During a run, its calls to other services go out as they would for a real customer: a conversation that books, charges or emails does it for real");
+}
+const UNSEEN = "a request reached your app and no model call came through the proxy. If your app sets its model's address in its code, have it read OPENAI_BASE_URL (or ANTHROPIC_BASE_URL or GOOGLE_GEMINI_BASE_URL), then save";
+// The app answered, and the hook is not in it: it is started again with its model settings on the proxy.
+async function startProxied(port, waitMs) {
+  await useProxy();
+  await stopTree(child.pid);
+  for (let i = 0; i < 75 && (await listenerOn(port)); i++) await new Promise((r) => setTimeout(r, 200));
+  return start(waitMs);
 }
 let installed = false;
 let installSaid = "";
@@ -814,7 +857,8 @@ async function start(waitMs, tries = 3) {
   loaded = note;
   const copies = await keeping.env(true);
   await allowOutbound();
-  child = spawnTied(cmd, { cwd: appDir, env: { ...envExports(envFiles), ...process.env, ...lifted, ...copies, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
+  const base = { ...envExports(envFiles), ...process.env, ...lifted, ...copies };
+  child = spawnTied(cmd, { cwd: appDir, env: { ...base, ...(proxy ? proxy.env(base) : capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
   const mine = child;
   become("starting", { app: mine.pid ?? null });
   let seen = "";
@@ -924,7 +968,7 @@ async function restartNow() {
     become("failed", { error: mask(error).slice(-600) });
     return { error };
   }
-  become("up", { port: up.port, app: child?.pid ?? null });
+  become("up", { ...upAt(up.port), app: child?.pid ?? null });
   if (up.port !== port) {
     // It moved anyway: the world follows the app, never the other way round.
     app = up;
@@ -946,6 +990,7 @@ async function close(code = 0) {
   closing = true;
   try {
     if (child?.pid) await stopTree(child.pid);
+    proxy?.close();
     // A copy lives on its store, and a store can be a service of the repository started beside the
     // app: the copies go first, while it still answers.
     await keeping.close();
@@ -989,6 +1034,7 @@ if (explain) {
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (only after your yes, for this session only)`}`,
     `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records each request during which your app calls a model, what it answered and the model calls on the way; header values stay here`,
+    `other apps      a local proxy on 127.0.0.1 in front of your app's port and where its model settings point (OPENAI_BASE_URL and the others), recording the same; it passes each call on to the provider your settings name`,
     `your files      never written by this program; your own coding agent edits them`,
     `your database   a database file your env or code names is copied to this program's temp folder; a Postgres, Redis or MongoDB database or a Qdrant collection on this machine is copied on its own server under a name of ours and deleted at the end; your app is started on the copies. Any other store is named, not copied`,
     `your services   a store your compose file runs, or a second service of this repository, is started when your app reaches for it and nothing answers there, and stopped at the end`,
@@ -1113,9 +1159,10 @@ function sourceChanged() {
 // says yes in the browser. The answer carries that yes (setup.consent), and the hosts it names are
 // written where the hook reads which outbound writes of a trial may leave.
 const announce = async () => {
-  const hooked = Boolean(launched && capture?.watching(app.port));
+  // Through the proxy, a message is seen arriving at its front, and its model calls once the app was started with its settings on the proxy.
+  const hooked = Boolean(proxy ? launched || proxy.seen() : launched && capture?.watching(app.port));
   const started = Boolean(launched);
-  const told = await call("POST", `/local/${box}/app`, { port: app.port, cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: (await keeping.lines(started)).map(mask), blocked: await keeping.blocked(started), watching: hooked, metered: hooked, proves: hooked });
+  const told = await call("POST", `/local/${box}/app`, { port: doorPort(), cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: (await keeping.lines(started)).map(mask), blocked: await keeping.blocked(started), watching: hooked, metered: hooked, proves: hooked });
   if (told.ok) await allowOutbound(told.data?.consent);
   return told;
 };
@@ -1163,8 +1210,9 @@ async function appLife() {
   const told = await announce();
   clearStep();
   if (!told.ok) return quit(told.data?.error ?? `could not register your app (${told.status})`);
-  become("up", { port: app.port, app: launched ? child?.pid ?? null : null });
+  become("up", { ...upAt(), app: launched ? child?.pid ?? null : null });
   say(`your app is answering on port ${app.port}${app.cmd ? ` · ${app.cmd}` : ""}`);
+  if (proxy) say(`send requests to port ${proxy.port}: it passes them to your app and Cortad sees each one. Requests sent straight to port ${app.port} are not seen`);
   say("leave this open. Go back to the browser; Ctrl-C disconnects.");
   let downSince = 0;
   let toldDown = false;
@@ -1189,7 +1237,7 @@ async function appLife() {
       downSince = 0; toldDown = false;
       // Said until it is heard. Said once, it was lost when their app came back while the network
       // was down, and the screen went on showing an app that had stopped while it answered turns.
-      if (!up) become("up", { port: app.port, app: launched ? child?.pid ?? null : null });
+      if (!up) become("up", { ...upAt(), app: launched ? child?.pid ?? null : null });
       const reach = await keeping.watch(app.port).catch(() => ({}));
       try { if (reach.copied && launched && child) await restartApp(COPIED); } finally { release(); }
       if (reach.changed) appTold = false;
@@ -1242,7 +1290,7 @@ async function appLife() {
       if (!back.port) return { error: "This command is closing." };
       if (!launched) await noteAttached(back.port);
       app = { ...app, ...(back.cmd !== undefined ? back : {}), port: back.port };
-      become("up", { port: app.port, app: launched ? child?.pid ?? null : null });
+      become("up", { ...upAt(), app: launched ? child?.pid ?? null : null });
       up = true; downSince = 0; toldDown = false;
       appTold = Boolean((await announce().catch(() => null))?.ok);
       say(`your app is answering again on port ${app.port}`);
