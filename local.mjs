@@ -12,6 +12,7 @@
 // on with the key this connect leaves in ~/.cortad. Nothing here touches git. Your environment
 // never leaves this machine. Ctrl-C ends everything.
 
+import { storesOf } from "./lib/stores.mjs";
 import { notAnApp, withoutStores } from "./lib/app-port.mjs";
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
@@ -508,6 +509,8 @@ async function verb(job) {
     }
     // The person changed what they said yes to while this command runs.
     case "consent": await allowOutbound(b); return { ok: true };
+    // A line for the agent reading this terminal: the read of the code landing, said the moment it does.
+    case "say": { const line = String(b.line ?? "").replace(/\s+/g, " ").trim().slice(0, 400); if (line) say(line); return { ok: true }; }
     case "restart": return restartApp();
     case "inventory": return inventoryOf(b.probe && typeof b.probe === "object" ? b.probe : {});
     // Your own pages, read here rather than in a world's shell: that shell is sealed away from
@@ -861,7 +864,10 @@ async function start(waitMs, tries = 3) {
   try { markRun(writesDirOf(homeOf(projectOf(root))), "session", { keep: true }); } catch { /* the app's writes go unrecorded */ }
   // Taken before the app reads a file: a save after this moment is a change it has not loaded.
   const note = { own: true, at: Date.now(), reloads: RELOADER.test(commandText(cmd, appDir)), answered: false };
-  note.files = sourceOf(root, files);
+  // The settings files count as what it loaded: an env file is rarely tracked, and an agent's edit to
+  // one left the app on the old settings until the command was started again (ulaim, 2026-10-01).
+  note.files = { ...sourceOf(root, files), ...sourceOf(root, envFiles.filter((f) => !/\.(example|sample)$/.test(f)).map((f) => relative(root, f))) };
+  storesAt ??= storesNamed();
   loaded = note;
   const copies = await keeping.env(true);
   await allowOutbound();
@@ -957,10 +963,21 @@ const savedSinceStart = () => Boolean(loaded?.files) && changesOf({
 // Every save that changes what your app runs starts it again, when it does not reload by itself: an
 // agent that saved a fix and asked the app eight seconds later was answered by the old code. Looked
 // at again after each restart, for a save made while it was under way.
+// The stores the settings name, as copies are made of them: a change here is a change of what the app
+// writes into, so its copies and holds are made again for the new settings, and said again.
+const storesNamed = () => { try { return JSON.stringify(storesOf({ ...envExports(envFiles), ...process.env }).map((s) => [s.engine, s.host, s.port, s.db, s.names])); } catch { return ""; } };
+let storesAt = null;
 async function restartOnSave() {
   while (!closing) {
     await sourceChanged();
-    while (!closing && launched && child && !appGone && !loaded?.reloads && savedSinceStart()) await restartApp();
+    while (!closing && launched && child && !appGone && !loaded?.reloads && savedSinceStart()) {
+      const named = storesNamed();
+      const moved = storesAt !== null && named !== storesAt;
+      storesAt = named;
+      if (moved) await keeping.forget().catch(() => {});
+      await restartApp(moved ? "starting your app again on the settings you changed, with its data copied again for them" : undefined);
+      if (moved) await announce().catch(() => null);
+    }
   }
 }
 async function restartNow() {
