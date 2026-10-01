@@ -67,7 +67,7 @@ The trials, checks, seeds and the conversations kept back belong to Cortad, and 
 
 ## The second run
 
-After the fixes, a second run measures the whole app again.
+After the fixes, `run` again. It plays what your changes since the last full run reach: those conversations again, each paired with its earlier self, and 8 to 12 new ones written for the change; it says what it left out. Its text leads with what moved: each behavior's failing count before and now, whether that is beyond chance, and the conversation that turned. Worse comes first.
 
 ## Making it stick
 
