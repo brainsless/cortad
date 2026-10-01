@@ -57,7 +57,7 @@ Engineering standards: 38 decided, 35 met, 3 missed.
   apps/api/src/tools/search.ts:51  Tool errors reach the model as errors: search returns an empty list when the index is down (decided by a model)
 Questions: 112; 40 asked in every conversation, 72 placed in the situations they fit.
 Trials: 58 written.
-  POST /api/homework/upload: 7 trials held back, on the app's side: the route needs a signed file URL, and no test account can make one
+  POST /api/homework/upload: 7 trials set aside, on the app's side: the route needs a signed file URL, and no test account can make one
 Latest run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
 Production: not connected.
 For the person: https://cortad.com/lab shows this in the browser.
@@ -109,7 +109,7 @@ Last run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: 3 findings, 51 of 51 trials playe
 2 fixes verified since that run:
   apps/api/src/agent/prompt.ts:41 (finding:1): gone; 0 of 3 replays failed, against 3 of 3 before; on the conversations kept back from you, 1 of 2 failed before, 0 of 2 after, not beyond chance.
   apps/api/src/agent/system.ts:12 (finding:2): gone; 0 of 7 replays failed, against 4 of 4 before; the fix made the failure worse on the conversations kept back from you (0 of 8 failed before, 6 of 8 after).
-The next run would play 58 trials, 7 held out, 5 new from the changes.
+The next run would play 58 trials, 7 kept back, 5 new from the changes.
 The Hobby plan, $99 a month, includes 10 runs.
 Production: not connected.
 Nothing ran.
@@ -118,14 +118,14 @@ For the person: plans and checkout at https://cortad.com/pricing?checkout=ship
 
 ## run_status
 
-Playing. The call held up to 45 seconds:
+Playing. The call waited up to 45 seconds:
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
-Finished, the first run on a repository: its baseline. One line on what ran, then who the users are as the read found them in the code, with how many of each one's conversations got what they came for, in full or in part, read at the last reply; the journeys the read named and how each went, with the one or two checks that failed most there; the checks no conversation broke, asked often enough that each fails less than one time in five; then what broke, found only by running the app, each finding with its reach in conversations, the line of the app that wrote the breaking reply, the tools behind it, the layer a fix belongs in (prompt, flow around the model, tool or routing) and the exchange it broke on; the gates a knock found open; what a code review would also have found; what was held back and not measured; the run's model, time and spend; and one line on production. Every rate carries its 95% interval, said in words the first time. The findings take the room the picture leaves, the rest one line each, and findings shows them whole.
+Finished, the first run on a repository: its baseline. One line on what ran, then who the users are as the read found them in the code, with how many of each one's conversations got what they came for, in full or in part, read at the last reply; the journeys the read named and how each went, with the one or two checks that failed most there; the checks no conversation broke, asked often enough that each fails less than one time in five; then what broke, found only by running the app, each finding with its reach in conversations, the line of the app that wrote the breaking reply, the tools behind it, the layer a fix belongs in (prompt, flow around the model, tool or routing) and the exchange it broke on; the gates a knock found open; what a code review would also have found; what the numbers leave out; the run's model, time and spend; and one line on production. Every rate carries its 95% interval, said in words the first time. The findings take the room the picture leaves, the rest one line each, and findings shows them whole.
 
 A finding that sends customers away counts, for one journey or for everything else customers asked at one endpoint, the conversations whose last reply declined them or pointed them somewhere else, or where they asked for a person or said the app could not help and were not handed on; a conversation that ended with the customer served is never counted. It names the line of the prompt, or the tool those asks needed that the call writing the reply was given and never ran, that at least two and at least half of the replies read point at, reading at most 8 of them, and says where the fix belongs is not known when neither holds; it shows what the customer said next, and stays unconfirmed until its conversations were checked a second time. The same cut comes as structured data beside the text:
 
@@ -175,9 +175,9 @@ access:1  GET /api/admin/students answered 200 to a request with no sign-in; it 
   Harm: data exposure.
   At apps/api/src/routes/admin.ts:14
   verify access:1 knocks the routes again.
-What was not measured, and why:
-  Held: 7 conversations held back (POST /api/homework/upload: the route needs a signed file URL, and no test account can make one).
-  28 checks not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no conversation yet.
+What the numbers leave out, and why:
+  Set aside: 7 conversations (POST /api/homework/upload: the route needs a signed file URL, and no test account can make one).
+  28 checks with no reply to read: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no conversation yet.
   No conversation reached this journey: account recovery.
 Your app answered on gpt-4o-mini. The run took 7 min 32 s and spent $0.41 on your key over 214 model calls.
 Replies took 3.1 s at the median and 11.4 s at the slowest, over 138 replies.
@@ -343,7 +343,7 @@ finding:2  Is the reply written in a language other than the one the student wro
   A verify replays its 4 failing conversations. 2 clean replays show it gone.
 
 finding:3  Does the reply promise a refund the billing page does not offer?
-  Failed in 2 of 7 trials, between 8% and 64% of trials; unsettled: too few trials yet to say it fails in one visit in five.
+  Failed in 2 of 7 trials, between 8% and 64% of trials; not settled yet: its interval is still wider than one visit in five.
   Sent: "We are on the paid plan. What happens if we cancel?"
   Reply 1: "You can get a full refund any time in the first 60 days." (trial 77a0c5d1)
   At apps/api/src/agent/prompt.ts:44
@@ -357,7 +357,7 @@ finding:3  Does the reply promise a refund the billing page does not offer?
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
 112 of 140 checks measured.
-28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no conversation yet.
+28 checks with no reply to read: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no conversation yet.
 3 findings stand in the 12 situations you can read.
 2 findings stand in 3 situations kept back from you. You cannot read them, and a fix is graded on those too.
 ```
@@ -408,8 +408,8 @@ Production is not connected.
 
 ```
 Production, last 30 days: 4,812 conversations, 4,790 read.
-Rule checks held: 93% of 61,204 (1,120 unsure). Resolved 71%, frustrated 6%, asked for a human 2%, unanswered 4%.
+Rule checks passed: 93% of 61,204 (1,120 too close to call). Resolved 71%, frustrated 6%, asked for a human 2%, unanswered 4%.
 Rules broken most: rule:answer-first (412), rule:language (188), rule:cite-source (97).
-By journey: homework help 3,102 conversations, 94% held; billing question 410 conversations, 88% held.
+By journey: homework help 3,102 conversations, 94% passed; billing question 410 conversations, 88% passed.
 For the person: https://cortad.com/lab#field
 ```

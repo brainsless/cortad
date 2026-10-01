@@ -2448,7 +2448,7 @@ def _install():
             if held_here(url, method, lambda: auth_of(self, k)) and not reads_only(text(body, reply_max)):
                 port = held_port()
                 if port is None:
-                    raise module.ClientConnectionError("this write was held and could not be answered")
+                    raise module.ClientConnectionError("this write was kept from leaving and could not be answered")
                 parts = urlsplit(url)
                 n = str(next(held_sent))
                 held_waiting[n] = (url, method, ctx.get())
