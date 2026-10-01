@@ -8,6 +8,7 @@
   "type": "module",
   "files": [
     "README.md",
+    "lib/app-port.mjs",
     "lib/backing.mjs",
     "lib/cli.mjs",
     "lib/contact-text.mjs",
