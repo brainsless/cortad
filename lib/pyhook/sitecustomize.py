@@ -1125,7 +1125,9 @@ def _install():
             return bool(re.search(r"generativelanguage|aiplatform", host)) and bool(model_path.search(path))
         if host.endswith("amazonaws.com"):
             return host.startswith("bedrock")
-        return bool(model_host.search(host)) or (bool(model_path.search(path)) and bool(re.search(r"/v\d|/api/", path)))
+        # The OpenAI shape's own paths name a model call wherever they are served: LiteLLM's proxy is
+        # called at plain /chat/completions (wire.cjs OPENAI_PATH).
+        return bool(model_host.search(host)) or bool(re.search(r"/(?:chat/completions|completions|embeddings)$", path, re.I)) or (bool(model_path.search(path)) and bool(re.search(r"/v\d|/api/", path)))
 
     # `most`: what is read of a body. The door's row keeps 64 KB; a model call's prompt is read whole
     # up to the reply's bound, since a prompt cut at 64 KB is not JSON and every passage, tool answer
