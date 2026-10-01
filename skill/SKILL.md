@@ -27,7 +27,7 @@ The tools are the `cortad` MCP tools. Where they are missing, each one is `npx {
 The connect command ends with "Go back to the browser".
 
 1. The connect command says whether it started the app and on which port. If it says the app did not start, fix what it names and save; it starts the app again by itself. Requests are seen only in an app the command started.
-2. Send one real request to each endpoint that reaches the model, the way the app's own client does: its route, its body, its sign-in. On a chat, send a second message in the same conversation.
+2. Send one real request to each endpoint that reaches the model, the way the app's own client does: its route, its body, its sign-in. On a chat, send a second message in the same conversation. When `status` asks for a request signed in as another customer, send it: each customer you sign in as becomes an account of its own in the run.
 3. `status` then lists each endpoint your requests reached and what they did inside the app: the model and how many calls a request made, the seconds a reply took, which of the rules read from the code the prompts carried, the tools that ran, the passages handed to the model, and problems a line of code decides, at their file and line. Endpoints the read found that no request reached are listed apart.
 4. Tell the person what you saw, in your own words: which endpoints answered and what `status` shows about them. They can finish setup in the browser and press Run, or ask you to start one.
 
