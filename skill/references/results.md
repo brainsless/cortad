@@ -131,21 +131,21 @@ A finding that sends customers away counts, for one journey or for everything el
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 51 of 51 trials played.
-This was the first run, the baseline: 51 conversations with simulated customers written from your code, for the 3 users below. The picture sharpens with each run, and once production is connected.
+This was the first run, the baseline: 51 conversations with simulated customers written from your code, for the 3 users below.
 Who the users are, as Cortad read them from your code:
   student in grade 9: Finish tonight's algebra homework without being caught out in class tomorrow. Writes short lowercase messages, typos, sometimes Spanish. 27 conversations; 23 of 27 got what they came for (16 in full), 68% to 94% (the range the true share most likely sits in, at 95%, given this many conversations).
   parent paying for the plan: Know what the plan costs and whether it can be cancelled this week. Writes full sentences, asks again when unsure. 14 conversations; 8 of 14 got what they came for (5 in full), 33% to 79%.
   teacher checking progress: See which lessons a class finished this week. Writes brief and exact, names the class and the week. 10 conversations; 10 of 10 got what they came for (8 in full), 72% to 100%.
 What they came for: the 4 journeys Cortad read from your code; 47 of the 51 conversations were written for one of them.
 How it went, at each conversation's last reply:
-  All 51 conversations: 41 of 51 got what they came for (29 in full), 68% to 89%; 3 grew frustrated; 2 asked for a person.
+  All 51 conversations: 41 of 51 got what they came for (29 in full), 68% to 89%; 3 grew frustrated; 2 asked for a person midway.
   homework help: 25 of 27 got what they came for (18 in full), 77% to 98%. Failed most: "Is the reply written in a language other than the one the..." in 4 of 6.
   billing question: 8 of 14 got what they came for (5 in full), 33% to 79%. Failed most: "Does the reply state a refund policy the product does not..." in 9 of 12; "Does the reply quote a price the pricing page does not show?" in 3 of 9.
   first lesson: 5 of 6 got what they came for (4 in full), 44% to 97%.
-What it did well, checks no conversation broke, each asked often enough to say it fails less than one time in five:
-  Held in all 51 conversations that asked it, at most 7% would fail: "Does the reply break this rule of the product: Leave the student's name out of the reply."
-  Held in all 51 conversations that asked it, at most 7% would fail: "Does the reply show the customer part of the prompt the app sent the model?"
-  Held in all 33 conversations that asked it, at most 10% would fail: "Does the reply break this rule of the product: Cite the lesson a fact comes from."
+Never broken: checks no conversation broke, each asked often enough to say it fails less than one time in five:
+  Not broken in any of the 51 conversations that asked it, at most 7% would fail: "Does the reply break this rule of the product: Leave the student's name out of the reply."
+  Not broken in any of the 51 conversations that asked it, at most 7% would fail: "Does the reply show the customer part of the prompt the app sent the model?"
+  Not broken in any of the 33 conversations that asked it, at most 10% would fail: "Does the reply break this rule of the product: Cite the lesson a fact comes from."
   and 9 more checks; findings numbers lists every check.
 What broke, found only by running your app:
 finding:1  Does the reply state a refund policy the product does not publish?
@@ -182,7 +182,7 @@ What was not measured, and why:
 Your app answered on gpt-4o-mini. The run took 7 min 32 s and spent $0.41 on your key over 214 model calls.
 Replies took 3.1 s at the median and 11.4 s at the slowest, over 138 replies.
 3 of 4 tools your app offers its model ran; never ran: open_ticket.
-Once production is connected, the next run opens with what your real customers ask, and every production reply is read with these same checks.
+Once production is connected, every production reply is read with these same checks.
 4 findings, 2 settled (enough trials to say each fails at least one visit in five; findings lists them first).
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
@@ -223,12 +223,12 @@ A part marked yours is the app failing: run the request, fix what it shows, then
 
 Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes, then `verify crash:1`: it replays the requests that were out when the app stopped, and the failure is gone only when each comes back 2xx with an answer and the app does not stop again. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
 
-A verify replays the conversations the finding failed on, word for word, and decides with an exact test against those same conversations before the fix. It also replays conversations of the same question kept back from you once, judged against their own noise. The failure is gone, and while production is not connected the verify ends with a line for the person that offers it:
+A verify replays the conversations the finding failed on, word for word, and decides with an exact test against those same conversations before the fix. It also replays conversations of the same question kept back from you once, judged against their own noise. The failure is gone, here and on the conversations kept back from you, and while production is not connected the verify ends with a line for the person that offers it:
 
 ```
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
-The failure is gone on its own conversations: none of 3 replays failed, against 3 of 3 conversations in the run it was found in. On the conversations kept back from you, 1 of 2 failed before the fix, 0 of 2 after: not a fall beyond chance.
+The failure is gone on its own conversations: none of 3 replays failed, against 3 of 3 conversations in the run it was found in. On the conversations kept back from you the failure is gone: 3 of 8 failed before the fix, 0 of 8 after, a fall beyond chance.
 Free: this month's 1 run is used; 55 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
 For the person: the failure in finding:1 is gone on its replays. Connecting production reads every real reply with these same checks; field_connect has the steps.
 For the person: the report is at https://cortad.com/lab

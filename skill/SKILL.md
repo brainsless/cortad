@@ -39,7 +39,7 @@ The tools are the `cortad` MCP tools. Where they are missing, each one is `npx {
 
 ## The first run: the baseline
 
-The first finished run on a repository prints its baseline, in this order: one line on what ran; who the users are, as the read found them in the code, with how many of each one's conversations got what they came for; the journeys and how each went, with the checks that failed most there; what held in every conversation that asked it; what broke, found only by running the app, each with its file and line; what a code review would also find; what was not measured and why; one line on production.
+The first finished run on a repository prints its baseline, in this order: one line on what ran; who the users are, as the read found them in the code, with how many of each one's conversations got what they came for; the journeys and how each went, with the checks that failed most there; what was never broken in any conversation that asked it; what broke, found only by running the app, each with its file and line; what a code review would also find; what was not measured and why; one line on production.
 
 How to read it:
 
@@ -47,7 +47,7 @@ How to read it:
 - "Got what they came for" is read at each conversation's last reply, in full or in part.
 - What broke was found by simulated customers who write the way the read says that user writes and answer each reply as it comes. Each finding carries its reach, the exchange (`Sent`, `Broke on`, `Then`) and where the fix belongs.
 - A hand-written script sends the requests someone wrote and checks the strings they expected. The exchange shows whether a finding took a customer who pressed, came back or wrote their own way; say which findings a script would also have caught.
-- What held is measured too: a check no conversation broke, asked often enough that its interval tops out under one in five.
+- What was never broken is measured too: a check no conversation broke, asked often enough that its interval tops out under one in five, and never one that names a tool no conversation ran.
 - "What was not measured, and why" is what this run says nothing about.
 - Some conversations are kept back from you; a verify replays them too, so a fix is graded on conversations you have not read.
 
@@ -75,7 +75,7 @@ The trials, checks, seeds and the conversations kept back belong to Cortad, and 
 
 After the fixes, a second run measures the app again and each finding's question is paired with the first run's.
 
-Production comes up after the first run. A verify whose failure is gone, while production is not connected, ends with a "For the person" line that offers it; the plan line after a run names the production replies the plan above reads, and a spent plan's answer says whether production is connected. `field_connect` gives the steps; the owner creates the key in the browser. `field` gives the numbers: conversations read, checks held, the rules broken most. Message text stays out.
+Production comes up after the first run. A verify whose failure is gone, and gone or less often on the conversations kept back from you, while production is not connected, ends with a "For the person" line that offers it; the plan line after a run names the production replies the plan above reads, and a spent plan's answer says whether production is connected. `field_connect` gives the steps; the owner creates the key in the browser. `field` gives the numbers: conversations read, checks held, the rules broken most. Message text stays out.
 
 ## Making it stick
 
