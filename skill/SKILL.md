@@ -25,7 +25,7 @@ The connect command ends with "Go back to the browser".
 
 1. The connect command says whether it started the app and the port to send requests to. If it says the app did not start, fix what it names and save; it starts the app again by itself. Requests are seen in an app the command started, or at the port it says to send them to.
 2. Send one real request to each endpoint that reaches the model, the way the app's own client does: its route, its body, its sign-in. On a chat, send a second message in the same conversation. When `status` asks for a request signed in as another customer, send it: each customer you sign in as becomes an account of its own in the run.
-3. `status` then shows what Cortad read (rules, journeys, simulated users, endpoints, standards) and each endpoint your requests reached with what it did inside the app: the model and how many calls a request made, the seconds a reply took, which of the rules read from the code the prompts carried, the tools that ran, the passages handed to the model, and problems a line of code decides, at their file and line. Endpoints the read found that no request reached are listed apart. The line `A run on the proven endpoints:` says how many conversations, about how long and about what it costs on the app's own key; any `Run is held` line says whose side it is on.
+3. `status` then shows what Cortad read (rules, journeys, simulated users, endpoints, standards) and each endpoint your requests reached with what it did inside the app: the model and how many calls a request made, the seconds a reply took, which of the rules read from the code the prompts carried, the tools that ran, the passages handed to the model, and problems a line of code decides, at their file and line. Endpoints the read found that no request reached are listed apart. The line `A run on the proven endpoints:` says how many conversations, about how long and about what it costs on the app's own key; any `Run waits` line says whose side it is on.
 4. The first run is free. Before it, read `status` for what would make the run measure the setup instead of the app:
    - a service down: a `Problem` line where a retrieval got no answer, or a tool came back as an error;
    - a request that ended on a tool call: `The request ended right after ... ran: no model call came after it`, which every conversation on that endpoint would repeat;
@@ -41,7 +41,7 @@ The connect command ends with "Go back to the browser".
 
 ## The first run: the baseline
 
-The first finished run on a repository prints its baseline, in this order: one line on what ran; who the users are, as the read found them in the code, with how many of each one's conversations got what they came for; the journeys and how each went, with the checks that failed most there; the checks no conversation broke; what broke, found only by running the app, each with its file and line; what a code review would also find; what was not measured and why; one line on production.
+The first finished run on a repository prints its baseline, in this order: one line on what ran; who the users are, as the read found them in the code, with how many of each one's conversations got what they came for; the journeys and how each went, with the checks that failed most there; the checks no conversation broke; what broke, found only by running the app, each with its file and line; what a code review would also find; what the numbers leave out and why; one line on production.
 
 How to read it:
 
@@ -49,8 +49,8 @@ How to read it:
 - "Got what they came for" is read at each conversation's last reply, in full or in part.
 - What broke was found by simulated customers who write the way the read says that user writes and answer each reply as it comes. Each finding carries its reach, the exchange (`Sent`, `Broke on`, `Then`) and where the fix belongs.
 - A hand-written script sends the requests someone wrote and checks the strings they expected. The exchange shows whether a finding took a customer who pressed, came back or wrote their own way; say which findings a script would also have caught.
-- What held is measured too: a check no conversation broke, asked often enough that its interval tops out under one in five, leaving out any that names a tool no conversation ran.
-- "What was not measured, and why" is what this run says nothing about.
+- What passed is measured too: a check no conversation broke, asked often enough that its interval tops out under one in five, leaving out any that names a tool no conversation ran.
+- "What the numbers leave out, and why" is what this run says nothing about.
 - Some conversations are kept back from you; a verify replays them too, so a fix is graded on conversations you have not read.
 
 Tell the person what the run found and what it did not, with the numbers as printed.
@@ -78,7 +78,7 @@ The trials, checks, seeds and the conversations kept back belong to Cortad, and 
 After the fixes, `run` again. It plays what your changes since the last full run reach: those conversations again, each paired with its earlier self, and 8 to 12 new ones written for the change; it says what it left out. Its text leads with what moved: each behavior's failing count before and now, whether that is beyond chance, and the conversation that turned. Worse comes first.
 
 
-Production comes up after the first run. A verify whose failure is gone, and gone or less often on the conversations kept back from you, while production is not connected, ends with a "For the person" line that offers it; the plan line after a run names the production replies the plan above reads, and a spent plan's answer says whether production is connected. `field_connect` gives the steps; the owner creates the key in the browser. `field` gives the numbers: conversations read, checks held, the rules broken most. Message text stays out.
+Production comes up after the first run. A verify whose failure is gone, and gone or less often on the conversations kept back from you, while production is not connected, ends with a "For the person" line that offers it; the plan line after a run names the production replies the plan above reads, and a spent plan's answer says whether production is connected. `field_connect` gives the steps; the owner creates the key in the browser. `field` gives the numbers: conversations read, checks passed, the rules broken most. Message text stays out.
 
 ## Making it stick
 

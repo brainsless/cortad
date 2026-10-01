@@ -664,7 +664,7 @@ const ownFolder = (dir) => { try { const at = realpathSync(dir); return at === r
 // carries it to the verbs, and the screen gets the app's own words beside it.
 function whyNot(up) {
   const h = up.held;
-  if (h) return `port ${h.port} is held by another program (pid ${h.pid}${h.command ? `, ${h.command}` : ""}), so your app cannot listen there${up.fixed ? "; your app sets that port in its own code, so it cannot be moved" : ""}. Stop that program, then save a file here: your app is started again by itself.`;
+  if (h) return `port ${h.port} is in use by another program (pid ${h.pid}${h.command ? `, ${h.command}` : ""}), so your app cannot listen there${up.fixed ? "; your app sets that port in its own code, so it cannot be moved" : ""}. Stop that program, then save a file here: your app is started again by itself.`;
   const wrongNode = pinned.major && !pinned.bin ? ` This project pins Node ${pinned.major} and this shell runs Node ${shellNode}: switch to ${pinned.major}.` : "";
   return `${up.exited !== null ? "your app stopped before it answered" : "your app did not answer within three minutes"}.${wrongNode} Fix it and save a file here: your app is started again by itself.`;
 }
