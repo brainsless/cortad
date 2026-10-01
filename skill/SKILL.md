@@ -54,16 +54,16 @@ Take the person through them worst first, each with its file and line. A long li
 Each finding says what a verify of it replays and how many clean replays would show the failure gone.
 
 1. One change, in the file and near the line the finding names.
-2. `verify <findingId>`. It replays the trials the finding failed on, word for word, against the saved edit; Cortad starts the app again first when its code changed. Undecided after a round, it replays them again by itself, and `run_status` follows every round under the same id. A `crash:N` finding replays the requests that were out when the app stopped; it is gone only when every one comes back 2xx with an answer and the app does not stop.
-3. Read the verify's text. Replies the app refused or failed on the replay come first: a change that broke the endpoint shows there. Then one of these:
-   - `The failure is gone`: no replay failed; the fix stays.
-   - `The failure shows less often but is not gone` or `The failure stayed`: look again at the reply it quotes and decide what to change next.
-   - `Cannot tell yet`: the change stays; it says how many more clean replays would decide, or why it stopped.
-
-   The change is undone only when the held-out line says the fix broke it there; the next change then aims at the behavior the question asks about.
+2. `verify <findingId>`. It replays the conversations the finding failed on, word for word, against the saved edit; Cortad starts the app again first when its code changed. Undecided after a round, it replays them again by itself, and `run_status` follows every round under the same id. A `crash:N` finding replays the requests that were out when the app stopped; it is gone only when every one comes back 2xx with an answer and the app does not stop.
+3. Read the verify's text. Replies the app refused or failed on the replay come first: a change that broke the endpoint shows there. A verify also replays conversations kept back from you, and where they disagree with the finding's own, the first sentence names both.
+   - `made the failure worse on the conversations kept back from you`, anywhere: undo the change, whatever its own conversations did. The next change aims at the behavior the question asks about.
+   - `is gone on the conversations kept back from you` while its own conversations still fail: the fix stays. Read the conversations it quotes as still failing beside what they said before the fix; a reply that changed, or `The reason changed`, is another problem to fix next.
+   - `The failure is gone on its own conversations`: none of them failed; the fix stays.
+   - `The failure shows less often but is not gone` or `The failure stayed`: read the conversations it quotes beside what they said before the fix, and decide what to change next.
+   - `Cannot tell yet`: the change stays; it says how many more clean conversations would decide, or why it stopped.
 4. Then the next finding.
 
-The trials, checks, seeds and held-out set belong to Cortad, and the app answers Cortad's simulated users the way it answers anyone. A number moves when the app's behavior moves.
+The trials, checks, seeds and the conversations kept back belong to Cortad, and the app answers Cortad's simulated users the way it answers anyone. A number moves when the app's behavior moves.
 
 ## The second run
 

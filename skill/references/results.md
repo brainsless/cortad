@@ -106,8 +106,9 @@ The plan is spent, and nothing ran:
 ```
 Refused: 1 of 1 run used on the Free plan.
 Last run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: 3 findings, 51 of 51 trials played.
-1 fix verified since that run:
-  apps/api/src/agent/prompt.ts:41 (finding:1): gone; 0 of 3 replays failed, against 3 of 3 before.
+2 fixes verified since that run:
+  apps/api/src/agent/prompt.ts:41 (finding:1): gone; 0 of 3 replays failed, against 3 of 3 before; on the conversations kept back from you, 1 of 2 failed before, 0 of 2 after, not beyond chance.
+  apps/api/src/agent/system.ts:12 (finding:2): gone; 0 of 7 replays failed, against 4 of 4 before; the fix made the failure worse on the conversations kept back from you (0 of 8 failed before, 6 of 8 after).
 The next run would play 58 trials, 7 held out, 5 new from the changes.
 The Hobby plan, $99 a month, includes 10 runs.
 Production: not connected.
@@ -141,7 +142,7 @@ finding:1  Does the reply state a refund policy the product does not publish?
   Fix in the routing: the reply was written at apps/api/src/agent/answer.ts:58 with no tool after apps/api/src/agent/route.ts:22 chose where the ask went; the fix is that choice, so this ask reaches a step with the tool.
   Sent: "Can I get my money back if I cancel this week?"
   Broke on: "Yes, refunds are processed within 3 business days."
-  A verify replays its 9 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
+  A verify replays its 9 failing conversations word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 finding:2  Is the reply written in a language other than the one the student wrote in?
   Reach: failed in 4 of 6 trials, 30% to 90% of trials.
   Harm: tone.
@@ -151,7 +152,7 @@ finding:2  Is the reply written in a language other than the one the student wro
   Fix in the prompt: the model wrote this with its instructions in hand; the fix is the prompt at apps/api/src/agent/system.ts:12.
   Sent: "¿Me ayudas con esta ecuación? 2x + 3 = 11"
   Broke on: "Sure! Let's solve this together."
-  A verify replays its 4 failing trials. 2 clean replays show it gone.
+  A verify replays its 4 failing conversations. 2 clean replays show it gone.
 Pressed by the customer, it gave way in 4 of 22 trials.
 Open gates, found by knocking your app's routes:
 access:1  GET /api/admin/students answered 200 to a request with no sign-in; it should have refused.
@@ -200,34 +201,44 @@ A part marked yours is the app failing: run the request, fix what it shows, then
 
 Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes, then `verify crash:1`: it replays the requests that were out when the app stopped, and the failure is gone only when each comes back 2xx with an answer and the app does not stop again. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
 
-A verify replays the trials the finding failed on, word for word, and decides with an exact test against those same trials before the fix. The failure is gone:
+A verify replays the conversations the finding failed on, word for word, and decides with an exact test against those same conversations before the fix. It also replays conversations of the same question kept back from you once, judged against their own noise. The failure is gone:
 
 ```
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
-The failure is gone on its own trials: none of 3 replays failed, against 3 of 3 trials in the run it was found in. Held out, the same question in situations you cannot see: 1 of 2 trials failed before, 0 of 2 replayed after.
+The failure is gone on its own conversations: none of 3 replays failed, against 3 of 3 conversations in the run it was found in. On the conversations kept back from you, 1 of 2 failed before the fix, 0 of 2 after: not a fall beyond chance.
 Free: this month's 1 run is used; 55 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
 
-Undecided after a round, it replays the failing trials again by itself. The call keeps following it; the id stays the same:
+Undecided after a round, it replays the failing conversations again by itself. The call keeps following it; the id stays the same:
 
 ```
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: running, 3 of 3 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
-Cannot tell yet: 1 of 3 replays failed, against 3 of 3 trials in the run it was found in; 1 more clean replay would show it failing less often. Replaying the 3 failing trials again now, round 2.
+Cannot tell yet: 1 of 3 replays failed, against 3 of 3 conversations in the run it was found in; 1 more clean conversation would show it failing less often. After the fix one conversation still failed: conversation 41c2e0b7 said "Refunds are processed within 3 business days of the request." at reply 2, where before the fix it said "Yes, refunds are processed within 3 business days.". Round 2 is playing now: the 3 failing conversations again.
 next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
 ```
 
-A fall beyond chance with some replays still failing is not gone: `The failure shows less often but is not gone: 3 of 20 replays failed, against 12 of 12 trials in the run it was found in, a fall beyond chance.`, with the reply of one that failed quoted.
+A fall beyond chance with some replays still failing is not gone: `The failure shows less often but is not gone: 3 of 20 replays failed, against 12 of 12 conversations in the run it was found in, a fall beyond chance.`, with the conversations still failing quoted beside how they failed before.
 
-The failure stayed. The trials still fail more than the same question does elsewhere in the app, and the reply the replay got is quoted:
+The failure stayed. The conversations still fail more than the same question does elsewhere in the app, and each one still failing is quoted beside what it said before the fix:
 
 ```
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 4 of 4 trials played.
 Verify of finding:4 at apps/api/src/agent/system.ts:12.
-The failure stayed: 4 of 4 replays failed, against 4 of 4 trials in the run it was found in; the same question fails on 3 of 18 trials elsewhere in your app, so these still stand out beyond chance. The replay of trial t-0b19 said at reply 1: "Sure! Let's solve this together."
+The failure stayed: 4 of 4 replays failed, against 4 of 4 conversations in the run it was found in; the same question fails on 3 of 18 conversations elsewhere in your app, so these still stand out beyond chance. After the fix 4 conversations still failed: conversation 0b19a3f2 said "Sure! Let's solve this together." at reply 1, as it did before the fix; conversation 3e8d0c47 said "Sure! Let's solve this together." at reply 1, as it did before the fix; conversation a61f9b05 said "Sure! Let's solve this together." at reply 1, as it did before the fix; and 1 more.
+For the person: the report is at https://cortad.com/lab
+next: findings
+```
+
+Where the conversations kept back from you disagree with the finding's own, the first sentence names both. Here the fix worked: the failure is gone on the conversations kept back, and the ones still failing say something other than they did before, another problem to fix next. A first sentence that says the fix `made the failure worse on the conversations kept back from you` means undo the change, whatever its own conversations did:
+
+```
+Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 43 of 43 trials played.
+Verify of finding:5 at apps/api/src/agent/lessons.ts:58.
+The failure stayed on its own conversations (3 of 35 failed, against 4 of 18 before) and is gone on the conversations kept back from you (3 of 8 failed before the fix, 0 of 8 after, beyond chance). On its own conversations that is not a fall beyond chance. After the fix 3 conversations still failed: conversation e4a1c9d2 said "I don't have this information about your homework plan." at reply 2, where before the fix it said "Let me look up your lesson plan."; conversation f0000000 said "I don't have this information." at reply 1; conversation f0000001 said "I don't have this information." at reply 1. The reason changed: in conversation e4a1c9d2 the reply declined to help, where before the fix the conversation ended without what they asked for.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -237,7 +248,7 @@ Replies refused or failed on the replay come first. A refusal is not an answer, 
 ```
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:2 at backend/tools/refunds.py.
-Your app refused 5 of 5 replays (HTTP 422), so they got no answer: the fix changed what the endpoint accepts. The failure stayed: 5 of 5 replays got no answer, against 5 of 5 trials in the run it was found in; the same question fails on 2 of 16 trials elsewhere in your app, so these still stand out beyond chance.
+Your app refused 5 of 5 replays (HTTP 422), so they got no answer: the fix changed what the endpoint accepts. The failure stayed: 5 of 5 replays got no answer, against 5 of 5 conversations in the run it was found in; the same question fails on 2 of 16 conversations elsewhere in your app, so these still stand out beyond chance.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -262,7 +273,7 @@ finding:1  Does the reply state a refund policy the product does not publish?
   Situation: plan free, journey billing question
   Decided by a model on 2 quoted replies.
   Replay: 12 trials, verify finding:1
-  A verify replays its 9 failing trials word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
+  A verify replays its 9 failing conversations word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 
 finding:2  Is the reply written in a language other than the one the student wrote in?
   Failed in 4 of 6 trials, between 30% and 90% of trials.
@@ -275,7 +286,7 @@ finding:2  Is the reply written in a language other than the one the student wro
   Log: the student wrote in Spanish
   Log: the reply language was detected as English
   Replay: 6 trials, verify finding:2
-  A verify replays its 4 failing trials. 2 clean replays show it gone.
+  A verify replays its 4 failing conversations. 2 clean replays show it gone.
 
 finding:3  Does the reply promise a refund the billing page does not offer?
   Failed in 2 of 7 trials, between 8% and 64% of trials; unsettled: too few trials yet to say it fails in one visit in five.
@@ -286,7 +297,7 @@ finding:3  Does the reply promise a refund the billing page does not offer?
   Situation: plan paid, journey billing question
   Decided by a model on 1 quoted reply.
   Replay: 7 trials, verify finding:3
-  A verify replays its 2 failing trials. 3 clean replays show it gone.
+  A verify replays its 2 failing conversations. 3 clean replays show it gone.
 
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
@@ -326,7 +337,7 @@ Answers like `run`, with the finding named and what it takes to decide:
 
 ```
 Verify of finding:1 started: 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a.
-A verify replays its 3 failing trials word for word, and 2 held-out trials once, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
+A verify replays its 3 failing conversations word for word, and 2 conversations kept back from you once, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
 ```
 
