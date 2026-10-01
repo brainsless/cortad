@@ -1407,7 +1407,7 @@ def _install():
 
         def quiet():
             try:
-                if not req.get("calls_open"):
+                if not req.get("calls_open") and not req.get("waiting"):
                     answered_later(req)
             except Exception:
                 pass
@@ -1898,7 +1898,7 @@ def _install():
                         replied(req, message.get("body") or b"")
                         req["finished"] = not message.get("more_body")
                         if req["finished"] and tied:
-                            tied.replied(req)
+                            tied.replied(req, req.get("status"), lambda: reply_of(req))
                         if sites and not req.get("placed"):
                             sites.sent(req, message, sys._getframe(1), Asgi.__call__.__code__)
                 except Exception:
@@ -1962,7 +1962,7 @@ def _install():
                 except StopIteration:
                     req["finished"] = True
                     if tied:
-                        tied.replied(req)
+                        tied.replied(req, req.get("status"), lambda: reply_of(req))
                     return
                 finally:
                     if token is not None:

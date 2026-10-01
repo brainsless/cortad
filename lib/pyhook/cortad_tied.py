@@ -53,6 +53,16 @@ def _json(raw):
         return None
 
 
+def _sentence(v):
+    return len(v) >= 8 and (any(c.isspace() for c in v) or not v.isascii())
+
+
+# Whether a reply says something of its own, read as the person's words are: an "ok" or an id says nothing.
+def _speaks(text):
+    v = _json(text)
+    return any(_sentence(x) for x in (_scalars(v, []) if v is not None else [str(text or "")]))
+
+
 def _address_ids(req):
     path, _, query = req["path"].partition("?")
     return {v for v in path.split("/") + [v for _, v in parse_qsl(query)] if ID.match(v)}
@@ -79,7 +89,7 @@ class Tied:
 
     # The person's words: a value with a space or a letter outside ASCII, long enough to be a sentence.
     def _words(self, req):
-        return [v for v in _scalars(_json(self.body_of(req)), []) if len(v) >= 8 and (" " in v or not v.isascii())]
+        return [v for v in _scalars(_json(self.body_of(req)), []) if _sentence(v)]
 
     def _says(self, req, prompt):
         return any(self.norm(v) in prompt for v in self._words(req))
@@ -168,17 +178,25 @@ class Tied:
         found = {}
         # Each: the ask, the open fetch to tie to it, and the ids of the session it was reached through.
         # A read of a request already answered later can complete that request's exchange, never be
-        # the one a new call answers.
+        # the one a new call answers. A read stands for a request still working, except for a call that
+        # carries another unsettled request's words and none of its own: that call is the other one's
+        # (a page polling the sender while the next message is worked on). A receipt's fetch carries no
+        # message.
+        def reads(asker):
+            if asker.get("settled"):
+                return False
+            others = list(self.recent) + list(self.open.values())
+            return self._says(asker, prompt) or not any(t is not asker and t["method"] != "GET" and not t.get("settled") and self._says(t, prompt) for t in others)
         for r in list(self.open.values()):
             if r.get("asker"):
-                if not r["asker"].get("settled"):
+                if reads(r["asker"]):
                     found[id(r["asker"])] = (r["asker"], None, r.get("tie") or set())
             # A request whose own context made a model call is served there; a call outside it is not its.
             elif r["method"] != "GET" and (not r.get("noted") or r.get("pinned")) and self._says(r, prompt):
                 found[id(r)] = (r, None, set())
             else:
                 asker = self._asker(r)
-                if asker and not asker[0].get("settled"):
+                if asker and reads(asker[0]):
                     found[id(asker[0])] = (asker[0], (r, asker[1]), asker[1])
         sayers = []
         if not found:
@@ -208,14 +226,17 @@ class Tied:
         _HELD.set(asker)
         return asker
 
-    # A call made for the request has answered or failed: one pinned to it, or one of its own still
-    # waiting (`waiting`: its own calls not done yet, counted while it has not been answered later).
+    # A call made for the request has answered or failed. Each call is counted once, in `waiting` (its
+    # own, while it has not been answered later) or in `calls_open`: the two together are its calls
+    # still running, and one ending takes one off.
     @staticmethod
     def done(req):
-        if req and req.get("pinned"):
-            req["calls_open"] = max(0, req.get("calls_open", 0) - 1)
-        elif req and req.get("waiting"):
+        if not req:
+            return
+        if req.get("waiting"):
             req["waiting"] -= 1
+        else:
+            req["calls_open"] = max(0, req.get("calls_open", 0) - 1)
 
     # A call made in a request's own context: its own, unless the request's reply went out before any
     # model call answered it. Then a loop the request started (a queue drained from its handler) can
@@ -236,14 +257,18 @@ class Tied:
             req["waiting"] = req.get("waiting", 0) + 1
         return req
 
-    # The request's reply has gone out. One whose model calls are still running and none of them has
-    # answered yet (a task the handler started without waiting on it) is answered later, those calls
-    # with it. `heard`: a model call made for it got its response, set as the response arrives, so a
-    # stream the app passes straight on is never taken for one.
+    # The request's reply has gone out, with `status`, and `text()` reads it. One whose reply only took
+    # the message (a 2xx that says nothing of its own) while its model calls are still running and
+    # none of them has answered (a task the handler started without waiting on it) is answered later,
+    # those calls with it. A reply that says something, an apology after a time limit or an error, is
+    # the answer the person got. `heard`: a model call made for it got its response, set as the
+    # response arrives, so a stream the app passes straight on is never taken for one (lib/tied.cjs).
     @staticmethod
-    def replied(req):
+    def replied(req, status, text):
         req["finished"] = True
         if req.get("heard") or req.get("late") or not (req.get("waiting") or req.get("calls_open")):
+            return
+        if not (200 <= int(status or 0) < 300) or _speaks(text()):
             return
         req["late"] = req["pinned"] = True
         req["calls_open"] = req.get("calls_open", 0) + req.get("waiting", 0)
@@ -253,7 +278,7 @@ class Tied:
     # request tied to it came to fetch the answer. It stays where a fetch that comes later can still
     # find it and complete the exchange on a second request, but no call is pinned to it by its words.
     def settled(self, req):
-        if not req or not req.get("late") or not req.get("ended") or req.get("calls_open") or req.get("written") or req.get("settled") or req.get("fetched"):
+        if not req or not req.get("late") or not req.get("ended") or req.get("calls_open") or req.get("waiting") or req.get("written") or req.get("settled") or req.get("fetched"):
             return False
         req["settled"] = req["answered"] = True
         return True
