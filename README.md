@@ -24,11 +24,11 @@ A run needs your app up. If nothing on this machine is holding it, the command s
 To make checking with Cortad part of the repository:
 
 ```
-npx cortad stick     one line in AGENTS.md, CLAUDE.md, .cursor/rules and .github/copilot-instructions.md, and an after-edit hook for Claude Code and Codex
+npx cortad stick     one line in AGENTS.md, CLAUDE.md, .cursor/rules and .github/copilot-instructions.md, and two hooks for Claude Code and Codex
 npx cortad unstick   takes them out
 ```
 
-Both print every file they changed. Neither touches git.
+The hooks run after an edit and on your next message: the first names the prompt and tool files you changed since the last run, and both tell the agent of a run that ended while it was not looking. Both commands print every file they changed. Neither touches git.
 
 ## Flags
 
@@ -41,7 +41,7 @@ Both print every file they changed. Neither touches git.
 
 ## Files it creates
 
-- `~/.cortad/<project>/`     the key, the last tree digest, which process holds your app up, the run it asked for last
+- `~/.cortad/<project>/`     the key, the last tree digest, which process holds your app up, the run it asked for last, and in `news.txt` the line a finished run left for your agent, removed once the agent has it
 - `~/.cortad/identity.key`   the seed for the session's test accounts
 - `$TMPDIR/cortad-<pid>/`    removed on exit
 
