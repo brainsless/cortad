@@ -173,6 +173,37 @@ For the person: the report is at https://cortad.com/lab
 next: findings
 ```
 
+A run after the first one plays what the files changed since the last run that played every conversation reach: those conversations again, each paired with its earlier self, and 8 to 12 new ones written for the change, opening the way production customers did where production is connected. It says what changed, what that reaches, and what it left out. Nothing changed, or no way to tell from this machine: it replays every conversation. While it plays:
+
+```
+Run 9a10b3d2-7c8d-4e9f-8a1b-2c3d4e5f6a7b: running, 9 of 34 trials played.
+Since run 8f2a1c4e, 1 file changed (apps/api/src/agent/prompt.ts), touching the prompt in apps/api/src/agent/prompt.ts. They reach POST /api/chat. This run replays the 22 conversations there from that run, so each pairs with its earlier self, and adds 12 new conversations written for the change on billing question, order tracking (5 of them open the way your production customers did). Left out: 7 conversations on POST /api/homework/upload, which nothing that changed reaches.
+next: run_status 9a10b3d2-7c8d-4e9f-8a1b-2c3d4e5f6a7b
+```
+
+Finished, it leads with what moved: each behavior whose failing count changed on the conversations both runs played, worse before better, whether the move is beyond chance, its file and line, and the conversation that turned, with what it said before and now. The rest is one line, then any new findings on the conversations written for the change, then the run cut open as above:
+
+```
+Run 9a10b3d2-7c8d-4e9f-8a1b-2c3d4e5f6a7b: finished, 34 of 34 trials played.
+"Does the reply state a refund policy the product does not publish?" went from 7 failing to 0 of 22. 12 new conversations on billing question, order tracking: nothing else broke.
+Since run 8f2a1c4e, 1 file changed (apps/api/src/agent/prompt.ts), touching the prompt in apps/api/src/agent/prompt.ts. They reach POST /api/chat. This run replays the 22 conversations there from that run, so each pairs with its earlier self, and adds 12 new conversations written for the change on billing question, order tracking (5 of them open the way your production customers did). Left out: 7 conversations on POST /api/homework/upload, which nothing that changed reaches.
+Better: "Does the reply state a refund policy the product does not publish?" went from 7 failing to 0 of 22 conversations, beyond chance.
+  At apps/api/src/agent/prompt.ts:41
+  Conversation 41c2e0b7, sent: "Can I get my money back if I cancel this week?"
+    Before: "Yes, refunds are processed within 3 business days."
+    Now: "I can't confirm a refund policy here; the billing page has the current terms."
+Better: "Does the reply answer in the language the student wrote in?" went from 2 failing to 1 of 22 conversations, not beyond chance at this count.
+  At apps/api/src/agent/system.ts:12
+31 other behaviors did not move on the conversations both runs played; 2 of them fail in both.
+Your app answered on gpt-4o-mini. The run took 3 min 8 s and spent $0.19 on your key over 96 model calls.
+Replies took 2.9 s at the median and 9.8 s at the slowest, over 81 replies.
+Nothing broke that only running your app could show.
+The next run is compared with run 8f2a1c4e, the last run that played every conversation, with everything that changed since then in its scope.
+Hobby: 8 of 10 runs left this month; 560 verify trials left.
+For the person: the report is at https://cortad.com/lab
+next: status
+```
+
 Stopped early. Each stop and fault names the side it is on and what comes next:
 
 ```
