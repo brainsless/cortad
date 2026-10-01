@@ -412,9 +412,14 @@ async function verb(job) {
       // a reply is waited on for three of them. A run that says nothing gets the old 170 seconds.
       const holdMs = Math.min(Math.max(Number(b.waitMs) || 170_000, 1_000), 630_000);
       const began = Date.now();
+      // The trial's own cookies take the place of the captured ones of the same name: a session your
+      // app keys its conversation on is this trial's, never the one every trial was handed at capture.
+      const cookieAt = Object.keys(headers).find((k) => k.toLowerCase() === "cookie");
+      const { [cookieAt ?? ""]: given = "", ...cookieless } = headers;
+      const cookie = () => [...new Map([...given.split(/;\s*/), ...jar.split(/;\s*/)].filter(Boolean).map((pair) => [pair.split("=")[0].trim(), pair])).values()].join("; ");
       const sent = (at, over = {}) => fetch(at, {
         ...init, ...over,
-        headers: { ...headers, ...(over.headers ?? {}), ...(jar ? { cookie: [headers.cookie, jar].filter(Boolean).join("; ") } : {}) },
+        headers: { ...(jar ? cookieless : headers), ...(over.headers ?? {}), ...(jar ? { cookie: cookie() } : {}) },
         signal: AbortSignal.any([letGo, AbortSignal.timeout(holdMs)]),
       });
       const keep = (res) => {
