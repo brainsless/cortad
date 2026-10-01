@@ -193,6 +193,8 @@ For the person: the report is at https://cortad.com/lab
 next: findings
 ```
 
+A finding whose breaks have the same cause as an earlier finding (the request ended on the same tool, or the same call's output cap) prints `Same cause as finding:1: one fix covers both. Verify finding:1 after it; the next run counts this one.` in place of its fix and verify lines.
+
 A run after the first one plays what the files changed since the last run that played every conversation reach: those conversations again, each paired with its earlier self, and 8 to 12 new ones written for the change, opening the way production customers did where production is connected. It says what changed, what that reaches, and what it left out. Nothing changed, or no way to tell from this machine: it replays every conversation. While it plays:
 
 ```
