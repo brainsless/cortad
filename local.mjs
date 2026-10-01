@@ -27,7 +27,7 @@ import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawn
 import { claimRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
 import { registerAll } from "./lib/register.mjs";
 import { secretValues } from "./lib/env-secrets.mjs";
-import { finished } from "./lib/text.mjs";
+import { finished, unseenText } from "./lib/text.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
 import { CAPTURED, makeCapture } from "./lib/replay.mjs";
@@ -259,10 +259,10 @@ let capture = null;
 let proxy = null;
 // The port the run and the agent send to: the proxy's front when there is one, else the app's own.
 const doorPort = () => proxy?.port ?? app?.port;
-// A request reached the app and no model call came through the proxy yet.
-let unseen = false;
+// The request the app answered in words while no model call came through the proxy, as "POST /chat".
+let unseen = "";
 // The runner's record of where to send: the front, with the app's own port beside it.
-const upAt = (port = app?.port) => (proxy ? { port: proxy.port, proxied: port, ...(unseen && !proxy.seen() ? { unseen: true } : {}) } : { port });
+const upAt = (port = app?.port) => (proxy ? { port: proxy.port, proxied: port, ...(unseen && !proxy.seen() ? { unseen } : {}) } : { port });
 // The app's life, shared by the code that starts it, watches it and restarts it.
 let closing = false;
 let restarting = false;
@@ -399,7 +399,9 @@ async function verb(job) {
       // the session your app just handed out. The cookie is kept here and never leaves this machine.
       // Through the proxy's front when there is one, which is where the request is seen.
       const url = proxy ? `http://127.0.0.1:${proxy.port}${path}` : hostUrl(port, path);
-      const yours = (to) => { try { const u = new URL(to, url); return ["127.0.0.1", "::1", "[::1]", "localhost"].includes(u.hostname) && u.port === new URL(url).port ? u.href : null; } catch { return null; } };
+      // An address the app wrote from its own port, as an app that keeps its address in its settings
+      // does, is followed through the front as well.
+      const yours = (to) => { try { const u = new URL(to, url); return ["127.0.0.1", "::1", "[::1]", "localhost"].includes(u.hostname) && [new URL(url).port, String(app.port)].includes(u.port) ? new URL(u.pathname + u.search, url).href : null; } catch { return null; } };
       // Each trial keeps the cookies your app set on its own earlier turns, so a conversation your app
       // holds in a cookie carries from one turn to the next and never into another trial.
       const trial = turn.replace(/:\d+$/, "");
@@ -730,7 +732,7 @@ let pinned = { major: null, bin: null };
 // way the app is started comes through here, so it is fixed in one place.
 async function launch(waitMs) {
   let up = await start(waitMs);
-  if (up.port && !proxy && !(await hookedAt(up.port))) up = await startProxied(up.port, waitMs);
+  if (up.port && !proxy && !(await hookedAt(up.port))) up = await startProxied(up, waitMs);
   // Only an app that stopped: one still running has not failed to start, whatever it printed.
   if (up.port || up.exited === null) return up;
   if (await keeping.backUp(app?.port).finally(release)) {
@@ -756,16 +758,19 @@ async function useProxy() {
   proxy = await openProxy({
     file: capture.file, rulesFile: capture.rulesFile, target: () => ({ host: appHost, port: app?.port }),
     onSeen: () => { forgetTold?.(); noted(); },
-    onUnseen: () => { unseen = true; noted(); say(UNSEEN); },
+    onUnseen: (door) => { unseen = door; noted(); say(unseenText(door)); },
   });
   say("your app's model calls are seen through a local proxy on this machine, so the line of code that made each call is not known. During a run, its calls to other services go out as they would for a real customer: a conversation that books, charges or emails does it for real");
 }
-const UNSEEN = "a request reached your app and no model call came through the proxy. If your app sets its model's address in its code, have it read OPENAI_BASE_URL (or ANTHROPIC_BASE_URL or GOOGLE_GEMINI_BASE_URL), then save";
-// The app answered, and the hook is not in it: it is started again with its model settings on the proxy.
-async function startProxied(port, waitMs) {
+// An app run in a container: the proxy's settings never reach it, and 127.0.0.1 inside it is not this machine.
+const IN_CONTAINER = /^\s*(?:sudo\s+)?(?:docker|podman)(?:-compose)?\b/;
+// The app answered, and the hook is not in it: it is started again with its model settings on the
+// proxy. One in a container would come back the same, so it is left up, seen at the front alone.
+async function startProxied(up, waitMs) {
   await useProxy();
+  if (IN_CONTAINER.test(launched?.cmd ?? "")) return up;
   await stopTree(child.pid);
-  for (let i = 0; i < 75 && (await listenerOn(port)); i++) await new Promise((r) => setTimeout(r, 200));
+  for (let i = 0; i < 75 && (await listenerOn(up.port)); i++) await new Promise((r) => setTimeout(r, 200));
   return start(waitMs);
 }
 let installed = false;
