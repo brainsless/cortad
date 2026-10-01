@@ -39,7 +39,7 @@ The tools are the `cortad` MCP tools. Where they are missing, each one is `npx {
 
 ## The first run: the baseline
 
-The first finished run on a repository prints its baseline, in this order: one line on what ran; who the users are, as the read found them in the code, with how many of each one's conversations got what they came for; the journeys and how each went, with the checks that failed most there; what was never broken in any conversation that asked it; what broke, found only by running the app, each with its file and line; what a code review would also find; what was not measured and why; one line on production.
+The first finished run on a repository prints its baseline, in this order: one line on what ran; who the users are, as the read found them in the code, with how many of each one's conversations got what they came for; the journeys and how each went, with the checks that failed most there; the checks no conversation broke; what broke, found only by running the app, each with its file and line; what a code review would also find; what was not measured and why; one line on production.
 
 How to read it:
 
@@ -47,7 +47,7 @@ How to read it:
 - "Got what they came for" is read at each conversation's last reply, in full or in part.
 - What broke was found by simulated customers who write the way the read says that user writes and answer each reply as it comes. Each finding carries its reach, the exchange (`Sent`, `Broke on`, `Then`) and where the fix belongs.
 - A hand-written script sends the requests someone wrote and checks the strings they expected. The exchange shows whether a finding took a customer who pressed, came back or wrote their own way; say which findings a script would also have caught.
-- What was never broken is measured too: a check no conversation broke, asked often enough that its interval tops out under one in five, and never one that names a tool no conversation ran.
+- What held is measured too: a check no conversation broke, asked often enough that its interval tops out under one in five, leaving out any that names a tool no conversation ran.
 - "What was not measured, and why" is what this run says nothing about.
 - Some conversations are kept back from you; a verify replays them too, so a fix is graded on conversations you have not read.
 
