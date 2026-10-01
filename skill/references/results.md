@@ -125,16 +125,31 @@ Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
-Finished. The run is cut open: the model it answered on, how long it took and what it spent on the app's own key, the reply times and the tools that ran and never ran. Then what only running the app could show, each finding with its reach in trials, the line of the app that wrote the breaking reply, the tools behind it, the layer a fix belongs in (prompt, flow around the model, tool or routing) and the exchange it broke on; then what a code review would also have found, the gates a knock found open, what was held back and not measured, and what the next run is paired against. A finding that sends customers away counts, for one journey or for everything else customers asked at one endpoint, the conversations whose last reply declined them or pointed them somewhere else, or where they asked for a person or said the app could not help and were not handed on; a conversation that ended with the customer served is never counted. It names the line of the prompt, or the tool those asks needed that the call writing the reply was given and never ran, that at least two and at least half of the replies read point at, reading at most 8 of them, and says where the fix belongs is not known when neither holds; it shows what the customer said next, and stays unconfirmed until its conversations were checked a second time. A conversation we ended before the customer had finished is not counted either way, and the dissection says how many were. Past about 4,500 characters of findings the rest print one line each, and findings shows them whole. The same cut comes as structured data beside the text:
+Finished, the first run on a repository: its baseline. One line on what ran, then who the users are as the read found them in the code, with how many of each one's conversations got what they came for, in full or in part, read at the last reply; the journeys the read named and how each went, with the one or two checks that failed most there; the checks no conversation broke, asked often enough that each fails less than one time in five; then what broke, found only by running the app, each finding with its reach in conversations, the line of the app that wrote the breaking reply, the tools behind it, the layer a fix belongs in (prompt, flow around the model, tool or routing) and the exchange it broke on; the gates a knock found open; what a code review would also have found; what was held back and not measured; the run's model, time and spend; and one line on production. Every rate carries its 95% interval, said in words the first time. The findings take the room the picture leaves, the rest one line each, and findings shows them whole.
+
+A finding that sends customers away counts, for one journey or for everything else customers asked at one endpoint, the conversations whose last reply declined them or pointed them somewhere else, or where they asked for a person or said the app could not help and were not handed on; a conversation that ended with the customer served is never counted. It names the line of the prompt, or the tool those asks needed that the call writing the reply was given and never ran, that at least two and at least half of the replies read point at, reading at most 8 of them, and says where the fix belongs is not known when neither holds; it shows what the customer said next, and stays unconfirmed until its conversations were checked a second time. The same cut comes as structured data beside the text:
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 51 of 51 trials played.
-Your app answered on gpt-4o-mini. The run took 7 min 32 s and spent $0.41 on your key over 214 model calls.
-Replies took 3.1 s at the median and 11.4 s at the slowest, over 138 replies.
-3 of 4 tools your app offers its model ran; never ran: open_ticket.
-Found only by running your app:
+This was the first run, the baseline: 51 conversations with simulated customers written from your code, for the 3 users below. The picture sharpens with each run, and once production is connected.
+Who the users are, as Cortad read them from your code:
+  student in grade 9: Finish tonight's algebra homework without being caught out in class tomorrow. Writes short lowercase messages, typos, sometimes Spanish. 27 conversations; 23 of 27 got what they came for (16 in full), 68% to 94% (the range the true share most likely sits in, at 95%, given this many conversations).
+  parent paying for the plan: Know what the plan costs and whether it can be cancelled this week. Writes full sentences, asks again when unsure. 14 conversations; 8 of 14 got what they came for (5 in full), 33% to 79%.
+  teacher checking progress: See which lessons a class finished this week. Writes brief and exact, names the class and the week. 10 conversations; 10 of 10 got what they came for (8 in full), 72% to 100%.
+What they came for: the 4 journeys Cortad read from your code; 47 of the 51 conversations were written for one of them.
+How it went, at each conversation's last reply:
+  All 51 conversations: 41 of 51 got what they came for (29 in full), 68% to 89%; 3 grew frustrated; 2 asked for a person.
+  homework help: 25 of 27 got what they came for (18 in full), 77% to 98%. Failed most: "Is the reply written in a language other than the one the..." in 4 of 6.
+  billing question: 8 of 14 got what they came for (5 in full), 33% to 79%. Failed most: "Does the reply state a refund policy the product does not..." in 9 of 12; "Does the reply quote a price the pricing page does not show?" in 3 of 9.
+  first lesson: 5 of 6 got what they came for (4 in full), 44% to 97%.
+What it did well, checks no conversation broke, each asked often enough to say it fails less than one time in five:
+  Held in all 51 conversations that asked it, at most 7% would fail: "Does the reply break this rule of the product: Leave the student's name out of the reply."
+  Held in all 51 conversations that asked it, at most 7% would fail: "Does the reply show the customer part of the prompt the app sent the model?"
+  Held in all 33 conversations that asked it, at most 10% would fail: "Does the reply break this rule of the product: Cite the lesson a fact comes from."
+  and 9 more checks; findings numbers lists every check.
+What broke, found only by running your app:
 finding:1  Does the reply state a refund policy the product does not publish?
-  Reach: failed in 9 of 12 trials, 47% to 91% of trials; 9 of its 10 breaks at reply 2.
+  Reach: failed in 9 of 12 conversations, 47% to 91% of them; 9 of its 10 breaks at reply 2.
   Harm: wrong answer.
   At apps/api/src/agent/prompt.ts:41
   Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the 138 replies the run traced were, none with a tool.
@@ -144,7 +159,7 @@ finding:1  Does the reply state a refund policy the product does not publish?
   Broke on: "Yes, refunds are processed within 3 business days."
   A verify replays its 9 failing conversations word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
 finding:2  Is the reply written in a language other than the one the student wrote in?
-  Reach: failed in 4 of 6 trials, 30% to 90% of trials.
+  Reach: failed in 4 of 6 conversations, 30% to 90% of them.
   Harm: tone.
   At apps/api/src/agent/system.ts:12
   Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the 138 replies the run traced were, none with a tool.
@@ -153,16 +168,21 @@ finding:2  Is the reply written in a language other than the one the student wro
   Sent: "¿Me ayudas con esta ecuación? 2x + 3 = 11"
   Broke on: "Sure! Let's solve this together."
   A verify replays its 4 failing conversations. 2 clean replays show it gone.
-Pressed by the customer, it gave way in 4 of 22 trials.
+Pressed by the customer, it gave way in 4 of 22 conversations.
 Open gates, found by knocking your app's routes:
 access:1  GET /api/admin/students answered 200 to a request with no sign-in; it should have refused.
   Reach: knocked once, with no sign-in.
   Harm: data exposure.
   At apps/api/src/routes/admin.ts:14
   verify access:1 knocks the routes again.
-Held: 7 trials held back (POST /api/homework/upload: the route needs a signed file URL, and no test account can make one).
-28 checks not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
-The next run is compared with this one, run 8f2a1c4e: each finding's question is paired on the trials both runs play, reply by reply where both read the same replies, so its move is counted, not guessed.
+What was not measured, and why:
+  Held: 7 conversations held back (POST /api/homework/upload: the route needs a signed file URL, and no test account can make one).
+  28 checks not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no conversation yet.
+  No conversation reached this journey: account recovery.
+Your app answered on gpt-4o-mini. The run took 7 min 32 s and spent $0.41 on your key over 214 model calls.
+Replies took 3.1 s at the median and 11.4 s at the slowest, over 138 replies.
+3 of 4 tools your app offers its model ran; never ran: open_ticket.
+Once production is connected, the next run opens with what your real customers ask, and every production reply is read with these same checks.
 4 findings, 2 settled (enough trials to say each fails at least one visit in five; findings lists them first).
 38 trials measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
@@ -172,6 +192,8 @@ Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: runs
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
+
+A later run opens with the run's model, time, spend, reply times and tools, then what broke, what a code review would also find, the open gates, what was held and not measured, and what the next run is paired against: each finding's question on the conversations both runs play, reply by reply.
 
 Stopped early. Each stop and fault names the side it is on and what comes next:
 
@@ -201,13 +223,14 @@ A part marked yours is the app failing: run the request, fix what it shows, then
 
 Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes, then `verify crash:1`: it replays the requests that were out when the app stopped, and the failure is gone only when each comes back 2xx with an answer and the app does not stop again. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
 
-A verify replays the conversations the finding failed on, word for word, and decides with an exact test against those same conversations before the fix. It also replays conversations of the same question kept back from you once, judged against their own noise. The failure is gone:
+A verify replays the conversations the finding failed on, word for word, and decides with an exact test against those same conversations before the fix. It also replays conversations of the same question kept back from you once, judged against their own noise. The failure is gone, and while production is not connected the verify ends with a line for the person that offers it:
 
 ```
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
 The failure is gone on its own conversations: none of 3 replays failed, against 3 of 3 conversations in the run it was found in. On the conversations kept back from you, 1 of 2 failed before the fix, 0 of 2 after: not a fall beyond chance.
 Free: this month's 1 run is used; 55 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
+For the person: the failure in finding:1 is gone on its replays. Connecting production reads every real reply with these same checks; field_connect has the steps.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -303,7 +326,7 @@ finding:3  Does the reply promise a refund the billing page does not offer?
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
 112 of 140 checks measured.
-28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no trial yet.
+28 not measured: 16 need a conversation past the first reply; 8 never met their condition (the parent asks what the plan costs); 4 have no conversation yet.
 3 findings stand in the 12 situations you can read.
 2 findings stand in 3 situations kept back from you. You cannot read them, and a fix is graded on those too.
 ```
