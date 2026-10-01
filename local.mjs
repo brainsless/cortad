@@ -1185,7 +1185,9 @@ for (let off = 0; off < bytes.length; off += PART) {
 stepDone(moved ? "connected · your change is in; the read from before stands" : resumed ? "connected · nothing changed since last time" : "connected");
 // The coding agents on this machine learn about Cortad now, once: an MCP entry and a skill in each
 // one's own home folder. A run started by an agent later comes back through lib/cli.mjs.
-if (!viaToken) {
+// CORTAD_NO_REGISTER=1 leaves the coding agents' global skill and MCP entries alone: a stack under
+// test on this machine must never repoint the person's own agents at an unpublished build.
+if (!viaToken && process.env.CORTAD_NO_REGISTER !== "1") {
   const added = await registerAll().catch((err) => { if (verbose) say(`could not register with your coding agents: ${err?.message ?? err}`); return []; });
   if (added.length) say(`added to ${added.join(", ")} · ask ${added.length === 1 ? "it" : "them"} for cortad any time`);
 }
