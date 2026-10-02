@@ -10,7 +10,7 @@ Right after a connect, before the read is done:
 
 ```
 Cortad · tutor-app
-Free: 1 of 1 run left this month; 60 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
+Free: 1 of 1 run left this month; 60 verify trials left. Pro $99 a month: runs and reruns included, 100,000 production replies read.
 App: Your app is starting on this machine.
 No run yet.
 Production: not connected.
@@ -20,7 +20,7 @@ After the agent sent one real request to each endpoint that reaches the model, t
 
 ```
 Cortad · tutor-app
-Free: 1 of 1 run left this month; 60 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
+Free: 1 of 1 run left this month; 60 verify trials left. Pro $99 a month: runs and reruns included, 100,000 production replies read.
 App: Your app answered on port 3100.
 Endpoints your own requests proved (1):
   POST /api/chat: 2 requests reached gpt-4o-mini, 2 model calls each, 3.1 seconds a reply.
@@ -41,7 +41,7 @@ Once a run is playing, the read and the run:
 
 ```
 Cortad · tutor-app
-Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
+Free: this month's 1 run is used; 60 verify trials left. Pro $99 a month: runs and reruns included, 100,000 production replies read.
 App: Your app answered on port 3100.
 What Cortad read:
 Rules in the code: 46, in 5 files. 3 of them:
@@ -110,7 +110,7 @@ Last run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: 3 findings, 51 of 51 trials playe
   apps/api/src/agent/prompt.ts:41 (finding:1): gone; 0 of 3 replays failed, against 3 of 3 before; on the conversations kept back from you, 1 of 2 failed before, 0 of 2 after, not beyond chance.
   apps/api/src/agent/system.ts:12 (finding:2): gone; 0 of 7 replays failed, against 4 of 4 before; the fix made the failure worse on the conversations kept back from you (0 of 8 failed before, 6 of 8 after).
 The next run would play 58 trials, 7 kept back, 5 new from the changes.
-The Hobby plan, $99 a month, includes 10 runs.
+The Pro plan, $99 a month, includes 10 runs.
 Production: not connected.
 Nothing ran.
 For the person: plans and checkout at https://cortad.com/pricing?checkout=ship
@@ -188,7 +188,7 @@ Once production is connected, every production reply is read with these same che
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): broke in 9 of 12 trials.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
 112 of 140 checks measured.
-Free: this month's 1 run is used; 60 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
+Free: this month's 1 run is used; 60 verify trials left. Pro $99 a month: runs and reruns included, 100,000 production replies read.
 For the person: the report is at https://cortad.com/lab
 next: findings
 ```
@@ -221,7 +221,7 @@ Your app answered on gpt-4o-mini. The run took 3 min 8 s and spent $0.19 on your
 Replies took 2.9 s at the median and 9.8 s at the slowest, over 81 replies.
 Nothing broke that only running your app could show.
 The next run is compared with run 8f2a1c4e, the last run that played every conversation, with everything that changed since then in its scope.
-Hobby: 8 of 10 runs left this month; 560 verify trials left.
+Pro: 8 of 10 runs left this month; 560 verify trials left.
 For the person: the report is at https://cortad.com/lab
 next: status
 ```
@@ -260,7 +260,7 @@ A verify replays the conversations the finding failed on, word for word, and dec
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
 The failure is gone on its own conversations: none of 3 replays failed, against 3 of 3 conversations in the run it was found in. On the conversations kept back from you the failure is gone: 3 of 8 failed before the fix, 0 of 8 after, a fall beyond chance.
-Free: this month's 1 run is used; 55 verify trials left. Hobby $99 a month: runs and reruns included, 100,000 production replies read.
+Free: this month's 1 run is used; 55 verify trials left. Pro $99 a month: runs and reruns included, 100,000 production replies read.
 For the person: the failure in finding:1 is gone on its replays. Connecting production reads every real reply with these same checks; field_connect has the steps.
 For the person: the report is at https://cortad.com/lab
 next: findings
