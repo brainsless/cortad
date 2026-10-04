@@ -26,7 +26,7 @@ import { COMMANDS, main as face, unknownVerb, VERBS } from "./lib/cli.mjs";
 import { addNews, homeOf, projectOf, readToken, writeApp, writeDigest, writeToken } from "./lib/home.mjs";
 import { changesOf, commandText, RELOADER, sourceOf } from "./lib/fresh.mjs";
 import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawnTied, stopTree, supervisorOf } from "./lib/proc.mjs";
-import { claimRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
+import { claimRunner, readRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
 import { registerAll } from "./lib/register.mjs";
 import { machineText } from "./lib/read-text.mjs";
 import { VERSION } from "./lib/spec.mjs";
@@ -328,8 +328,10 @@ let limitsYes = false;
 mkdirSync(work, { recursive: true });
 // What the app printed this session, beside the project's other records rather than in a temp folder
 // the agent is never told of. Emptied once this process holds the project (holdProject), so a second
-// command in the same folder never empties a live session's output.
+// command in the same folder never empties a live session's output. Masked once more at the end of
+// the session, up to a size read whole, with the values learned while it ran.
 const bootLog = join(homeOf(project), "app.log");
+const MASKED_AT_END_MAX = 64 * 1024 * 1024;
 // The same output in memory with when each piece came, so the lines printed during one request are
 // its own (lib/proof.mjs). Masked before either keeps it, and never cut inside a value.
 const printed = [];
@@ -1081,6 +1083,11 @@ async function close(code = 0) {
     // app: the copies go first, while it still answers.
     await keeping.close();
     for (const kid of sidecars) if (kid.pid) await stopTree(kid.pid);
+    // A sign-in the app printed before its request reached this command is masked now. Only by the
+    // process that writes the file: another may still be appending to it.
+    if (readRunner(project)?.pid === process.pid) {
+      try { if (statSync(bootLog).size <= MASKED_AT_END_MAX) writeFileSync(bootLog, mask(readFileSync(bootLog, "utf8"))); } catch { /* left as it was written */ }
+    }
     if (box) await call("DELETE", `/local/${box}`, undefined, { timeoutMs: 5000 }).catch(() => {});
     await exec("rm", ["-rf", work]).catch(() => {});
   } finally { process.exit(code); }
