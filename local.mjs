@@ -1209,9 +1209,13 @@ stepDone(moved ? "connected · your change is in; the read from before stands" :
 // one's own home folder. A run started by an agent later comes back through lib/cli.mjs.
 // CORTAD_NO_REGISTER=1 leaves the coding agents' global skill and MCP entries alone: a stack under
 // test on this machine must never repoint the person's own agents at an unpublished build.
+// `clients`: the coding agents that know Cortad, named again in what this command says it did here.
+let clients = [];
 if (!viaToken && process.env.CORTAD_NO_REGISTER !== "1") {
-  const added = await registerAll().catch((err) => { if (verbose) say(`could not register with your coding agents: ${err?.message ?? err}`); return []; });
-  if (added.length) say(`added to ${added.join(", ")} · ask ${added.length === 1 ? "it" : "them"} for cortad any time`);
+  const got = await registerAll().catch((err) => { if (verbose) say(`could not register with your coding agents: ${err?.message ?? err}`); return { clients: [], changed: [] }; });
+  clients = got.clients;
+  const and = (list) => new Intl.ListFormat("en", { type: "conjunction" }).format(list);
+  if (got.changed.length) say(`For the person: Cortad added an entry and a skill for itself to the settings of ${and(clients)} in your home folder (${got.changed.map((f) => `~/${f}`).join(", ")}), so they can call it later; nothing in this repository changed.`);
 }
 
 lock = await makeLock({ root, work });
