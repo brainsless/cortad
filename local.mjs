@@ -1454,6 +1454,7 @@ for (;;) {
     if (!back?.ok) { say("this session ended on the server. Run the command again for a new one."); await close(1); }
     if (app?.port) await announce().catch(() => {});
     forgetTold?.();
+    capture?.proveAgain();
     continue;
   }
   if (!res.ok) { quiet += 1; await new Promise((r) => setTimeout(r, 2000)); continue; }
