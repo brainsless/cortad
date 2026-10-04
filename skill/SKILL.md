@@ -39,7 +39,7 @@ The connect command ends with "Go back to the browser". The person is waiting on
    - what the run will play, take and cost, from the `For the person:` line that starts `a run plays`, whether it is their free run, any endpoint a `Runs leave this endpoint out` line names with whose side that is, and the link to the card.
    Models, reply times, fields, passages, messages and the endpoints no request reached stay with you unless they ask. Say it once, then stop: the run is theirs to start, from the card or by asking you. If they say they pressed and `status` shows no run, call `run`; their press was the ask, so call it without asking them again. When it ends you are told, on your next prompt or edit, what it found and the call to make, if `npx {{cortad}} stick` has been run in this repository (below); say that in one line, and offer to run it.
 
-`status` with `show` lists one section of the read in full: `rules`, `standards`, `journeys`, `endpoints`, `trials`, `records` or `reviews` (in a shell, `npx {{cortad}} status rules`).
+`status` with `show` lists one section of the read in full: `rules`, `standards`, `journeys`, `endpoints`, `trials`, `records` or `reviews` (in a shell, `npx {{cortad}} status rules`). `status` with show `machine` says what Cortad does on this machine; when the person asks, hand them its two `For the person:` lines.
 
 ## Following a run
 
