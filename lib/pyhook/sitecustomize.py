@@ -1314,9 +1314,15 @@ def _install():
                 pass
         return bool(a) and (bool(re.search(r"(?:^|[\s_-])(?:test|sandbox|sbox|sdbx)[_-]\w", a, re.I)) or any(v and len(v) >= 8 and v in a for k, v in os.environ.items() if test_setting.search(k)))
 
-    # `auth_of()`: the call's credential, read only for a call that is otherwise held. Once a tagged
-    # write is being decided, a failure to decide holds it.
-    def held_here(url, method, auth_of):
+    # The headers a key travels in.
+    key_headers = ("authorization", "x-api-key", "api-key", "apikey", "x-auth-token")
+
+    def keys_in(headers):
+        return [headers.get(n) for n in key_headers]
+
+    # `keys_of()`: the values of the headers a key travels in, read only for a call that is otherwise
+    # held. Once a tagged write is being decided, a failure to decide holds it.
+    def held_here(url, method, keys_of):
         req = ctx.get()
         if str(method or "").upper() not in ("POST", "PUT", "PATCH", "DELETE"):
             return False
@@ -1328,7 +1334,7 @@ def _install():
         try:
             parts = urlsplit(str(url))
             host = (parts.hostname or "").lower()
-            if this_machine.match(host) or sandbox_host.search(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or reads_by_name(method, parts.path) or test_key(auth_of()):
+            if this_machine.match(host) or sandbox_host.search(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or reads_by_name(method, parts.path) or any(test_key(k) for k in keys_of()):
                 return False
             return not any(host == p or host.endswith("." + p) for p in pass_now())
         except Exception:
@@ -2405,7 +2411,7 @@ def _install():
 
         # A held call that cannot be answered fails in the app; it is never sent instead.
         def held_httpx(request, sent):
-            if not held_here(request.url, request.method, lambda: request.headers.get("authorization")) or reads_only(sent):
+            if not held_here(request.url, request.method, lambda: keys_in(request.headers)) or reads_only(sent):
                 return None
             kind = request.headers.get("content-type", "")
             held_row(request.url, request.method, sent, kind, ctx.get())
@@ -2465,7 +2471,7 @@ def _install():
 
         # A held call that cannot be answered fails in the app; it is never sent instead.
         def held(request):
-            if not held_here(request.url, request.method, lambda: request.headers.get("authorization")):
+            if not held_here(request.url, request.method, lambda: keys_in(request.headers)):
                 return None
             raw = text(request.body, reply_max)
             if reads_only(raw):
@@ -2513,11 +2519,11 @@ def _install():
     def patch_aiohttp(module):
         request = module.ClientSession._request
 
-        def auth_of(self, k):
+        def keys_of(self, k):
             given = {str(n).lower(): v for n, v in dict(k.get("headers") or {}).items()}
+            defaults = {str(n).lower(): v for n, v in dict(getattr(self, "_default_headers", None) or {}).items()}
             basic = k.get("auth") or getattr(self, "_default_auth", None)
-            defaults = getattr(self, "_default_headers", None) or {}
-            return given.get("authorization") or (basic.encode() if basic else None) or defaults.get("Authorization")
+            return [given.get(n) or defaults.get(n) for n in key_headers] + [basic.encode() if basic else None]
 
         # A path relative to the session's base address is decided on the whole address.
         def whole(self, str_or_url):
@@ -2529,7 +2535,7 @@ def _install():
         async def requested(self, method, str_or_url, *a, **k):
             body = k.get("json") if k.get("json") is not None else k.get("data")
             url = whole(self, str_or_url)
-            if held_here(url, method, lambda: auth_of(self, k)) and not reads_only(text(body, reply_max)):
+            if held_here(url, method, lambda: keys_of(self, k)) and not reads_only(text(body, reply_max)):
                 port = held_port()
                 if port is None:
                     raise module.ClientConnectionError("this write was kept from leaving and could not be answered")
