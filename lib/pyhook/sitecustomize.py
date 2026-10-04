@@ -1262,20 +1262,33 @@ def _install():
     # A provider's own sandbox, named so in the host: api.sandbox.paypal.com, sandbox-api.polar.sh.
     sandbox_host = re.compile(r"(?:^|[.-])(?:sandbox|sbox)[.-]", re.I)
     test_setting = re.compile(r"(?:^|_)TEST(?:_|$)", re.I)
-    # An API where every call is a POST names what a call does in its last word: customers.get,
-    # pkg.UserService/GetUser, rpc/get_balance. One that starts with a reading verb changes nothing.
-    # ponytail: decided on the name alone, so a read-named call whose body asks for a write goes out.
-    read_verb = re.compile(r"^(?:get|list|check|search|query|find|lookup|fetch|retrieve|describe|count|preview)$", re.I)
-    service_name = re.compile(r"\.[A-Z]\w*$")
+    # An API where every call is a POST names what a call does in its last segment, as
+    # resource.verb_words (customers.get, billing.preview_attach) or as a gRPC or Connect method
+    # (acme.v1.UserService/GetUser). A POST so named that starts with a reading word, and holds no word
+    # that makes the read a write (get_or_create, check_in, GetLease), goes out.
+    # ponytail: decided on the name alone, so a POST named as a read whose body writes goes out: a
+    # check that also records usage, or a file created under a name such as allow.list.
+    dot_call = re.compile(r"[A-Za-z][\w-]*\.[a-z][a-z_]*", re.A)
+    dot_read = {"get", "list", "check", "search", "query", "find", "lookup", "retrieve", "describe", "count", "preview"}
+    dot_not = {"or", "and", "in", "out", "next"}
+    rpc_call = re.compile(r"(?:[A-Z][a-z0-9]*)+")
+    rpc_read = {"Get", "List", "Search", "Query", "Find", "Lookup", "Describe"}
+    rpc_not = {"Or", "And", "Next", "Lease", "Lock"}
+    service_name = re.compile(r"\.[A-Z]\w*\Z", re.A)
 
-    def reads_by_name(path):
+    def reads_by_name(method, path):
+        if str(method or "").upper() != "POST":
+            return False
         parts = [p for p in (path or "").split("/") if p]
         last = parts[-1] if parts else ""
         before = parts[-2] if len(parts) > 1 else ""
-        if "." not in last and not service_name.search(before) and before != "rpc":
-            return False
-        words = [w for w in re.split(r"[_-]|(?=[A-Z])", last.rsplit(".", 1)[-1]) if w]
-        return bool(words) and bool(read_verb.match(words[0])) and not any(w.lower() in ("or", "and") for w in words)
+        if dot_call.fullmatch(last):
+            words = last.split(".")[1].split("_")
+            return words[0] in dot_read and not any(w in dot_not for w in words)
+        if service_name.search(before) and rpc_call.fullmatch(last):
+            words = re.findall(r"[A-Z][a-z0-9]*", last)
+            return words[0] in rpc_read and not any(w in rpc_not for w in words)
+        return False
 
     def pass_now():
         try:
@@ -1315,7 +1328,7 @@ def _install():
         try:
             parts = urlsplit(str(url))
             host = (parts.hostname or "").lower()
-            if this_machine.match(host) or sandbox_host.search(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or reads_by_name(parts.path) or test_key(auth_of()):
+            if this_machine.match(host) or sandbox_host.search(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or reads_by_name(method, parts.path) or test_key(auth_of()):
                 return False
             return not any(host == p or host.endswith("." + p) for p in pass_now())
         except Exception:
