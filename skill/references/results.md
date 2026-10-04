@@ -275,7 +275,6 @@ Undecided after a round, it replays the failing conversations again by itself. T
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: running, 3 of 3 trials played.
 Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
 Cannot tell yet: 1 of 3 replays failed, against 3 of 3 conversations in the run it was found in; 1 more clean conversation would show it failing less often. After the fix one conversation still failed: conversation 41c2e0b7 said "Refunds are processed within 3 business days of the request." at reply 2, where before the fix it said "Yes, refunds are processed within 3 business days.". Round 2 is playing now: the 3 failing conversations again.
-For the person: 3 of 3 conversations done.
 next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
 ```
 
