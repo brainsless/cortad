@@ -28,7 +28,7 @@ def _install_writes():
     import shutil
 
     roots = {os.path.realpath(_APP_ROOT), os.path.abspath(_APP_ROOT)}
-    not_data = re.compile(r"(?:^|/)(?:node_modules|\.git|\.next|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|dist|build|coverage|\.cortad)(?:/|$)|\.(?:log|pyc|tmp|swp)$")
+    not_data = re.compile(r"(?:^|/)(?:node_modules|\.git|\.next|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|dist|build|coverage|\.cortad|logs?)(?:/|$)|\.log(?:\.[\w-]+)?$|\.(?:pyc|tmp|swp)$")
     state = {"run": None, "at": -1, "seen": set()}
     real_open = builtins.open
     real_os_open = os.open
@@ -1259,7 +1259,23 @@ def _install():
     this_machine = re.compile(r"^(?:localhost|127(?:\.\d+){3}|::1|0\.0\.0\.0)$", re.I)
     # ponytail: a sign-in's token refresh is a POST that changes nothing, told apart by its path only.
     token_path = re.compile(r"/(?:oauth2?/)?token(?:[/?]|$)", re.I)
+    # A provider's own sandbox, named so in the host: api.sandbox.paypal.com, sandbox-api.polar.sh.
+    sandbox_host = re.compile(r"(?:^|[.-])(?:sandbox|sbox)[.-]", re.I)
     test_setting = re.compile(r"(?:^|_)TEST(?:_|$)", re.I)
+    # An API where every call is a POST names what a call does in its last word: customers.get,
+    # pkg.UserService/GetUser, rpc/get_balance. One that starts with a reading verb changes nothing.
+    # ponytail: decided on the name alone, so a read-named call whose body asks for a write goes out.
+    read_verb = re.compile(r"^(?:get|list|check|search|query|find|lookup|fetch|retrieve|describe|count|preview)$", re.I)
+    service_name = re.compile(r"\.[A-Z]\w*$")
+
+    def reads_by_name(path):
+        parts = [p for p in (path or "").split("/") if p]
+        last = parts[-1] if parts else ""
+        before = parts[-2] if len(parts) > 1 else ""
+        if "." not in last and not service_name.search(before) and before != "rpc":
+            return False
+        words = [w for w in re.split(r"[_-]|(?=[A-Z])", last.rsplit(".", 1)[-1]) if w]
+        return bool(words) and bool(read_verb.match(words[0])) and not any(w.lower() in ("or", "and") for w in words)
 
     def pass_now():
         try:
@@ -1273,7 +1289,8 @@ def _install():
             pass
         return passed["hosts"]
 
-    # A provider's test-mode key (Stripe's sk_test_), or a value of a setting the app keeps as a test one.
+    # A provider's test-mode key, named so in the key itself whatever comes before it (Stripe's
+    # sk_test_, am_sk_test_, pdl_sdbx_), or a value of a setting the app keeps as a test one.
     def test_key(auth):
         a = str(auth or "")
         m = re.match(r"^Basic\s+(\S+)$", a, re.I)
@@ -1282,7 +1299,7 @@ def _install():
                 a = base64.b64decode(m.group(1)).decode("utf-8", "replace")
             except Exception:
                 pass
-        return bool(a) and (bool(re.search(r"\b[a-z]{2}_test_\w", a)) or any(v and len(v) >= 8 and v in a for k, v in os.environ.items() if test_setting.search(k)))
+        return bool(a) and (bool(re.search(r"(?:^|[\s_-])(?:test|sandbox|sbox|sdbx)[_-]\w", a, re.I)) or any(v and len(v) >= 8 and v in a for k, v in os.environ.items() if test_setting.search(k)))
 
     # `auth_of()`: the call's credential, read only for a call that is otherwise held. Once a tagged
     # write is being decided, a failure to decide holds it.
@@ -1298,7 +1315,7 @@ def _install():
         try:
             parts = urlsplit(str(url))
             host = (parts.hostname or "").lower()
-            if this_machine.match(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or test_key(auth_of()):
+            if this_machine.match(host) or sandbox_host.search(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or reads_by_name(parts.path) or test_key(auth_of()):
                 return False
             return not any(host == p or host.endswith("." + p) for p in pass_now())
         except Exception:
@@ -1322,10 +1339,24 @@ def _install():
     def held_reply(raw, kind):
         return json.dumps({**fields_of(raw, kind), "id": "cortad-held-%d" % next(held_count), "status": "ok"}).encode("utf-8")
 
+    # Said once per method and host in the app's own output, where the error that follows is read:
+    # a stand-in an SDK cannot parse otherwise reads as a bug in the app.
+    held_said = set()
+
+    def held_say(method, host):
+        if (method, host) in held_said:
+            return
+        held_said.add((method, host))
+        try:
+            sys.stderr.write("cortad: a simulated customer's request made this app send %s to %s. Cortad kept that call on this machine and answered it with a stand-in success, since it could change something real. An error right after this line comes from that stand-in, not from your code. The person can allow %s on the Cortad card in the browser.\n" % (method, host, host))
+        except Exception:
+            pass
+
     # Named by method and host only: a webhook's path is its credential.
     def held_row(url, method, raw, kind, req):
         try:
             parts = urlsplit(str(url))
+            held_say(str(method).upper(), (parts.hostname or "")[:253])
             write({"dep": {"at": int(time.time() * 1000), "host": (parts.hostname or "")[:253], "status": 200, "held": True, **inside_of(req),
                            "called": [{"name": ("%s %s" % (str(method).upper(), parts.hostname))[:80], "arguments": args_text(fields_of(raw, kind))}]}})
         except Exception:
