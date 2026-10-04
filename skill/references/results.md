@@ -37,7 +37,7 @@ When the app keeps its data in a store off this machine that no copy can be made
 
 ```
 For the person: DATABASE_URL points at the Postgres database shop off this machine, and no migrations were found to build a copy on this machine from, so the run would write into it as it is. Point DATABASE_URL at a database on this machine, then run the connect command again. Or one press on the card in the browser lets the run write into it and starts the run.
-For the person: https://cortad.com/lab shows this in the browser.
+For the person: https://cortad.com/run shows this in the browser.
 ```
 
 Once a run is playing, the read and the run:
@@ -61,7 +61,7 @@ Conversations set aside:
   POST /api/homework/upload: 7 conversations, on the app's side: the route needs a signed file URL, and no test account can make one
 Latest run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
 Production: not connected.
-For the person: https://cortad.com/lab shows this in the browser.
+For the person: https://cortad.com/run shows this in the browser.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
@@ -190,7 +190,7 @@ Once production is connected, every production reply is read with these same che
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): broke in 2 of 26 trials.
 112 of 140 checks measured.
 Free: this month's 1 run is used; 60 verify trials left. Pro $99 a month: runs and reruns included, 100,000 production replies read.
-For the person: the report is at https://cortad.com/lab
+For the person: the report is at https://cortad.com/run
 next: findings
 ```
 
@@ -223,7 +223,7 @@ Replies took 2.9 s at the median and 9.8 s at the slowest, over 81 replies.
 Nothing broke that only running your app could show.
 The next run is compared with run 8f2a1c4e, the last run that played every conversation, with everything that changed since then in its scope.
 Pro: 8 of 10 runs left this month; 560 verify trials left.
-For the person: the report is at https://cortad.com/lab
+For the person: the report is at https://cortad.com/run
 next: status
 ```
 
@@ -234,7 +234,7 @@ Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 11 of 51 trials played.
 1 finding.
 Stopped at 11 of 51 trials, on the app's side: your app stopped answering after 11 replies. Bring your app back up, then run again.
 Fault on the app's side: Your code names llama-3.1-8b-instant, which api.groq.com does not serve. Rename the model in your code, then run again.
-For the person: the report is at https://cortad.com/lab
+For the person: the report is at https://cortad.com/run
 next: findings
 ```
 
@@ -263,7 +263,7 @@ Verify of finding:1 at apps/api/src/agent/prompt.ts:41.
 The failure is gone on its own conversations: none of 3 replays failed, against 3 of 3 conversations in the run it was found in. On the conversations kept back from you the failure is gone: 3 of 8 failed before the fix, 0 of 8 after, a fall beyond chance.
 Free: this month's 1 run is used; 55 verify trials left. Pro $99 a month: runs and reruns included, 100,000 production replies read.
 For the person: the failure in finding:1 is gone on its replays. Connecting production reads every real reply with these same checks; field_connect has the steps.
-For the person: the report is at https://cortad.com/lab
+For the person: the report is at https://cortad.com/run
 next: findings
 ```
 
@@ -284,7 +284,7 @@ The failure stayed. The conversations still fail more than the same question doe
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 4 of 4 trials played.
 Verify of finding:4 at apps/api/src/agent/system.ts:12.
 The failure stayed: 4 of 4 replays failed, against 4 of 4 conversations in the run it was found in; the same question fails on 3 of 18 conversations elsewhere in your app, so these still stand out beyond chance. After the fix 4 conversations still failed: conversation 0b19a3f2 said "Sure! Let's solve this together." at reply 1, as it did before the fix; conversation 3e8d0c47 said "Sure! Let's solve this together." at reply 1, as it did before the fix; conversation a61f9b05 said "Sure! Let's solve this together." at reply 1, as it did before the fix; and 1 more.
-For the person: the report is at https://cortad.com/lab
+For the person: the report is at https://cortad.com/run
 next: findings
 ```
 
@@ -294,7 +294,7 @@ Where the conversations kept back from you disagree with the finding's own, the 
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 43 of 43 trials played.
 Verify of finding:5 at apps/api/src/agent/lessons.ts:58.
 The failure stayed on its own conversations (3 of 35 failed, against 4 of 18 before) and is gone on the conversations kept back from you (3 of 8 failed before the fix, 0 of 8 after, beyond chance). On its own conversations that is not a fall beyond chance. After the fix 3 conversations still failed: conversation e4a1c9d2 said "I don't have this information about your homework plan." at reply 2, where before the fix it said "Let me look up your lesson plan."; conversation f0000000 said "I don't have this information." at reply 1; conversation f0000001 said "I don't have this information." at reply 1. The reason changed: in conversation e4a1c9d2 the reply declined to help, where before the fix the conversation ended without what they asked for.
-For the person: the report is at https://cortad.com/lab
+For the person: the report is at https://cortad.com/run
 next: findings
 ```
 
@@ -304,7 +304,7 @@ Replies refused or failed on the replay come first. A refusal is not an answer, 
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 trials played.
 Verify of finding:2 at backend/tools/refunds.py.
 Your app refused 5 of 5 replays (HTTP 422), so they got no answer: the fix changed what the endpoint accepts. The failure stayed: 5 of 5 replays got no answer, against 5 of 5 conversations in the run it was found in; the same question fails on 2 of 16 conversations elsewhere in your app, so these still stand out beyond chance.
-For the person: the report is at https://cortad.com/lab
+For the person: the report is at https://cortad.com/run
 next: findings
 ```
 
