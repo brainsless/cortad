@@ -1505,6 +1505,13 @@ def _install():
             settle(req)
         elif not req.get("calls_open"):
             answered(req)
+        # A message taken and answered at once with no model call inside it (lib/wire.cjs `receipt`).
+        status = int(req.get("status") or 0)
+        if not req.get("noted") and not steps and req["method"] != "GET" and 200 <= status < 300 and tied and tied._words(req):
+            receipt = {"ex": req["id"], "at": req["at"], "ms": req["ended"] - req["at"], "method": req["method"], "path": req["path"], "status": status}
+            if req.get("turn"):
+                receipt["turn"] = req["turn"]
+            write({"receipt": receipt})
 
     try:
         from cortad_tied import Tied

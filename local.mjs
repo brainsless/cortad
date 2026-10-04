@@ -265,8 +265,12 @@ let proxy = null;
 const doorPort = () => proxy?.port ?? app?.port;
 // The request the app answered in words while no model call came through the proxy, as "POST /chat".
 let unseen = "";
-// The runner's record of where to send: the front, with the app's own port beside it.
-const upAt = (port = app?.port) => (proxy ? { port: proxy.port, proxied: port, ...(unseen && !proxy.seen() ? { unseen } : {}) } : { port });
+// The runner's record of where to send: the front, with the app's own port beside it, and the
+// endpoints that took a message and answered at once with no model call tied to it (lib/replay.mjs).
+const upAt = (port = app?.port) => {
+  const receipts = capture?.receipts() ?? [];
+  return { ...(proxy ? { port: proxy.port, proxied: port, ...(unseen && !proxy.seen() ? { unseen } : {}) } : { port }), ...(receipts.length ? { receipts } : {}) };
+};
 // The app's life, shared by the code that starts it, watches it and restarts it.
 let closing = false;
 let restarting = false;
@@ -1326,6 +1330,10 @@ async function appLife() {
       // Said until it is heard. Said once, it was lost when their app came back while the network
       // was down, and the screen went on showing an app that had stopped while it answered turns.
       if (!up) become("up", { ...upAt(), app: launched ? child?.pid ?? null : null });
+      else if (became?.state === "up") {
+        const now = upAt();
+        if (JSON.stringify(now.receipts) !== JSON.stringify(became.fields.receipts)) { const { receipts: _was, ...fields } = became.fields; become("up", { ...fields, ...now }); }
+      }
       const reach = await keeping.watch(app.port).catch(() => ({}));
       try { if (reach.copied && launched && child) await restartApp(COPIED); } finally { release(); }
       if (reach.changed) appTold = false;
