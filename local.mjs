@@ -311,8 +311,29 @@ let consent = {};
 // session, from the browser. Until it arrives the app runs with its guards as they are.
 let limitsYes = false;
 mkdirSync(work, { recursive: true });
-const bootLog = join(work, "boot.log");
-writeFileSync(bootLog, "");
+// What the app printed this session, beside the project's other records rather than in a temp folder
+// the agent is never told of. Emptied once this process holds the project (holdProject), so a second
+// command in the same folder never empties a live session's output.
+const bootLog = join(homeOf(project), "app.log");
+// The same output in memory with when each line came, so the lines printed during one request are
+// its own (lib/proof.mjs). Masked before either keeps it: a value can only be masked whole, so a line
+// is kept once its end has come, or once it grows past a size no output line reaches.
+const printed = [];
+const PRINTED = 2000, PARTIAL_MAX = 16_000;
+const logTo = () => {
+  let carry = "";
+  return (d) => {
+    const lines = (carry + d.toString()).split("\n");
+    carry = lines.pop();
+    if (carry.length > PARTIAL_MAX) { lines.push(carry); carry = ""; }
+    if (!lines.length) return;
+    const text = `${mask(lines.join("\n"))}\n`;
+    try { appendFileSync(bootLog, text, { mode: 0o600 }); } catch { /* still kept in memory */ }
+    printed.push({ at: Date.now(), text });
+    if (printed.length > PRINTED) printed.splice(0, printed.length - PRINTED);
+  };
+};
+const printedBetween = (from, to) => printed.filter((p) => p.at >= from && p.at <= to).map((p) => p.text).join("");
 // Files nobody may read through this program: keys, and git's own internals.
 const SECRET_PATH = /(?:^|\/)(?:\.git|\.ssh|\.gnupg|\.aws|\.npmrc|\.netrc|id_(?:rsa|ed25519|ecdsa)[^/]*|[^/]*\.(?:pem|key|p12|pfx|jks|keystore))(?:\/|$)/;
 // The engine's paths, as this machine has them. Its scratch files live in this program's own
@@ -321,7 +342,7 @@ const translate = (s) => String(s ?? "").split("/workspace/repo").join(root).spl
 const scratch = (p) => { const r = resolve(translate(p)); return r.startsWith("/tmp/") ? join(work, r.slice(5)) : r.startsWith(work + sep) ? r : null; };
 const readable = (p) => {
   const r = resolve(translate(p));
-  if (r.startsWith(work + sep)) return r;
+  if (r === bootLog || r.startsWith(work + sep)) return r;
   let landed; try { landed = realpathSync(r); } catch { return null; }
   const home = realpathSync(root);
   if (!landed.startsWith(home + sep) || ENV_FILE.test(basename(landed)) || SECRET_PATH.test(landed)) return null;
@@ -605,9 +626,8 @@ const sidecars = [];
 function sidecar(cmd, cwd) {
   const kid = spawnTied(cmd, { cwd, env: { ...process.env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}), ...keeping.envNow() } });
   sidecars.push(kid);
-  const keep = (d) => appendFileSync(bootLog, d.toString());
-  kid.stdout.on("data", keep);
-  kid.stderr.on("data", keep);
+  kid.stdout.on("data", logTo());
+  kid.stderr.on("data", logTo());
   return kid;
 }
 // The port that workspace's sign-in answers on. One it is already serving on comes first: starting
@@ -832,9 +852,9 @@ async function installOnce(said) {
   const done = await new Promise((r) => {
     const child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...process.env, CI: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     let tail = "";
-    const keep = (d) => { tail = (tail + d.toString()).slice(-4000); appendFileSync(bootLog, d.toString()); if (verbose) process.stdout.write(d.toString()); };
-    child.stdout.on("data", keep);
-    child.stderr.on("data", keep);
+    const keep = (log) => (d) => { tail = (tail + d.toString()).slice(-4000); log(d); if (verbose) process.stdout.write(d.toString()); };
+    child.stdout.on("data", keep(logTo()));
+    child.stderr.on("data", keep(logTo()));
     const timer = setTimeout(() => child.kill("SIGKILL"), 15 * 60_000);
     child.on("close", (code) => { clearTimeout(timer); r({ ok: code === 0, tail }); });
     child.on("error", (e) => { clearTimeout(timer); r({ ok: false, tail: String(e.message) }); });
@@ -911,12 +931,12 @@ async function start(waitMs, tries = 3) {
   const mine = child;
   become("starting", { app: mine.pid ?? null });
   let seen = "";
-  const onData = (d) => {
-    const s = d.toString(); appendFileSync(bootLog, s); seen = (seen + s).slice(-20_000); lastSaid = seen; lastOutputAt = Date.now(); if (verbose) process.stdout.write(s);
+  const onData = (log) => (d) => {
+    const s = d.toString(); log(d); seen = (seen + s).slice(-20_000); lastSaid = seen; lastOutputAt = Date.now(); if (verbose) process.stdout.write(s);
     if (!note.reloads && RELOADER.test(s)) { note.reloads = true; if (note.answered && loaded === note) noteApp(); }
   };
-  mine.stdout.on("data", onData);
-  mine.stderr.on("data", onData);
+  mine.stdout.on("data", onData(logTo()));
+  mine.stderr.on("data", onData(logTo()));
   let exited = null;
   appGone = false;
   mine.on("exit", (code) => { exited = code ?? 1; if (child === mine) appGone = true; });
@@ -1111,7 +1131,7 @@ identities = makeIdentities({ root, work, envFiles, sourceFiles: () => files, sa
 // A real request that reached their model proves its door (lib/proof.mjs). What it proved goes up,
 // masked like everything else, and nothing goes up that the mask could not read; the sign-in each
 // request carried stays here.
-capture = makeCapture({ work, keepSecret, writes: join(homeOf(projectOf(root)), "writes"), root, files: () => files, appFolder: () => relative(root, appDir), onProof: (proof) => {
+capture = makeCapture({ work, keepSecret, writes: join(homeOf(projectOf(root)), "writes"), root, files: () => files, appFolder: () => relative(root, appDir), printed: printedBetween, onProof: (proof) => {
   let masked;
   try { masked = JSON.parse(mask(JSON.stringify(proof))); } catch { return; }
   call("POST", `/local/${box}/proof`, masked).catch(() => {});
@@ -1135,6 +1155,7 @@ box = attach.data.box;
 key = attach.data.key;
 // Taken once the code is accepted: a mistyped one never ends a runner that was working.
 if (!viaToken) await holdProject();
+writeFileSync(bootLog, "", { mode: 0o600 });
 
 const list = join(work, "files.txt");
 writeFileSync(list, files.join("\n") + "\n");
@@ -1274,6 +1295,7 @@ async function appLife() {
   if (!told.ok) return quit(told.data?.error ?? `could not register your app (${told.status})`);
   become("up", { ...upAt(), app: launched ? child?.pid ?? null : null });
   say(`your app is answering on port ${app.port}${app.cmd ? ` · ${app.cmd}` : ""}`);
+  if (launched) say(`your app's output for this session is kept in ${bootLog}, with the values from your env files masked`);
   if (proxy) say(`send requests to port ${proxy.port}: it passes them to your app and Cortad sees each one. Requests sent straight to port ${app.port} are not seen`);
   say("leave this open. Go back to the browser; Ctrl-C disconnects.");
   let downSince = 0;
