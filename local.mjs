@@ -1371,7 +1371,7 @@ const IDLE_MS = 10 * 60_000;
 if (argv.includes("--until-idle") && stored) {
   let idleSince = Date.now();
   setInterval(async () => {
-    const res = await call("GET", "/mcp/status", undefined, { headers: { authorization: `Bearer ${stored}` } }).catch(() => null);
+    const res = await call("GET", "/mcp/status?quiet=1", undefined, { headers: { authorization: `Bearer ${stored}` } }).catch(() => null);
     if (res?.ok && res.data?.run && !finished(res.data.run)) idleSince = Date.now();
     else if (Date.now() - idleSince > IDLE_MS) { say("no run for ten minutes, leaving"); await close(0); }
   }, 60_000).unref();

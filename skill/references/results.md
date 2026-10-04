@@ -12,8 +12,6 @@ Right after a connect, before the read is done:
 Cortad · tutor-app
 Free: 1 of 1 run left this month; 60 verify trials left. Pro $99 a month: runs and reruns included, 100,000 production replies read.
 App: Your app is starting on this machine.
-No run yet.
-Production: not connected.
 ```
 
 After the agent sent one real request to each endpoint that reaches the model, two on the chat, and before any run:
@@ -28,13 +26,18 @@ Endpoints your own requests proved (1):
     Tools that ran: search_lessons.
     Passages handed to the model: 3.
     Problem at apps/api/src/agent/system.ts:30: The reply carried "</student_profile>", markup from the prompt your app sent the model.
-    Last request: "and the second question?", answered "For question 2, start by writing what the angle is opposite to.".
+    Last message: "and the second question?".
 Endpoints the read found that no request has reached (1):
   POST /api/homework/explain  apps/api/src/routes/homework.ts:18
-A run on the proven endpoints: 36 trials, about 72 replies, about 6 minutes, about $0.38 on your OpenAI key for gpt-4o-mini.
-No run yet.
-Production: not connected.
-A run starts only when the person asks: from Run in the browser, or from the run verb.
+For the person: a run plays 36 conversations: about 72 replies in about 6 minutes. It costs about $0.38 on your OpenAI key for gpt-4o-mini. Every reply is checked against the 46 rules read from your code.
+Nothing holds Run. A run starts when the person presses Run on the card in the browser or asks you for one; if they say they pressed it, call run rather than ask them again.
+```
+
+When the app keeps its data in a store off this machine that no copy can be made of, the decision is the person's, said once as the last line before the link:
+
+```
+For the person: DATABASE_URL points at the Postgres database shop off this machine, and no migrations were found to build a copy on this machine from, so the run would write into it as it is. Point DATABASE_URL at a database on this machine, then run the connect command again. Or one press on the card in the browser lets the run write into it and starts the run.
+For the person: https://cortad.com/lab shows this in the browser.
 ```
 
 Once a run is playing, the read and the run:
@@ -48,23 +51,21 @@ Rules in the code: 46, in 5 files. 3 of them:
   apps/api/src/agent/prompt.ts:41  "Never state a refund policy the product does not publish."
   apps/api/src/agent/system.ts:12  "Answer in the language the student writes in."
   apps/api/src/tools/search.ts:8  "Cite the lesson a fact comes from."
-Journeys (4): homework help, billing question, account recovery, first lesson.
-Simulated users (3): student in grade 9, parent paying for the plan, teacher checking progress.
-Endpoints (2): POST /api/chat, POST /api/homework/explain.
-Engineering standards: 38 decided, 35 met, 3 missed.
+Journeys (4): homework help; billing question; account recovery; first lesson.
+Simulated users (3): student in grade 9; parent paying for the plan; teacher checking progress.
+Engineering standards: your code misses 3 of the 38 Cortad checks.
   apps/api/src/agent/client.ts:9  The model call has a timeout: the OpenAI client is created with no timeout, so a slow reply holds the request open (decided by code)
   apps/api/src/agent/system.ts:30  User text stays out of the system prompt: the student's name is written into the system prompt (decided by a model)
   apps/api/src/tools/search.ts:51  Tool errors reach the model as errors: search returns an empty list when the index is down (decided by a model)
-Questions: 112; 40 asked in every conversation, 72 placed in the situations they fit.
-Trials: 58 written.
-  POST /api/homework/upload: 7 trials set aside, on the app's side: the route needs a signed file URL, and no test account can make one
+Conversations set aside:
+  POST /api/homework/upload: 7 conversations, on the app's side: the route needs a signed file URL, and no test account can make one
 Latest run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: running, 14 of 51 trials played.
 Production: not connected.
 For the person: https://cortad.com/lab shows this in the browser.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
-Each section in full, with `show` (`rules`, `standards`, `journeys`, `endpoints` or `trials`). A list longer than one page ends with `page 1 of 3, call status with show rules and page 2`.
+Each section in full, with `show` (`rules`, `standards`, `journeys`, `endpoints`, `trials`, `records` or `reviews`). A list longer than one page ends with `page 1 of 3, call status with show rules and page 2`.
 
 ```
 Rules in the code: 16, in 5 files.
@@ -231,7 +232,7 @@ Stopped early. Each stop and fault names the side it is on and what comes next:
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 11 of 51 trials played.
 1 finding.
-Stopped at 11 of 51 trials, on the app's side: your app stopped answering at turn 11. Bring your app back up, then run again.
+Stopped at 11 of 51 trials, on the app's side: your app stopped answering after 11 replies. Bring your app back up, then run again.
 Fault on the app's side: Your code names llama-3.1-8b-instant, which api.groq.com does not serve. Rename the model in your code, then run again.
 For the person: the report is at https://cortad.com/lab
 next: findings

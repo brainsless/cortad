@@ -1153,6 +1153,30 @@ def _install():
         except (TypeError, ValueError):
             return ""
 
+    # A model request kept whole when it fits; a longer one keeps its shape and every value short
+    # enough to be a turn, its longest texts cut in their middle (lib/wire.cjs fitted).
+    def fitted(body):
+        whole = text(body, reply_max)
+        if len(whole) <= limit:
+            return whole
+        try:
+            parsed = json.loads(whole)
+        except ValueError:
+            parsed = None
+        cap = limit // 2
+        while isinstance(parsed, (dict, list)) and cap >= 256:
+            def cut(v):
+                if isinstance(v, str):
+                    return v if len(v) <= cap else v[:cap // 2] + " [...] " + v[-(cap // 2):]
+                if isinstance(v, list):
+                    return [cut(x) for x in v]
+                return {k: cut(x) for k, x in v.items()} if isinstance(v, dict) else v
+            out = json.dumps(cut(parsed), ensure_ascii=False)
+            if len(out) <= limit:
+                return out
+            cap //= 2
+        return whole[:limit]
+
     # An exchange is kept when the request makes its first model call, for the first few requests per
     # route, and written once the app has answered. Model calls and tool rows carry the request's id
     # whether kept or not; the command joins them to the exchange it has.
@@ -1202,7 +1226,7 @@ def _install():
                 per_route[key] = n + 1
                 req["kept"] = True
         if req["kept"] and len(req["sent"]) < sent_max:
-            req["sent"].append(text(body))
+            req["sent"].append(fitted(body))
         return req
 
     def noted(url, sent):
