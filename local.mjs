@@ -22,12 +22,14 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { COMMANDS, main as face } from "./lib/cli.mjs";
+import { COMMANDS, main as face, unknownVerb, VERBS } from "./lib/cli.mjs";
 import { addNews, homeOf, projectOf, readToken, writeApp, writeDigest, writeToken } from "./lib/home.mjs";
 import { changesOf, commandText, RELOADER, sourceOf } from "./lib/fresh.mjs";
 import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawnTied, stopTree, supervisorOf } from "./lib/proc.mjs";
 import { claimRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
 import { registerAll } from "./lib/register.mjs";
+import { machineText } from "./lib/read-text.mjs";
+import { VERSION } from "./lib/spec.mjs";
 import { secretValues } from "./lib/env-secrets.mjs";
 import { finished, unseenText } from "./lib/text.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
@@ -49,6 +51,12 @@ const argv = process.argv.slice(2);
 // client starts on every session, and the same verbs as shell commands. Neither runs the connect
 // below, and `npx cortad findings` is a verb, never a code.
 if (COMMANDS.has(argv[0] ?? "")) process.exit(await face(argv));
+// A command word this version does not know is never taken for a connect code: `feedback`, read as
+// the code FEEDBACK, signed the folder in again and ended the session it was typed in.
+if (unknownVerb(argv[0])) {
+  console.error(`cortad  ${argv[0]} is not a command of cortad ${VERSION}. Its commands are ${VERBS.slice(0, -1).join(", ")} and ${VERBS.at(-1)}; npx cortad@latest <command> runs the newest.`);
+  process.exit(1);
+}
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const verbose = argv.includes("--verbose");
 // A code is eight characters from the connect screen's alphabet, which has no I, O, 0 or 1.
@@ -73,7 +81,7 @@ const step = (line) => {
 };
 const clearStep = () => { if (process.stdout.isTTY) process.stdout.write("\r\x1b[K"); };
 const stepDone = (line) => { clearStep(); say(line); };
-if (!explain && !viaToken && !/^[A-Z0-9]{8}$/.test(code)) fail("usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--proxy]   |   npx cortad --explain   |   npx cortad status | run | findings | verify <id>");
+if (!explain && !viaToken && !/^[A-Z0-9]{8}$/.test(code)) fail(`usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--proxy]   |   npx cortad --explain   |   npx cortad ${VERBS.join(" | ")}`);
 // Where Brainsless is. The host is not on the command line: a code cannot point at an impostor.
 const origin = new URL(process.env.CORTAD_ORIGIN || "https://cortad.com");
 // Ours, and only ours. brainsless.com is the same service under its earlier name and stays trusted
@@ -101,7 +109,10 @@ const project = projectOf(root);
 const me = { pid: process.pid, startedAt: startedAtOf(), by: viaToken ? "token" : "connect" };
 // The last record written, so a fact learned while the app is up is added to it.
 let became = null;
-const become = (state, fields = {}) => { became = { state, fields }; writeRunner(project, { ...me, state, at: new Date().toISOString(), ...fields }); };
+// What this command did on this machine, once the app answers: said at connect, and kept in the
+// record for `status` with show machine (lib/read-text.mjs machineText).
+let machineOf = () => null;
+const become = (state, fields = {}) => { became = { state, fields }; const machine = machineOf(); writeRunner(project, { ...me, ...(machine ? { machine } : {}), state, at: new Date().toISOString(), ...fields }); };
 process.on("exit", () => releaseRunner(project));
 // Started for a run while another process already holds this project's app up: that one serves it.
 // A connect from the screen is the person starting over, so the one before it is ended first.
@@ -1301,10 +1312,17 @@ async function appLife() {
   const told = await announce();
   clearStep();
   if (!told.ok) return quit(told.data?.error ?? `could not register your app (${told.status})`);
+  machineOf = () => (app ? {
+    cmd: app.cmd ?? "", dir: relative(root, appDir) || ".", port: app.port, started: Boolean(launched),
+    hooked: Boolean(launched && !proxy && capture?.watching(app.port)), proxy: proxy?.port ?? null,
+    changed: [...new Set([...(app.lifted ?? []), ...Object.keys(keeping.envNow())])],
+    copies: Object.keys(keeping.envNow()).length ? "made" : "none", clients,
+  } : null);
   become("up", { ...upAt(), app: launched ? child?.pid ?? null : null });
   say(`your app is answering on port ${app.port}${app.cmd ? ` · ${app.cmd}` : ""}`);
   if (launched) say(`your app's output for this session is kept in ${bootLog}, with the values from your env files masked`);
   if (proxy) say(`send requests to port ${proxy.port}: it passes them to your app and Cortad sees each one. Requests sent straight to port ${app.port} are not seen`);
+  for (const line of machineText(machineOf())) say(line);
   say("leave this open. Go back to the browser; Ctrl-C disconnects.");
   let downSince = 0;
   let toldDown = false;
