@@ -396,6 +396,12 @@ A verify replays its 3 failing conversations word for word, and 2 conversations 
 next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
 ```
 
+## feedback
+
+```
+The Cortad team has the note and reads each one; an answer comes back under Send feedback on cortad.com. Nothing about the run or its checks changed.
+```
+
 ## field_connect
 
 ```

@@ -96,4 +96,8 @@ Production comes up after the first run. A verify whose failure is gone, and gon
 
 `dispute <findingId> "<why>"` sends the note to the owner. The finding and its rate stay as they are until the owner decides.
 
+## A note about Cortad itself
+
+`feedback` sends the Cortad team a note about Cortad, not about the app: a result that read wrong, something you needed that no tool gave, a question a result left open, or what worked. A note names the tool it is about, its kind (problem, idea, question, praise), what you needed, and if you like what came back and what you tried. Send one note for each thing. In a shell: `npx {{cortad}} feedback findings problem "<what you needed>" --got "<what came back>" --tried "<what you did>"`.
+
 One example of each result is in [references/results.md](references/results.md).

@@ -10,7 +10,7 @@ Run it in your app's folder with the code from cortad.com. It starts your app, c
 
 ## Your coding agent
 
-After that, your agent has eight tools: `status`, `run`, `run_status`, `findings`, `verify`, `dispute`, `field_connect`, `field`. The same eight work as commands:
+After that, your agent has nine tools: `status`, `run`, `run_status`, `findings`, `verify`, `dispute`, `feedback`, `field_connect`, `field`. The same nine work as commands:
 
 ```
 npx cortad status
