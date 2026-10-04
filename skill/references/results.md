@@ -400,7 +400,7 @@ next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
 
 ```
 Production is not connected.
-1. The owner creates the key at https://cortad.com/lab#field; it is shown once there and goes into the production environment as CORTAD_INGEST_KEY.
+1. The owner creates the key at https://cortad.com/live; it is shown once there and goes into the production environment as CORTAD_INGEST_KEY.
 2. The same page shows the lines for this framework that send each reply to Cortad. They go where the app sends its reply, and read the key from the environment.
 3. Deploy. Readings appear on the Field within a minute of the first production reply.
 ```
@@ -412,5 +412,5 @@ Production, last 30 days: 4,812 conversations, 4,790 read.
 Rule checks passed: 93% of 61,204 (1,120 too close to call). Resolved 71%, frustrated 6%, asked for a human 2%, unanswered 4%.
 Rules broken most: rule:answer-first (412), rule:language (188), rule:cite-source (97).
 By journey: homework help 3,102 conversations, 94% passed; billing question 410 conversations, 88% passed.
-For the person: https://cortad.com/lab#field
+For the person: https://cortad.com/live
 ```
