@@ -30,7 +30,7 @@ Endpoints your own requests proved (1):
 Endpoints the read found that no request has reached (1):
   POST /api/homework/explain  apps/api/src/routes/homework.ts:18
 For the person: a run plays 36 conversations: about 72 replies in about 6 minutes. It costs about $0.38 on your OpenAI key for gpt-4o-mini. Every reply is checked against the 46 rules read from your code.
-Nothing holds Run. A run starts when the person presses Run on the card in the browser or asks you for one; if they say they pressed it, call run rather than ask them again.
+A run starts when the person presses Run on the card in the browser or asks you for one; if they say they pressed it, call run rather than ask them again.
 ```
 
 When the app keeps its data in a store off this machine that no copy can be made of, the decision is the person's, said once as the last line before the link:
