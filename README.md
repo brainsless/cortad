@@ -41,7 +41,7 @@ The hooks run after an edit and on your next message: the first names the prompt
 
 ## Files it creates
 
-- `~/.cortad/<project>/`     the key, the last tree digest, which process holds your app up, the run it asked for last, in `news.txt` the line a finished run left for your agent, removed once the agent has it, and in `heard.txt` the ids of the runs your agent has read
+- `~/.cortad/<project>/`     the key, the last tree digest, which process holds your app up, your app's output in `app.log`, the run it asked for last, in `news.txt` the line a finished run left for your agent, removed once the agent has it, and in `heard.txt` the ids of the runs your agent has read
 - `~/.cortad/identity.key`   the seed for the session's test accounts
 - `$TMPDIR/cortad-<pid>/`    removed on exit
 
