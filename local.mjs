@@ -54,7 +54,7 @@ if (COMMANDS.has(argv[0] ?? "")) process.exit(await face(argv));
 // A command word this version does not know is never taken for a connect code: `feedback`, read as
 // the code FEEDBACK, signed the folder in again and ended the session it was typed in.
 if (unknownVerb(argv[0])) {
-  console.error(`cortad  ${argv[0]} is not a command of cortad ${VERSION}. Its commands are ${VERBS.slice(0, -1).join(", ")} and ${VERBS.at(-1)}; npx cortad@latest <command> runs the newest.`);
+  console.error(`cortad  ${argv[0]} is not a command of cortad ${VERSION}. Its commands are ${VERBS.slice(0, -1).join(", ")} and ${VERBS.at(-1)}; npx cortad@latest <command> runs the newest. A connect code is typed in capitals, as the connect screen shows it.`);
   process.exit(1);
 }
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
