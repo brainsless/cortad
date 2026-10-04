@@ -1359,7 +1359,8 @@ def _install():
         return json.dumps({**fields_of(raw, kind), "id": "cortad-held-%d" % next(held_count), "status": "ok"}).encode("utf-8")
 
     # Said once per method and host in the app's own output, where the error that follows is read:
-    # a stand-in an SDK cannot parse otherwise reads as a bug in the app.
+    # a stand-in an SDK cannot parse otherwise reads as a bug in the app. It holds no word that marks
+    # an error, so it is never quoted back as the app's own.
     held_said = set()
 
     def held_say(method, host):
@@ -1367,7 +1368,7 @@ def _install():
             return
         held_said.add((method, host))
         try:
-            sys.stderr.write("cortad: a simulated customer's request made this app send %s to %s. Cortad kept that call on this machine and answered it with a stand-in success, since it could change something real. An error right after this line comes from that stand-in, not from your code. The person can allow %s on the Cortad card in the browser.\n" % (method, host, host))
+            sys.stderr.write("cortad: a simulated customer's request made this app send %s to %s. Cortad kept that call on this machine and answered it with a stand-in success, since it could change something real. A failure right after this line comes from that stand-in, not from your code. With that service's test key the call goes out as sent.\n" % (method, host))
         except Exception:
             pass
 
