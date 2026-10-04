@@ -30,7 +30,7 @@ import { claimRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } f
 import { registerAll } from "./lib/register.mjs";
 import { machineText } from "./lib/read-text.mjs";
 import { VERSION } from "./lib/spec.mjs";
-import { secretValues } from "./lib/env-secrets.mjs";
+import { maskedLines, maskWith, secretValues } from "./lib/env-secrets.mjs";
 import { finished, unseenText } from "./lib/text.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
 import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
@@ -298,7 +298,7 @@ const held = makeHeld({ rows: () => capture?.usage()?.rows ?? [], say: (line) =>
 let gate = null;
 const hold = () => { if (!gate) { let open; gate = new Promise((r) => { open = r; }); gate.open = () => { gate = null; open(); }; } };
 const release = () => gate?.open();
-const mask = (text) => { let s = String(text ?? ""); for (const v of secrets) s = s.split(v).join("[masked]"); return s; };
+const mask = (text) => maskWith(String(text ?? ""), secrets);
 
 // ---- the wire
 let box = "";
@@ -330,24 +330,15 @@ mkdirSync(work, { recursive: true });
 // the agent is never told of. Emptied once this process holds the project (holdProject), so a second
 // command in the same folder never empties a live session's output.
 const bootLog = join(homeOf(project), "app.log");
-// The same output in memory with when each line came, so the lines printed during one request are
-// its own (lib/proof.mjs). Masked before either keeps it: a value can only be masked whole, so a line
-// is kept once its end has come, or once it grows past a size no output line reaches.
+// The same output in memory with when each piece came, so the lines printed during one request are
+// its own (lib/proof.mjs). Masked before either keeps it, and never cut inside a value.
 const printed = [];
-const PRINTED = 2000, PARTIAL_MAX = 16_000;
-const logTo = () => {
-  let carry = "";
-  return (d) => {
-    const lines = (carry + d.toString()).split("\n");
-    carry = lines.pop();
-    if (carry.length > PARTIAL_MAX) { lines.push(carry); carry = ""; }
-    if (!lines.length) return;
-    const text = `${mask(lines.join("\n"))}\n`;
-    try { appendFileSync(bootLog, text, { mode: 0o600 }); } catch { /* still kept in memory */ }
-    printed.push({ at: Date.now(), text });
-    if (printed.length > PRINTED) printed.splice(0, printed.length - PRINTED);
-  };
-};
+const PRINTED = 2000;
+const logTo = () => maskedLines(() => secrets, (text) => {
+  try { appendFileSync(bootLog, text, { mode: 0o600 }); } catch { /* still kept in memory */ }
+  printed.push({ at: Date.now(), text });
+  if (printed.length > PRINTED) printed.splice(0, printed.length - PRINTED);
+});
 const printedBetween = (from, to) => printed.filter((p) => p.at >= from && p.at <= to).map((p) => p.text).join("");
 // Files nobody may read through this program: keys, and git's own internals.
 const SECRET_PATH = /(?:^|\/)(?:\.git|\.ssh|\.gnupg|\.aws|\.npmrc|\.netrc|id_(?:rsa|ed25519|ecdsa)[^/]*|[^/]*\.(?:pem|key|p12|pfx|jks|keystore))(?:\/|$)/;
