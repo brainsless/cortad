@@ -1270,10 +1270,13 @@ def _install():
     # check that also records usage, or a file created under a name such as allow.list.
     dot_call = re.compile(r"[A-Za-z][\w-]*\.[a-z][a-z_]*", re.A)
     dot_read = {"get", "list", "check", "search", "query", "find", "lookup", "retrieve", "describe", "count", "preview"}
-    dot_not = {"or", "and", "in", "out", "next"}
+    # A preview commits nothing whatever it previews; any other reading word reads only while no word
+    # after it writes: credits.check_deduct and usage.count_increment went out as reads.
+    write_word = set("create|update|delete|remove|set|add|put|insert|upsert|write|save|store|record|track|log|send|deduct|increment|decrement|consume|use|spend|charge|pay|refund|cancel|reserve|lock|unlock|commit|apply|attach|detach|start|stop|run|trigger|reset|rotate|revoke|grant|issue|mint|transfer|move|merge|sync|import|export|upload|publish|enqueue|push|pop|ack|touch|mark|close|approve|reject|submit|confirm|redeem|claim".split("|"))
+    dot_not = {"or", "and", "in", "out", "next"} | write_word
     rpc_call = re.compile(r"(?:[A-Z][a-z0-9]*)+")
     rpc_read = {"Get", "List", "Search", "Query", "Find", "Lookup", "Describe"}
-    rpc_not = {"Or", "And", "Next", "Lease", "Lock"}
+    rpc_not = {"or", "and", "next", "lease"} | write_word
     service_name = re.compile(r"\.[A-Z]\w*\Z", re.A)
 
     def reads_by_name(method, path):
@@ -1284,10 +1287,10 @@ def _install():
         before = parts[-2] if len(parts) > 1 else ""
         if dot_call.fullmatch(last):
             words = last.split(".")[1].split("_")
-            return words[0] in dot_read and not any(w in dot_not for w in words)
+            return words[0] in dot_read and (words[0] == "preview" or not any(w in dot_not for w in words[1:]))
         if service_name.search(before) and rpc_call.fullmatch(last):
             words = re.findall(r"[A-Z][a-z0-9]*", last)
-            return words[0] in rpc_read and not any(w in rpc_not for w in words)
+            return words[0] in rpc_read and not any(w.lower() in rpc_not for w in words[1:])
         return False
 
     def pass_now():
@@ -1312,7 +1315,9 @@ def _install():
                 a = base64.b64decode(m.group(1)).decode("utf-8", "replace")
             except Exception:
                 pass
-        return bool(a) and (bool(re.search(r"(?:^|[\s_-])(?:test|sandbox|sbox|sdbx)[_-]\w", a, re.I)) or any(v and len(v) >= 8 and v in a for k, v in os.environ.items() if test_setting.search(k)))
+        # In the prefix of the key itself, set off by underscores: a Basic user named test-admin and a
+        # live key holding "-Test-" are not test keys.
+        return bool(a) and (any(re.fullmatch(r"(?:[a-z0-9]{2,8}_){0,3}(?:test|sandbox|sbox|sdbx)_[\w-]{4,}", piece, re.I | re.A) for piece in re.split(r"[\s:]+", a)) or any(v and len(v) >= 8 and v in a for k, v in os.environ.items() if test_setting.search(k)))
 
     # The headers a key travels in.
     key_headers = ("authorization", "x-api-key", "api-key", "apikey", "x-auth-token")
