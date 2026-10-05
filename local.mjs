@@ -406,10 +406,12 @@ async function verb(job) {
       // A request that speaks as one of your app's own callers carries the role, not the token:
       // the token was issued on this machine and is put in here, so it never travels.
       const marker = Object.keys(headers).find((k) => k.toLowerCase() === AS_HEADER);
+      let spokenAs = null;
       if (marker) {
         const role = headers[marker];
         delete headers[marker];
         if (role === CAPTURED || role.startsWith(`${CAPTURED}:`)) {
+          spokenAs = role;
           // Speaking as one of the customers whose requests we watched: every header their own client sent.
           for (const [name, value] of Object.entries(capture?.headers(role) ?? {})) { for (const k of Object.keys(headers)) if (k.toLowerCase() === name) delete headers[k]; headers[name] = value; }
         } else {
@@ -419,7 +421,9 @@ async function verb(job) {
       }
       const method = String(b.method ?? "GET").toUpperCase();
       const init = { method, headers, redirect: "manual" };
-      if (b.body !== undefined && method !== "GET" && method !== "HEAD") init.body = typeof b.body === "string" ? b.body : JSON.stringify(b.body);
+      // Speaking as one of several customers, the ids in the body are that customer's own.
+      const body = spokenAs ? capture?.bodyAs(spokenAs, `${method} ${path.split("?")[0]}`, b.body) ?? b.body : b.body;
+      if (body !== undefined && method !== "GET" && method !== "HEAD") init.body = typeof body === "string" ? body : JSON.stringify(body);
       // A dev server restarts when a file is saved, and during a run files are saved: by the agent
       // working its plan, and by you. For those seconds nothing is listening. A turn that meets a
       // closed door is held until your app answers again and sent then, once, instead of being
