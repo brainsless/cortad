@@ -123,7 +123,9 @@ def _install():
     ctx = contextvars.ContextVar("cortad_request", default=None)
     limit = 65536
     model_host = re.compile(r"(?:^|\.)(?:openai\.com|anthropic\.com|fireworks\.ai|openrouter\.ai|groq\.com|mistral\.ai|together\.xyz|together\.ai|deepseek\.com|cohere\.ai|cohere\.com|perplexity\.ai|x\.ai|openai\.azure\.com|cognitiveservices\.azure\.com|replicate\.com|huggingface\.co|cerebras\.ai|deepinfra\.com|novita\.ai|moonshot\.cn|dashscope\.aliyuncs\.com|bigmodel\.cn|ai-gateway\.vercel\.sh|gateway\.ai\.cloudflare\.com|helicone\.ai|portkey\.ai)$", re.I)
-    model_path = re.compile(r"/(?:chat/completions|completions|responses|messages|embeddings)$|:(?:generateContent|streamGenerateContent)|/invoke(?:-with-response-stream)?$|/api/(?:chat|generate)$", re.I)
+    model_path = re.compile(r"/(?:chat/completions|completions|responses|messages|embeddings|language-model|embedding-model)$|:(?:generateContent|streamGenerateContent)|/invoke(?:-with-response-stream)?$|/api/(?:chat|generate)$", re.I)
+    # wire.cjs MESSAGING_HOST: senders whose own path is the one a model API answers on.
+    messaging_host = re.compile(r"(?:^|\.)(?:nexmo\.com|vonage\.com|telnyx\.com|twilio\.com|mailgun\.net|sinch\.com|messagebird\.com|bird\.com)$", re.I)
 
     # The turn a message came in under, when the run tagged it (one opaque id per request), so a
     # model call and its prompt can be pinned to the reply they produced while turns overlap.
@@ -1136,7 +1138,12 @@ def _install():
             return host.startswith("bedrock")
         # The OpenAI shape's own paths name a model call wherever they are served: LiteLLM's proxy is
         # called at plain /chat/completions (wire.cjs OPENAI_PATH).
-        return bool(model_host.search(host)) or bool(re.search(r"/(?:chat/completions|completions|embeddings)$", path, re.I)) or (bool(model_path.search(path)) and bool(re.search(r"/v\d|/api/", path)))
+        if model_host.search(host) or re.search(r"/(?:chat/completions|completions|embeddings)$", path, re.I):
+            return True
+        # /messages and /responses only as the two APIs spell them (wire.cjs AS_SPELLED).
+        if re.search(r"/(?:messages|responses)$", path, re.I):
+            return bool(re.search(r"/v1/(?:messages|responses)$", path, re.I)) and not messaging_host.search(host)
+        return bool(model_path.search(path)) and bool(re.search(r"/v\d|/api/", path))
 
     # `most`: what is read of a body. The door's row keeps 64 KB; a model call's prompt is read whole
     # up to the reply's bound, since a prompt cut at 64 KB is not JSON and every passage, tool answer
@@ -1308,7 +1315,8 @@ def _install():
     # A provider's test-mode key, named so in the key itself whatever comes before it (Stripe's
     # sk_test_, am_sk_test_, pdl_sdbx_), or a value of a setting the app keeps as a test one.
     def test_key(auth):
-        a = str(auth or "")
+        # `requests` takes a header value as bytes, and str() of one is "b'...'", which no key matches.
+        a = auth.decode("utf-8", "replace") if isinstance(auth, (bytes, bytearray)) else str(auth or "")
         m = re.match(r"^Basic\s+(\S+)$", a, re.I)
         if m:
             try:
@@ -1532,7 +1540,7 @@ def _install():
             answered(req)
         # A message taken and answered at once with no model call inside it (lib/wire.cjs `receipt`).
         status = int(req.get("status") or 0)
-        if not req.get("noted") and not steps and req["method"] != "GET" and 200 <= status < 300 and tied and tied._words(req):
+        if not req.get("noted") and not steps and req["method"] != "GET" and 200 <= status < 300 and tied and tied.sentences(req):
             receipt = {"ex": req["id"], "at": req["at"], "ms": req["ended"] - req["at"], "method": req["method"], "path": req["path"], "status": status}
             if req.get("turn"):
                 receipt["turn"] = req["turn"]
@@ -1686,7 +1694,7 @@ def _install():
         return None
 
     # An embedding call answers nobody, so where it was made names no path a reply came down.
-    embedding = re.compile(r"/embeddings$", re.I)
+    embedding = re.compile(r"/(?:embeddings|embedding-model)$", re.I)
 
     def callers_now(url):
         if embedding.search(urlsplit(str(url)).path or ""):

@@ -91,6 +91,13 @@ class Tied:
     def _words(self, req):
         return [v for v in _scalars(_json(self.body_of(req)), []) if _sentence(v)]
 
+    # tied.cjs sentencesIn: a body that is not JSON (a form post, plain text) is read as the text it is.
+    def sentences(self, req):
+        raw = self.body_of(req)
+        v = _json(raw)
+        text = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw or "")
+        return [s for s in (_scalars(v, []) if v is not None else [text]) if _sentence(s)]
+
     def _says(self, req, prompt):
         return any(self.norm(v) in prompt for v in self._words(req))
 
