@@ -278,9 +278,10 @@ const doorPort = () => proxy?.port ?? app?.port;
 let unseen = "";
 // The runner's record of where to send: the front, with the app's own port beside it, and the
 // endpoints that took a message and answered at once with no model call tied to it (lib/replay.mjs).
+// The front listens on 127.0.0.1; the app on whichever loopback address it answered on.
 const upAt = (port = app?.port) => {
   const receipts = capture?.receipts() ?? [];
-  return { ...(proxy ? { port: proxy.port, proxied: port, ...(unseen && !proxy.seen() ? { unseen } : {}) } : { port }), ...(receipts.length ? { receipts } : {}) };
+  return { ...(proxy ? { port: proxy.port, host: "127.0.0.1", proxied: port, ...(unseen && !proxy.seen() ? { unseen } : {}) } : { port, host: appHost }), ...(receipts.length ? { receipts } : {}) };
 };
 // The app's life, shared by the code that starts it, watches it and restarts it.
 let closing = false;

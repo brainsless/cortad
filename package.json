@@ -39,6 +39,7 @@
     "lib/pyhook/sitecustomize.py",
     "lib/pyhook/cortad_tied.py",
     "lib/pyhook/cortad_sites.py",
+    "lib/reach.mjs",
     "lib/read-text.mjs",
     "lib/redis.mjs",
     "lib/register.mjs",
