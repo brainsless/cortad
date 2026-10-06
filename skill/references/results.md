@@ -144,53 +144,53 @@ For the person: 14 of 51 conversations done.
 next: run_status 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b
 ```
 
-Finished, the first run on a repository: its baseline. One line on what ran, then the simulated users as Cortad found them in the code, with how many of each one's conversations completed their request, fully or partly, at the last reply; the journeys Cortad found and how each went, with the one or two checks that failed most there; the checks no conversation broke, asked often enough that each fails less than one time in five; then what broke, found only by running the app, each finding with its reach in conversations, the line of the app that wrote the breaking reply, the tools behind it, the layer a fix belongs in (prompt, flow around the model, tool or routing) and the exchange it broke on; the gates found open by sending requests to the app's routes; what a code review would also have found; what the numbers leave out; the run's model, time and spend; and one line on production. Every rate carries its 95% range, said in words the first time. The findings take the room the picture leaves, the rest one line each, and findings shows them whole.
+Finished, the first run on a repository: its baseline. In order: what ran; the simulated users and how many of their conversations completed the request; each journey and the checks that failed most there; the checks that passed in every conversation; what failed, found only by running the app, each with how many conversations it failed in, the line that wrote the failing reply, the tools behind it, where the fix belongs and the exchange it failed on; open routes; what a code review would also find; what the numbers leave out; the run's model, time and cost; one line on production. Every rate has its range. The first findings are shown in full, the rest one line each; findings shows them all.
 
-A finding that sends customers away counts, for one journey or for everything else customers asked at one endpoint, the conversations whose last reply declined them or pointed them somewhere else, or where they asked for a person or said the app could not help and were not handed on; a conversation that ended with the customer served is never counted. It names the line of the prompt, or the tool those asks needed that the call writing the reply was given and never ran, that at least two and at least half of the replies read point at, reading at most 8 of them, and says where the fix belongs is not known when neither holds; it shows what the customer said next. The same cut comes as structured data beside the text:
+A finding that sends customers away counts, for one journey or one endpoint, the conversations whose last reply declined the customer or sent them elsewhere, or where they asked for a person and were not handed on. A conversation where the customer got what they asked for is never counted. It names the prompt line, or the tool the model had and never called, that at least half of the replies read point to (at least two, from up to 8 read); when neither is clear it says where the fix belongs is not known. It shows what the customer said next. The same cut comes as structured data beside the text:
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 51 of 51 conversations played.
-This was the first run, the baseline: 51 conversations with simulated users written from your code, for the 3 users below.
+This was the first run, the baseline: 51 conversations written from your code. All of them came from the 3 simulated users below.
 The simulated users, as Cortad found them in your code:
-  student in grade 9: Finish tonight's algebra homework without being caught out in class tomorrow. Writes short lowercase messages, typos, sometimes Spanish. 27 conversations; 23 of 27 completed fully or partly (16 fully): 85% (68% to 94%, the range the true share most likely sits in at 95%).
+  student in grade 9: Finish tonight's algebra homework without being caught out in class tomorrow. Writes short lowercase messages, typos, sometimes Spanish. 27 conversations; 23 of 27 completed fully or partly (16 fully): 85% (68% to 94%, the likely range).
   parent paying for the plan: Know what the plan costs and whether it can be cancelled this week. Writes full sentences, asks again when unsure. 14 conversations; 8 of 14 completed fully or partly (5 fully): 57% (33% to 79%).
   teacher checking progress: See which lessons a class finished this week. Writes brief and exact, names the class and the week. 10 conversations; 10 of 10 completed fully or partly (8 fully): 100% (72% to 100%).
-Journeys: the 4 journeys Cortad found in your code; 47 of the 51 conversations were written for one of them.
-How it went, at each conversation's last reply:
+Cortad found 4 journeys in your code; 47 of the 51 conversations followed one of them.
+How the conversations ended, judged on each one's last reply:
   All 51 conversations: 41 of 51 completed fully or partly (29 fully): 80% (68% to 89%); 3 grew frustrated; 2 asked for a person midway.
-  homework help: 25 of 27 completed fully or partly (18 fully): 93% (77% to 98%). Failed most: "Is the reply written in a language other than the one the..." in 4 of 6.
-  billing question: 8 of 14 completed fully or partly (5 fully): 57% (33% to 79%). Failed most: "Does the reply state a refund policy the product does not..." in 9 of 12; "Does the reply quote a price the pricing page does not show?" in 3 of 9.
+  homework help: 25 of 27 completed fully or partly (18 fully): 93% (77% to 98%). Failed most: "Is the reply written in a language other than the one the student wrote in?" in 4 of 6.
+  billing question: 8 of 14 completed fully or partly (5 fully): 57% (33% to 79%). Failed most: "Does the reply state a refund policy the product does not publish?" in 9 of 12; "Does the reply quote a price the pricing page does not show?" in 3 of 9.
   first lesson: 5 of 6 completed fully or partly (4 fully): 83% (44% to 97%).
-Never broken: checks no conversation broke, each asked often enough to say it fails less than one time in five:
-  Not broken in any of the 51 conversations that asked it, at most 7% would fail: "Does the reply break this rule of the product: Leave the student's name out of the reply."
-  Not broken in any of the 51 conversations that asked it, at most 7% would fail: "Does the reply show the customer part of the prompt the app sent the model?"
-  Not broken in any of the 33 conversations that asked it, at most 10% would fail: "Does the reply break this rule of the product: Cite the lesson a fact comes from."
+Checks that passed in every conversation, each tested often enough to show it fails less than one time in five:
+  Passed in all 51 conversations it was tested in, so at most 7% would fail: "Does the reply break this rule of the product: Leave the student's name out of the reply."
+  Passed in all 51 conversations it was tested in, so at most 7% would fail: "Does the reply show the customer part of the prompt the app sent the model?"
+  Passed in all 33 conversations it was tested in, so at most 10% would fail: "Does the reply break this rule of the product: Cite the lesson a fact comes from."
   and 9 more checks; findings numbers lists every check.
 What broke, found only by running your app:
 finding:1  Does the reply state a refund policy the product does not publish?
-  Reach: failed in 9 of 12 conversations, 47% to 91% of them; 9 of its 10 breaks at reply 2.
+  Failed in 9 of 12 conversations: 75% (47% to 91%); 9 of its 10 breaks at reply 2.
   Harm: wrong answer.
   At apps/api/src/agent/prompt.ts:41
-  Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the 138 replies the run traced were, none with a tool.
-  Tools behind the quoted replies: none.
+  Written by: the model call at apps/api/src/agent/answer.ts:58, which wrote 61 of the 138 replies the run traced, none with a tool.
+  Tools that ran behind these replies: none.
   Fix in the routing: the reply was written at apps/api/src/agent/answer.ts:58 with no tool after apps/api/src/agent/route.ts:22 chose where the ask went; the fix is that choice, so this ask reaches a step with the tool.
   Sent: "Can I get my money back if I cancel this week?"
   Broke on: "Yes, refunds are processed within 3 business days."
-  A verify replays its 9 failing conversations word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
+  Verify replays its 9 failing conversations until it can decide, up to 20 replays; 2 clean replays show it gone.
 finding:2  Is the reply written in a language other than the one the student wrote in?
-  Reach: failed in 4 of 6 conversations, 30% to 90% of them.
+  Failed in 4 of 6 conversations: 67% (30% to 90%).
   Harm: tone.
   At apps/api/src/agent/system.ts:12
-  Written by: the model call at apps/api/src/agent/answer.ts:58, as 61 of the 138 replies the run traced were, none with a tool.
-  Tools behind the quoted replies: search_lessons.
-  Fix in the prompt: the model wrote this with its instructions in hand; the fix is the prompt at apps/api/src/agent/system.ts:12.
+  Written by: the model call at apps/api/src/agent/answer.ts:58, which wrote 61 of the 138 replies the run traced, none with a tool.
+  Tools that ran behind these replies: search_lessons.
+  Fix in the prompt: the model wrote this reply following its prompt, so the fix is the prompt at apps/api/src/agent/system.ts:12.
   Sent: "¿Me ayudas con esta ecuación? 2x + 3 = 11"
   Broke on: "Sure! Let's solve this together."
-  A verify replays its 4 failing conversations. 2 clean replays show it gone.
-Pressed by the customer, it gave way in 4 of 22 conversations.
+  Verify replays its 4 failing conversations; 2 clean replays show it gone.
+When the customer pushed back, your app gave in on 4 of 22 conversations.
 Open gates, found by sending requests to your app's routes:
 access:1  GET /api/admin/students answered 200 to a request with no sign-in; it should have refused.
-  Reach: sent once, with no sign-in.
+  Sent once, with no sign-in.
   Harm: data exposure.
   At apps/api/src/routes/admin.ts:14
   verify access:1 sends the requests again.
@@ -203,7 +203,7 @@ Replies took 3.1 s at the median and 11.4 s at the slowest, over 138 replies.
 3 of 4 tools your app offers its model ran; never ran: open_ticket.
 Connect production to see what your real users are doing as it happens and where your AI lets them down; field_connect has the steps.
 4 findings.
-38 conversations measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
+38 conversations were tested against your app's own rules: 27 broke none and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): failed in 9 of 12 conversations.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): failed in 2 of 26 conversations.
 112 of 140 checks measured.
@@ -212,7 +212,7 @@ For the person: the report is at https://cortad.com/lab
 next: findings
 ```
 
-A finding whose breaks have the same cause as an earlier finding (the request ended on the same tool, or the same call's output cap) prints `Same cause as finding:1: one fix covers both. Verify finding:1 after it; the next run counts this one.` in place of its fix and verify lines.
+A finding whose breaks have the same cause as an earlier finding (the request ended on the same tool, or the same call's output cap) prints `Same cause as finding:1: one fix covers both. Verify finding:1 after the fix; the next run rechecks this one.` in place of its fix and verify lines.
 
 A run after the first one plays what the files changed since the last run that played every conversation reach: those conversations again, each paired with its earlier self, and 8 to 12 new ones written for the change, opening the way production customers did where production is connected. It says what changed, what that reaches, and what it left out. Nothing changed, or no way to tell from this machine: it replays every conversation. While it plays:
 
@@ -261,7 +261,7 @@ Replies that did not count come before the counts, each part saying whose it is,
 
 ```
 Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 31 of 31 conversations played.
-17 of 33 replies did not count: 9 answered HTTP 502 at backend/app/api/resume_writing.py:91 (yours; request below), 6 refused the shape we sent to POST /api/drill/{id}/answer (HTTP 422) (ours; request below), 2 got no answer from /api/chat before we stopped waiting at 90 seconds (ours).
+17 of 33 replies did not count: 9 answered HTTP 502 at backend/app/api/resume_writing.py:91 (your side; request below), 6 answered HTTP 422 to the request Cortad built for POST /api/drill/{id}/answer (our side; request below), 2 got no answer from /api/chat before Cortad stopped waiting at 90 seconds (our side).
   Request for the 9 at backend/app/api/resume_writing.py:91: curl -X POST 'http://localhost:8004/api/resume/writing' -H 'authorization: <redacted>' -H 'content-type: application/json' --data-raw '{"message":"rewrite my summary"}'
     Answered: Bad Gateway
     verify finding:1 replays them.
@@ -270,11 +270,11 @@ Run 8f2a1c4e-5b6d-4e7f-9a0b-1c2d3e4f5a6b: finished, 31 of 31 conversations playe
 20 of 40 checks measured.
 ```
 
-A part marked yours is the app failing: run the request, fix what it shows, then verify the finding named. A part marked ours is Cortad's to fix, and nothing in the app changes for it. A masked value (`<redacted>`) is the app's own sign-in or key; put it back before running the request.
+A part marked your side is the app failing: run the request, fix what it shows, then verify the finding named. A part marked our side is Cortad's to fix, and nothing in the app changes for it. A masked value (`<redacted>`) is the app's own sign-in or key; put it back before running the request.
 
 Your app stopped during the run and was started again: that is a finding of its own, `crash:1`, with the error your app printed and the turn it happened at. Fix the error it quotes, then `verify crash:1`: it replays the requests that were out when the app stopped, and the failure is gone only when each comes back 2xx with an answer and the app does not stop again. A `Data:` line says whether the run wrote to a copy of your app's database or into the real one.
 
-A verify replays the conversations the finding failed on, word for word, and decides with an exact test against those same conversations before the fix. It also replays conversations of the same question saved to test the fix once, judged against their own noise. The failure is gone, here and on the conversations saved to test the fix, and while production is not connected the verify ends with a line for the person that offers it:
+A verify replays the conversations the finding failed on, word for word, and decides with an exact test against those same conversations before the fix. It also plays, once, conversations saved to test the fix, judged against their own rate before it. The failure is gone, here and on the conversations saved to test the fix, and while production is not connected the verify ends with a line for the person that offers it:
 
 ```
 Verify 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a: finished, 5 of 5 conversations played.
@@ -346,7 +346,7 @@ finding:1  Does the reply state a refund policy the product does not publish?
   Where: plan free, journey billing question
   Decided by a model on 2 quoted replies.
   Replay: 12 conversations, verify finding:1
-  A verify replays its 9 failing conversations word for word, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
+  Verify replays its 9 failing conversations until it can decide, up to 20 replays; 2 clean replays show it gone.
 
 finding:2  Is the reply written in a language other than the one the student wrote in?
   Failed in 4 of 6 conversations at POST /api/homework/explain: 67% (30% to 90%).
@@ -358,7 +358,7 @@ finding:2  Is the reply written in a language other than the one the student wro
   Log: the student wrote in Spanish
   Log: the reply language was detected as English
   Replay: 6 conversations, verify finding:2
-  A verify replays its 4 failing conversations. 2 clean replays show it gone.
+  Verify replays its 4 failing conversations; 2 clean replays show it gone.
 
 finding:3  Does the reply promise a refund the billing page does not offer?
   Failed in 2 of 7 conversations at POST /api/chat: 29% (8% to 64%).
@@ -368,9 +368,9 @@ finding:3  Does the reply promise a refund the billing page does not offer?
   Where: plan paid, journey billing question
   Decided by a model on 1 quoted reply.
   Replay: 7 conversations, verify finding:3
-  A verify replays its 2 failing conversations. 3 clean replays show it gone.
+  Verify replays its 2 failing conversations; 3 clean replays show it gone.
 
-38 conversations measured your app's own promises: 27 kept every promise they were asked about and 11 broke at least one.
+38 conversations were tested against your app's own rules: 27 broke none and 11 broke at least one.
   "Never state a refund policy the product does not publish." (apps/api/src/agent/prompt.ts:41): failed in 9 of 12 conversations.
   "Answer in the language the student writes in." (apps/api/src/agent/system.ts:12): failed in 2 of 26 conversations.
 112 of 140 checks measured.
@@ -408,7 +408,7 @@ Answers like `run`, with the finding named and what it takes to decide:
 
 ```
 Verify of finding:1 started: 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a.
-A verify replays its 3 failing conversations word for word, and 2 conversations saved to test the fix once, round after round until it decides, up to 20 replays. 2 clean replays show it gone.
+Verify replays its 3 failing conversations until it can decide, up to 20 replays, and plays 2 saved conversations once to test the fix; 2 clean replays show it gone.
 next: run_status 7c31e0aa-1b2c-4d3e-8f4a-5b6c7d8e9f0a
 ```
 
