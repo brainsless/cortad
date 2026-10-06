@@ -45,6 +45,7 @@ import { makeKeeping } from "./lib/keeping.mjs";
 import { downLine, makeHealth } from "./lib/health.mjs";
 import { markRun, writesDirOf, writtenPaths } from "./lib/writes.mjs";
 import { makeHeld } from "./lib/held.mjs";
+import { answerAsk, makeAutoReach, takeAsk } from "./lib/auto-reach.mjs";
 
 const argv = process.argv.slice(2);
 // The two faces a coding agent uses after the first connect (lib/cli.mjs): the MCP server the
@@ -106,7 +107,8 @@ if (!MANIFEST.some((f) => existsSync(join(root, f))) && !workspaces(root).length
 const project = projectOf(root);
 
 // One process holds a project's app up (lib/runner.mjs), and its state is what every reader reports.
-const me = { pid: process.pid, startedAt: startedAtOf(), by: viaToken ? "token" : "connect" };
+// `reach: "ask"`: an agent's reach is sent by this process (lib/auto-reach.mjs), signed in where it can.
+const me = { pid: process.pid, startedAt: startedAtOf(), by: viaToken ? "token" : "connect", reach: "ask" };
 // The last record written, so a fact learned while the app is up is added to it.
 let became = null;
 // What this command did on this machine, once the app answers: said at connect, and kept in the
@@ -397,6 +399,7 @@ async function verb(job) {
       // takes one for the person's: it would become the request trials copy and the sign-in they carry.
       if (!turn) headers["x-cortad-turn"] = `cortad-${String(job.id).replace(/[^\w.-]/g, "").slice(0, 64)}`;
       const letGo = held.hold(job.id, turn || headers["x-cortad-turn"]);
+      askedAt = Date.now();
       // An endpoint your app answers later: it takes the message and its model answers afterwards,
       // outside the request (a queue's worker). Its own reply only says it took the message.
       const laterAt = Object.keys(headers).find((k) => k.toLowerCase() === LATER_HEADER);
@@ -546,7 +549,10 @@ async function verb(job) {
         if (b.append) appendFileSync(mine, bytes); else writeFileSync(mine, bytes);
         // The read's tools, kept for this project too: the next start hands them to the hook before
         // the app loads its code, which a Node app needs to have its tool functions wrapped.
-        if (mine === join(work, "tools.json")) { try { mkdirSync(homeOf(project), { recursive: true, mode: 0o700 }); writeFileSync(join(homeOf(project), "tools.json"), bytes, { mode: 0o600 }); } catch { /* kept for this session only */ } }
+        if (mine === join(work, "tools.json")) {
+          try { mkdirSync(homeOf(project), { recursive: true, mode: 0o700 }); writeFileSync(join(homeOf(project), "tools.json"), bytes, { mode: 0o600 }); } catch { /* kept for this session only */ }
+          void recordTools();
+        }
         return { success: true, stderr: "" };
       }
       catch (e) { return { success: false, stderr: String(e.message) }; }
@@ -590,7 +596,9 @@ async function verb(job) {
     // start has no hook, and the empty answer says the meter is absent rather than that nothing was spent.
     // Masked like every other reply: a tool's answer can carry a value from their env files. The
     // calls of the `turn` asked about also say what their model was told.
-    case "usage": return capture ? JSON.parse(mask(JSON.stringify(capture.usage(b.turn) ?? {}))) : {};
+    // `toolsRecorded: false`: the app was started before the read's list of tools, so a tool that ran
+    // was not seen; a run says "not recorded", never that none ran.
+    case "usage": return capture ? { ...JSON.parse(mask(JSON.stringify(capture.usage(b.turn) ?? {}))), ...(launched && toolsKnown() ? { toolsRecorded: toolsRecorded() } : {}) } : {};
     // Every route your app holds, read by the hook off the app itself, masked like the meter.
     case "routes": return capture ? JSON.parse(mask(JSON.stringify(capture.registry(app?.port)))) : {};
     // A world is ended from this terminal, never from the cloud.
@@ -930,6 +938,7 @@ async function start(waitMs, tries = 3) {
   // The record of what the app writes opens with the app: the first run starts itself on the
   // server's side, with no verb here to mark it, and a restart mid-run keeps the record open.
   try { markRun(writesDirOf(homeOf(projectOf(root))), "session", { keep: true }); } catch { /* the app's writes go unrecorded */ }
+  toolsAtStart = toolsNow();
   // Taken before the app reads a file: a save after this moment is a change it has not loaded.
   const note = { own: true, at: Date.now(), reloads: RELOADER.test(commandText(cmd, appDir)), answered: false };
   // The settings files count as what it loaded: an env file is rarely tracked, and an agent's edit to
@@ -1003,6 +1012,22 @@ const DRAIN_MS = 20_000;
 // session, or the health loop bringing back an app that stopped. One asked for while another is under
 // way is that one, so a second file saved while a crashed app comes back never kills its start.
 let restartDone = null;
+// The read's list of tools as the app was started with it: the hook wraps a tool's function only when
+// the list is there before the file holding it loads (lib/trace.cjs).
+const toolsNow = () => { try { return readFileSync(join(work, "tools.json"), "utf8"); } catch { return ""; } };
+let toolsAtStart = "";
+const toolsKnown = () => toolsNow() !== "" && toolsNow() !== "[]";
+const toolsRecorded = () => !toolsKnown() || toolsNow() === toolsAtStart;
+// When the server last asked this machine to send a request to the app: a run, or a test before one.
+let askedAt = 0;
+const RUN_QUIET_MS = 30_000;
+// A list that arrives after the app started: the app is started again once, at once when nothing is
+// being asked of it (a run about to start waits at the gate meanwhile), else from the health loop once
+// the run's requests have stopped.
+async function recordTools() {
+  if (!launched || !child || restarting || toolsRecorded() || answering > 0 || Date.now() - askedAt < RUN_QUIET_MS) return;
+  await restartApp("starting your app again so the tools your code gives its model are recorded");
+}
 function restartOnce(work) {
   restartDone ??= (async () => {
     restarting = true;
@@ -1035,9 +1060,10 @@ const savedSinceStart = () => Boolean(loaded?.files) && changesOf({
 // writes into, so its copies and holds are made again for the new settings, and said again.
 const storesNamed = () => { try { return JSON.stringify(storesOf({ ...envExports(envFiles), ...process.env }).map((s) => [s.engine, s.host, s.port, s.db, s.names])); } catch { return ""; } };
 let storesAt = null;
+// Looked at before the first wait too: the app now starts while the code is uploaded, and a save made
+// before this watch began was otherwise never seen.
 async function restartOnSave() {
   while (!closing) {
-    await sourceChanged();
     while (!closing && launched && child && !appGone && !loaded?.reloads && savedSinceStart()) {
       const named = storesNamed();
       const moved = storesAt !== null && named !== storesAt;
@@ -1046,6 +1072,7 @@ async function restartOnSave() {
       await restartApp(moved ? "starting your app again on the settings you changed, with its data copied again for them" : undefined);
       if (moved) await announce().catch(() => null);
     }
+    await sourceChanged();
   }
 }
 async function restartNow() {
@@ -1198,6 +1225,9 @@ const head = (() => {
     return /^[a-f0-9]{40}$/.test(sha) ? sha : "";
   } catch { return ""; }
 })();
+// Started now, so it comes up while the code is packed and sent; told to the server once it has the code.
+const firstStart = startApp();
+firstStart.catch(() => { /* appLife reads the failure */ });
 const archive = join(work, "tree.tgz");
 step("connecting");
 await exec("tar", ["-czf", archive, "-C", root, "-T", list]);
@@ -1298,9 +1328,9 @@ async function liftWith(yes) {
 // Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
 // and starts it again the moment you save a fix, and the browser is told each time it answers, so a
 // world still looking for your chat asks again by itself. Nothing is ever rerun by hand.
-async function appLife() {
+async function appLife(firstStart) {
   for (let first = true; ; first = false) {
-    const got = await startApp();
+    const got = await (first ? firstStart : startApp());
     if (got.port) { app = got; if (!launched) await noteAttached(app.port); break; }
     failedWith(got.why, got.said);
     await call("POST", `/local/${box}/stopped`, { said: mask(got.said || got.why).slice(-2000) }).catch(() => {});
@@ -1327,6 +1357,7 @@ async function appLife() {
   if (proxy) say(`send requests to port ${proxy.port}: it passes them to your app and Cortad sees each one. Requests sent straight to port ${app.port} are not seen`);
   for (const line of machineText(machineOf())) say(line);
   say("leave this open. Go back to the browser; Ctrl-C disconnects.");
+  void reachLoop();
   let downSince = 0;
   let toldDown = false;
   let appTold = true;
@@ -1357,6 +1388,7 @@ async function appLife() {
       }
       const reach = await keeping.watch(app.port).catch(() => ({}));
       try { if (reach.copied && launched && child) await restartApp(COPIED); } finally { release(); }
+      await recordTools();
       if (reach.changed) appTold = false;
       if (!up || !appTold) { up = true; appTold = Boolean((await announce().catch(() => null))?.ok); }
       continue;
@@ -1415,7 +1447,32 @@ async function appLife() {
     });
   }
 }
-void appLife().catch((e) => quit(String(e?.message ?? e)));
+void appLife(firstStart).catch((e) => quit(String(e?.message ?? e)));
+
+// Cortad's own test request to each endpoint the read lists, sent from here as soon as status lists
+// them (lib/auto-reach.mjs), and the agent's reach the same way. Status is asked every 5 seconds
+// while the code is read, then every 20; an ask from the agent is taken within a second.
+const autoReach = makeAutoReach({
+  status: async () => {
+    const token = readToken(project);
+    const res = token ? await call("GET", "/mcp/status?quiet=1", undefined, { headers: { authorization: `Bearer ${token}` } }).catch(() => null) : null;
+    return res?.ok ? res.data : null;
+  },
+  runner: () => (became?.state === "up" && !restarting ? { state: "up", ...became.fields } : null),
+  origin: () => envOrigins(envFiles)[0] ?? (app ? `http://localhost:${app.port}` : null),
+  signIn: async (m) => { const role = typeof m.as === "string" ? m.as : identities?.roles()[0]; return role ? identities.headerFor(role) : null; },
+  stampOf: (m) => { try { return m.file ? String(statSync(join(root, m.file)).mtimeMs) : ""; } catch { return ""; } },
+  say,
+});
+async function reachLoop() {
+  for (let dueAt = 0; !closing; await new Promise((r) => setTimeout(r, 1000))) {
+    const ask = takeAsk(homeOf(project));
+    if (!ask && Date.now() < dueAt) continue;
+    const out = await autoReach(ask).catch(() => null);
+    if (ask) { try { answerAsk(homeOf(project), ask.id, out?.text ?? "Nothing was sent.\nnext: status"); } catch { /* the agent's wait runs out */ } }
+    dueAt = Date.now() + (out?.settled ? 20_000 : 5_000);
+  }
+}
 
 // Keep the laptop awake while a world stands on it.
 if (process.platform === "darwin") spawn("caffeinate", ["-i", "-w", String(process.pid)], { stdio: "ignore", detached: true }).unref();

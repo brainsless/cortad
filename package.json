@@ -9,6 +9,7 @@
   "files": [
     "README.md",
     "lib/app-port.mjs",
+    "lib/auto-reach.mjs",
     "lib/backing.mjs",
     "lib/cli.mjs",
     "lib/contact-text.mjs",
