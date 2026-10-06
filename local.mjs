@@ -106,7 +106,7 @@ if (!MANIFEST.some((f) => existsSync(join(root, f))) && !workspaces(root).length
 const project = projectOf(root);
 
 // One process holds a project's app up (lib/runner.mjs), and its state is what every reader reports.
-const me = { pid: process.pid, startedAt: startedAtOf(), by: viaToken ? "token" : "connect" };
+const me = { pid: process.pid, startedAt: startedAtOf(), by: viaToken ? "token" : "connect", version: VERSION };
 // The last record written, so a fact learned while the app is up is added to it.
 let became = null;
 // What this command did on this machine, once the app answers: said at connect, and kept in the
@@ -632,7 +632,7 @@ let appDir = root;
 // One app served its AI from apps/api and mounted sign-in in apps/dashboard: a test account can
 // only be made where the sign-in is, and posting a sign-up at the AI's own port is a 404.
 const toldService = new Set();
-const signedInAt = (dir, port) => { if (!toldService.has(dir)) { toldService.add(dir); say(`your sign-in lives in ${dir}, so I signed in there`); } return port; };
+const signedInAt = (dir, port) => { if (!toldService.has(dir)) { toldService.add(dir); say(`signed in a test account through ${dir}`); } return port; };
 // Everything else this command started, stopped with it: each started the way the app is, on the
 // same copies of its data.
 const sidecars = [];
@@ -697,7 +697,7 @@ async function startApp() {
   const opened = Object.keys(lifted).filter((n) => !raised.includes(n));
   if (raised.length) say(`higher request limits for this session: ${raised.join(", ")}`);
   // Said out loud, because it changes who their app lets in for as long as this command runs.
-  if (opened.length) say(`your app's own sign-in switch, for this session only: ${opened.map((n) => `${n}=${lifted[n]}`).join(", ")}`);
+  if (opened.length) say(`for this session your app runs with ${opened.map((n) => `${n}=${lifted[n]}`).join(", ")}`);
   launched = { cmd, lifted };
   if (proxyAsked || !hookable(appDir)) await useProxy();
   step(`starting your app: ${cmd}`);
@@ -1143,7 +1143,7 @@ if (explain) {
   ].join("\n"));
   process.exit(0);
 }
-if (kept.length) say(`kept on this machine, ${kept.length === 1 ? "it holds" : "they hold"} keys: ${kept.join(", ")}`);
+if (kept.length) say(`not uploaded, left on this machine: ${kept.join(", ")}`);
 const keepSecret = (v) => { if (v && v.length >= 12 && !secrets.includes(v)) secrets.push(v); };
 identities = makeIdentities({ root, work, envFiles, sourceFiles: () => files, say, keepSecret, appDir: () => appDir });
 // A real request that reached their model proves its door (lib/proof.mjs). What it proved goes up,
@@ -1233,7 +1233,7 @@ if (!viaToken && process.env.CORTAD_NO_REGISTER !== "1") {
   const got = await registerAll().catch((err) => { if (verbose) say(`could not register with your coding agents: ${err?.message ?? err}`); return { clients: [], changed: [] }; });
   clients = got.clients;
   const and = (list) => new Intl.ListFormat("en", { type: "conjunction" }).format(list);
-  if (got.changed.length) say(`For the person: Cortad added an entry and a skill for itself to the settings of ${and(clients)} in your home folder (${got.changed.map((f) => `~/${f}`).join(", ")}), so they can call it later; nothing in this repository changed.`);
+  if (got.changed.length) say(`For the person: ${and(clients)} can now use Cortad: its MCP server and skill were added to ${got.changed.map((f) => `~/${f}`).join(", ")}. This repository was not changed.`);
 }
 
 lock = await makeLock({ root, work });
