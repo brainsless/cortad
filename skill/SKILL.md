@@ -35,7 +35,7 @@ The connect command prints "Go back to the browser" once it is connected. Cortad
 
 The person asked for this when they connected Cortad: fix what a run found and check each fix.
 
-1. Tell the person in three lines: how many conversations played; how many passed, with the rate and its range; the two worst problems at their file and line.
+1. Tell the person in three lines: how many conversations played; the run's "All N conversations" line as printed, how many completed their request fully or partly with its rate and range; the two worst problems at their file and line.
 2. Call `findings` and fix the worst problem: one change, in the file and near the line it names. Then `verify <findingId>` and follow it with `run_status` until it decides.
 3. Go on to the next problem until each one is fixed or needs a decision only the person can make; tell them that decision in one line.
 4. After the last verify, tell the person what each verify decided, then start `npx -y {{cortad}} wait` in the background again.
@@ -46,7 +46,7 @@ The person asked for this when they connected Cortad: fix what a run found and c
 
 ## The first run: the baseline
 
-The first finished run on a repository prints, in order: what ran; the simulated users, each by the endpoint they use and the task they bring, with how many of their conversations passed; each journey with its rate and the checks that failed most there; the checks no conversation failed; what failed, found only by running the app, each with its file and line; what a code review would also find; what the numbers leave out; one line on production.
+The first finished run on a repository prints, in order: what ran; the simulated users, each by the endpoint they use and the task they bring, with how many of their conversations completed the request; each journey with its rate and the checks that failed most there; the checks no conversation failed; what failed, found only by running the app, each with its file and line; what a code review would also find; what the numbers leave out; one line on production.
 
 - A rate is a share with its range: the range the true share most likely sits in. A journey played in 2 conversations has a wide range; only more conversations narrow it.
 - Each finding has its reach, the exchange (`Sent`, `Broke on`, `Then`) and where the fix belongs.

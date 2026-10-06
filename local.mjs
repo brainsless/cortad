@@ -1222,18 +1222,15 @@ for (let off = 0; off < bytes.length; off += PART) {
   }
 }
 // Unchanged code has already been read: coming back says so instead of claiming a second read.
-stepDone(moved ? "connected · your change is in; the read from before stands" : resumed ? "connected · nothing changed since last time" : "connected");
+stepDone(moved ? "connected: your change is in, and what Cortad read before still stands" : resumed ? "connected: nothing changed since last time" : "connected");
 // The coding agents on this machine learn about Cortad now, once: an MCP entry and a skill in each
 // one's own home folder. A run started by an agent later comes back through lib/cli.mjs.
 // CORTAD_NO_REGISTER=1 leaves the coding agents' global skill and MCP entries alone: a stack under
 // test on this machine must never repoint the person's own agents at an unpublished build.
-// `clients`: the coding agents that know Cortad, named again in what this command says it did here.
-let clients = [];
 if (!viaToken && process.env.CORTAD_NO_REGISTER !== "1") {
   const got = await registerAll().catch((err) => { if (verbose) say(`could not register with your coding agents: ${err?.message ?? err}`); return { clients: [], changed: [] }; });
-  clients = got.clients;
   const and = (list) => new Intl.ListFormat("en", { type: "conjunction" }).format(list);
-  if (got.changed.length) say(`For the person: ${and(clients)} can now use Cortad: its MCP server and skill were added to ${got.changed.map((f) => `~/${f}`).join(", ")}. This repository was not changed.`);
+  if (got.changed.length) say(`For the person: ${and(got.clients)} can now use Cortad: its MCP server and skill were added to ${got.changed.map((f) => `~/${f}`).join(", ")}. This repository was not changed.`);
 }
 
 lock = await makeLock({ root, work });
@@ -1319,7 +1316,7 @@ async function appLife() {
     cmd: app.cmd ?? "", dir: relative(root, appDir) || ".", port: app.port, started: Boolean(launched),
     hooked: Boolean(launched && !proxy && capture?.watching(app.port)), proxy: proxy?.port ?? null,
     changed: [...new Set([...(app.lifted ?? []), ...Object.keys(keeping.envNow())])],
-    copies: Object.keys(keeping.envNow()).length ? "made" : "none", clients,
+    copies: Object.keys(keeping.envNow()).length ? "made" : "none",
   } : null);
   become("up", { ...upAt(), app: launched ? child?.pid ?? null : null });
   say(`your app is answering on port ${app.port}${app.cmd ? ` · ${app.cmd}` : ""}`);
