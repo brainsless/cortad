@@ -15,6 +15,7 @@
     "lib/contact-text.mjs",
     "lib/data.mjs",
     "lib/dissection-text.mjs",
+    "lib/document.mjs",
     "lib/failed-text.mjs",
     "lib/fresh.mjs",
     "lib/health.mjs",
