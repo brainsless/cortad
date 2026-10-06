@@ -11,6 +11,7 @@
     "lib/app-port.mjs",
     "lib/auto-reach.mjs",
     "lib/backing.mjs",
+    "lib/calls.mjs",
     "lib/cli.mjs",
     "lib/contact-text.mjs",
     "lib/data.mjs",
