@@ -45,7 +45,7 @@ import { makeKeeping } from "./lib/keeping.mjs";
 import { downLine, makeHealth } from "./lib/health.mjs";
 import { markRun, writesDirOf, writtenPaths } from "./lib/writes.mjs";
 import { makeHeld } from "./lib/held.mjs";
-import { answerAsk, makeAutoReach, takeAsk } from "./lib/auto-reach.mjs";
+import { answerAsk, ASK, makeAutoReach, takeAsk } from "./lib/auto-reach.mjs";
 
 const argv = process.argv.slice(2);
 // The two faces a coding agent uses after the first connect (lib/cli.mjs): the MCP server the
@@ -399,7 +399,6 @@ async function verb(job) {
       // takes one for the person's: it would become the request trials copy and the sign-in they carry.
       if (!turn) headers["x-cortad-turn"] = `cortad-${String(job.id).replace(/[^\w.-]/g, "").slice(0, 64)}`;
       const letGo = held.hold(job.id, turn || headers["x-cortad-turn"]);
-      askedAt = Date.now();
       // An endpoint your app answers later: it takes the message and its model answers afterwards,
       // outside the request (a queue's worker). Its own reply only says it took the message.
       const laterAt = Object.keys(headers).find((k) => k.toLowerCase() === LATER_HEADER);
@@ -1018,14 +1017,12 @@ const toolsNow = () => { try { return readFileSync(join(work, "tools.json"), "ut
 let toolsAtStart = "";
 const toolsKnown = () => toolsNow() !== "" && toolsNow() !== "[]";
 const toolsRecorded = () => !toolsKnown() || toolsNow() === toolsAtStart;
-// When the server last asked this machine to send a request to the app: a run, or a test before one.
-let askedAt = 0;
-const RUN_QUIET_MS = 30_000;
-// A list that arrives after the app started: the app is started again once, at once when nothing is
-// being asked of it (a run about to start waits at the gate meanwhile), else from the health loop once
-// the run's requests have stopped.
+// A list that arrives after the app started: the app is started again at once, behind the gate. The
+// server writes it as a run starts, before its first conversation, and before Cortad's first test
+// requests; any request already at the app is waited for, and one cut is sent again.
 async function recordTools() {
-  if (!launched || !child || restarting || toolsRecorded() || answering > 0 || Date.now() - askedAt < RUN_QUIET_MS) return;
+  if (restartDone) await restartDone;
+  if (!launched || !child || closing || toolsRecorded()) return;
   await restartApp("starting your app again so the tools your code gives its model are recorded");
 }
 function restartOnce(work) {
@@ -1357,7 +1354,6 @@ async function appLife(firstStart) {
   if (proxy) say(`send requests to port ${proxy.port}: it passes them to your app and Cortad sees each one. Requests sent straight to port ${app.port} are not seen`);
   for (const line of machineText(machineOf())) say(line);
   say("leave this open. Go back to the browser; Ctrl-C disconnects.");
-  void reachLoop();
   let downSince = 0;
   let toldDown = false;
   let appTold = true;
@@ -1370,6 +1366,8 @@ async function appLife(firstStart) {
       if (got.changed) appTold = false;
     } finally { release(); }
   }
+  // Only once the app runs on the copies made for this session.
+  void reachLoop();
   forgetTold = () => { appTold = false; };
   void restartOnSave().catch((e) => say(`could not watch your files for a save: ${e?.message ?? e}`));
   const health = makeHealth({ host: () => appHost, gone: () => Boolean(launched && appGone), inFlight: () => answering });
@@ -1388,7 +1386,6 @@ async function appLife(firstStart) {
       }
       const reach = await keeping.watch(app.port).catch(() => ({}));
       try { if (reach.copied && launched && child) await restartApp(COPIED); } finally { release(); }
-      await recordTools();
       if (reach.changed) appTold = false;
       if (!up || !appTold) { up = true; appTold = Boolean((await announce().catch(() => null))?.ok); }
       continue;
@@ -1449,9 +1446,27 @@ async function appLife(firstStart) {
 }
 void appLife(firstStart).catch((e) => quit(String(e?.message ?? e)));
 
+// The page Cortad's test requests come from: one the env names on the app's port, else one on this
+// machine (a local frontend in front of this API). A hosted address such as a Supabase URL is no page
+// of the app's, so an app whose env names none is asked with no Origin, as a server would ask it.
+const LOCAL_ORIGIN = /^https?:\/\/(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?$/;
+function ownOrigin(port) {
+  const local = envOrigins(envFiles).filter((o) => LOCAL_ORIGIN.test(o));
+  return local.find((o) => new URL(o).port === String(port)) ?? local[0] ?? null;
+}
+// Counted with the run's own requests, so a restart drains them, and sent only through the open gate.
+async function countedFetch(url, init) {
+  while (gate) await gate;
+  answering += 1;
+  try {
+    const res = await fetch(url, init);
+    const body = await res.arrayBuffer();
+    return new Response(body.byteLength ? body : null, { status: res.status, statusText: res.statusText, headers: res.headers });
+  } finally { answering -= 1; }
+}
 // Cortad's own test request to each endpoint the read lists, sent from here as soon as status lists
 // them (lib/auto-reach.mjs), and the agent's reach the same way. Status is asked every 5 seconds
-// while the code is read, then every 20; an ask from the agent is taken within a second.
+// while the code is read, then every minute; an ask from the agent is taken within a second.
 const autoReach = makeAutoReach({
   status: async () => {
     const token = readToken(project);
@@ -1459,10 +1474,19 @@ const autoReach = makeAutoReach({
     return res?.ok ? res.data : null;
   },
   runner: () => (became?.state === "up" && !restarting ? { state: "up", ...became.fields } : null),
-  origin: () => envOrigins(envFiles)[0] ?? (app ? `http://localhost:${app.port}` : null),
+  // Fails closed: stores that could not be looked at hold the requests as a store waiting for a yes does.
+  waiting: async () => {
+    if (gate) return "Your app's data is being copied for this session.";
+    const blocked = await keeping.blocked(Boolean(launched)).catch(() => null);
+    const yes = new Set(consent.stores ?? []);
+    return !blocked || blocked.some((b) => !b.down && !yes.has(b.id)) ? "Cortad's test requests wait for your yes on the card in the browser, since your app writes into data no copy was made of." : null;
+  },
+  origin: () => (app ? ownOrigin(app.port) : null),
   signIn: async (m) => { const role = typeof m.as === "string" ? m.as : identities?.roles()[0]; return role ? identities.headerFor(role) : null; },
   stampOf: (m) => { try { return m.file ? String(statSync(join(root, m.file)).mtimeMs) : ""; } catch { return ""; } },
+  asked: () => existsSync(join(homeOf(project), ASK)),
   say,
+  fetchImpl: countedFetch,
 });
 async function reachLoop() {
   for (let dueAt = 0; !closing; await new Promise((r) => setTimeout(r, 1000))) {
@@ -1470,7 +1494,7 @@ async function reachLoop() {
     if (!ask && Date.now() < dueAt) continue;
     const out = await autoReach(ask).catch(() => null);
     if (ask) { try { answerAsk(homeOf(project), ask.id, out?.text ?? "Nothing was sent.\nnext: status"); } catch { /* the agent's wait runs out */ } }
-    dueAt = Date.now() + (out?.settled ? 20_000 : 5_000);
+    dueAt = Date.now() + (out?.wait ?? 30_000);
   }
 }
 

@@ -1381,7 +1381,7 @@ def _install():
             return
         held_said.add((method, host))
         try:
-            sys.stderr.write("cortad: a simulated customer's request made this app send %s to %s. Cortad kept that call on this machine and answered it with a stand-in success, since it could change something real. A failure right after this line comes from that stand-in, not from your code. With that service's test key the call goes out as sent.\n" % (method, host))
+            sys.stderr.write("cortad: a request Cortad sent made this app send %s to %s. Cortad kept that call on this machine and answered it with a stand-in success, since it could change something real. A failure right after this line comes from that stand-in, not from your code. With that service's test key the call goes out as sent.\n" % (method, host))
         except Exception:
             pass
 
