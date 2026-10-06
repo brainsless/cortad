@@ -82,7 +82,7 @@ const step = (line) => {
 };
 const clearStep = () => { if (process.stdout.isTTY) process.stdout.write("\r\x1b[K"); };
 const stepDone = (line) => { clearStep(); say(line); };
-if (!explain && !viaToken && !/^[A-Z0-9]{8}$/.test(code)) fail(`usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--proxy]   |   npx cortad --explain   |   npx cortad ${VERBS.join(" | ")}`);
+if (!explain && !viaToken && !/^[A-Z0-9]{8}$/.test(code)) fail(`usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--proxy]   |   npx cortad --explain   |   npx cortad ${[...VERBS, "wait"].join(" | ")}`);
 // Where Brainsless is. The host is not on the command line: a code cannot point at an impostor.
 const origin = new URL(process.env.CORTAD_ORIGIN || "https://cortad.com");
 // Ours, and only ours. brainsless.com is the same service under its earlier name and stays trusted
