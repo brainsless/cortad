@@ -48,8 +48,8 @@ The person asked for this when they connected Cortad: fix what a run found and c
 
 The first finished run on a repository prints, in order: what ran; the simulated users, each by the endpoint they use and the task they bring, with how many of their conversations completed the request; each journey with its rate and the checks that failed most there; the checks no conversation failed; what failed, found only by running the app, each with its file and line; what a code review would also find; what the numbers leave out; one line on production.
 
-- A rate is a share with its range: the range the true share most likely sits in. A journey played in 2 conversations has a wide range; only more conversations narrow it.
-- Each finding has its reach, the exchange (`Sent`, `Broke on`, `Then`) and where the fix belongs.
+- Every rate comes with its likely range. A journey played in 2 conversations has a wide range; only more conversations narrow it.
+- Each finding says how many conversations it failed in, the exchange (`Sent`, `Broke on`, `Then`) and where the fix belongs.
 - Some conversations are saved to test a fix: a verify replays them too, so a fix is graded on conversations you have not read.
 
 ## Findings
