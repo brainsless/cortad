@@ -1482,9 +1482,16 @@ const autoReach = makeAutoReach({
   signIn: async (m) => { const role = typeof m.as === "string" ? m.as : identities?.roles()[0]; return role ? identities.headerFor(role) : null; },
   stampOf: (m) => { try { return m.file ? String(statSync(join(root, m.file)).mtimeMs) : ""; } catch { return ""; } },
   asked: () => existsSync(join(homeOf(project), ASK)),
+  report: async (answers) => {
+    if (!answers.length && reachedBox === box) return;
+    const to = box;
+    if ((await call("POST", `/local/${to}/reached`, { answers }, { timeoutMs: 15_000 })).ok) reachedBox = to;
+  },
   say,
   fetchImpl: countedFetch,
 });
+// The connection the server last heard sends its test requests itself; a reattach is a new one.
+let reachedBox = "";
 async function reachLoop() {
   for (let dueAt = 0; !closing; await new Promise((r) => setTimeout(r, 1000))) {
     const ask = takeAsk(homeOf(project));

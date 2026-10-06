@@ -6,7 +6,7 @@ The last line of a run_status result is the next call. A plan line names what th
 
 ## wait
 
-`npx {{cortad}} wait` returns when the next run ends. It prints what `run_status` prints for that finished run, and its last line is `next: findings <jobId>`. When the connect command has been stopped for a minute it ends with `The connect command stopped, so no run can start from the browser.`; after six hours with no run, with `No run started in 6 hours.`
+`npx {{cortad}} wait` returns when the next run ends. It prints what `run_status` prints for that finished run, and its last line is `next: findings <jobId>`. When the connect command has been stopped for a minute it ends with `The connect command stopped, so no run can start from the browser.`; after six hours with no run, with `No run ended in 6 hours.`
 
 ## status
 
@@ -31,8 +31,10 @@ Endpoints that answered (1):
     Passages handed to the model: 3.
     Problem at apps/api/src/agent/system.ts:30: The reply carried "</student_profile>", markup from the prompt your app sent the model.
     Last message: "and the second question?".
-Endpoints found in your code that have not answered yet (1):
-  POST /api/homework/explain  apps/api/src/routes/homework.ts:18
+Endpoints found in your code that have not answered yet (2):
+  POST /api/homework/explain  apps/api/src/routes/homework.ts:18  Cortad's test request was answered with HTTP 500.
+  POST /api/progress/summary  apps/api/src/routes/progress.ts:9  Needs a signed-in user.
+Cortad sends each of them a test request.
 For the person: a run plays 36 conversations: about 72 replies in about 6 minutes. It costs about $0.38 on your OpenAI key for gpt-4o-mini. Every reply is checked against the 46 rules read from your code.
 A run starts when the person presses Run on the card in the browser or asks you for one; if they say they pressed it, call run rather than ask them again.
 ```
@@ -89,6 +91,17 @@ Rules in the code: 16, in 5 files.
   apps/api/src/agent/billing.ts:27  "Never promise a teacher a feature that is not released."
   apps/web/src/chat/welcome.ts:3  "Greet a first lesson with what the student can ask."
   apps/web/src/chat/welcome.ts:11  "End each homework answer with one practice question."
+```
+
+## reach
+
+Sends Cortad's test request again, from the connect command on this machine, after a fix:
+
+```
+Sent 1 request to your app on port 3100, one at a time:
+  POST /api/homework/explain: 200 in 2.4 seconds.
+status shows which of them reached your model.
+next: status
 ```
 
 ## run
