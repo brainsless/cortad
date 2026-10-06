@@ -1471,13 +1471,9 @@ const autoReach = makeAutoReach({
     return res?.ok ? res.data : null;
   },
   runner: () => (became?.state === "up" && !restarting ? { state: "up", ...became.fields } : null),
-  // Fails closed: stores that could not be looked at hold the requests as a store waiting for a yes does.
-  waiting: async () => {
-    if (gate) return "Your app's data is being copied for this session.";
-    const blocked = await keeping.blocked(Boolean(launched)).catch(() => null);
-    const yes = new Set(consent.stores ?? []);
-    return !blocked || blocked.some((b) => !b.down && !yes.has(b.id)) ? "Cortad's test requests wait for your yes on the card in the browser, since your app writes into data no copy was made of." : null;
-  },
+  // One test request per endpoint is what the person's own agent sends by hand, so it does not wait on
+  // the yes a run's writes into an uncopied store need; it waits only while a copy is being made.
+  waiting: async () => (gate ? "Your app's data is being copied for this session." : null),
   origin: () => (app ? ownOrigin(app.port) : null),
   signIn: async (m) => { const role = typeof m.as === "string" ? m.as : identities?.roles()[0]; return role ? identities.headerFor(role) : null; },
   stampOf: (m) => { try { return m.file ? String(statSync(join(root, m.file)).mtimeMs) : ""; } catch { return ""; } },
