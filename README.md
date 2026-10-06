@@ -6,7 +6,7 @@ Runs Cortad's test conversations against the AI app on your machine, and gives y
 npx cortad <code>
 ```
 
-Run it in your app's folder with the code from cortad.com. It starts your app, connects it to Cortad, and adds Cortad to Claude Code, Codex, Cursor and Copilot on this machine. A run starts when you press Run in the browser or ask your agent for one. Ctrl-C disconnects.
+Run it in your app's folder with the code from cortad.com. It starts your app, connects it to Cortad, and adds Cortad to Claude Code, Codex, Cursor and Copilot on this machine. Cortad sends each AI endpoint it finds a test request, and the first run starts by itself once they have answered; later runs start when you press Run in the browser or ask your agent for one. Ctrl-C disconnects.
 
 ## Your coding agent
 
@@ -14,11 +14,13 @@ After that, your agent has ten tools: `status`, `reach`, `run`, `run_status`, `f
 
 ```
 npx cortad status
-npx cortad reach -H 'cookie: session=...'
+npx cortad reach
 npx cortad run
 npx cortad findings
 npx cortad verify <findingId>
 ```
+
+`npx cortad wait` returns when the next run ends, with what it found; an agent starts it in the background so the run's end wakes it.
 
 A run needs your app up. If nothing on this machine is holding it, the command starts it with the key in `~/.cortad` and stops it ten minutes after the last run.
 
