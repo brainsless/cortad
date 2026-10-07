@@ -42,7 +42,7 @@ def _under_way(v, depth=0):
     state = v.get("status", v.get("state"))
     if isinstance(state, str) and UNDER_WAY.match(state):
         return True
-    return any(isinstance(x, list) and _under_way(x, depth + 1) for x in v.values())
+    return any(isinstance(x, (list, dict)) and _under_way(x, depth + 1) for x in v.values())
 # The ask the last call pinned in this handler's context was made for. A queue runs each handler in a
 # context of its own, so its later calls, which carry none of the person's words, are told apart by
 # it when several asks are open at once. Only a tiebreak: it never outranks what the rules decide.
