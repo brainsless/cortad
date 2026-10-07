@@ -1353,11 +1353,55 @@ def _install():
         except Exception:
             return True
 
-    # A GraphQL query reads; a mutation writes. A `query` that is not GraphQL (SQL over HTTP) is held.
-    def reads_only(raw):
-        b = parsed(raw) if raw else None
-        q = b.get("query") if isinstance(b, dict) else None
-        return isinstance(q, str) and bool(re.match(r"^\s*(?:\{|query\b|fragment\b)", q)) and not re.search(r"\bmutation\b", q)
+    # A GraphQL query reads; a mutation writes. A `query` in JSON that is not GraphQL (SQL over HTTP,
+    # where a SELECT can write through a function) is held.
+    # ClickHouse, Trino and Presto take every query as a POST of its text, a SELECT too, and a SELECT
+    # there cannot write: one statement that starts as a read and holds no word that writes, sent to
+    # what its address or its headers show is one of them, goes out (lib/trace.cjs does the same).
+    sql_quoted = re.compile(r"""'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`[^`]*`|--[^\n]*|/\*[\s\S]*?\*/""")
+    sql_shows = re.compile(r"^(?:show|describe|desc|exists)\b", re.I | re.A)
+    sql_selects = re.compile(r"^(?:select|with|explain)\b", re.I | re.A)
+    sql_writes = re.compile(r"(?<![.\w])(?:insert|update|delete|merge|into|create|alter|drop|truncate|refresh|call|execute)(?![.\w])", re.I | re.A)
+    sql_hands_on = re.compile(r"\b(?:table|query|jdbc|odbc|executable)\s*\(", re.I | re.A)
+    sql_open = re.compile(r"""[;'"`]|/\*|\$\$""")
+    analytics_name = re.compile(r"clickhouse|trino|presto", re.I)
+    analytics_headers = ("x-clickhouse-user", "x-clickhouse-key", "x-clickhouse-database", "x-clickhouse-format", "x-trino-user", "x-presto-user")
+
+    def statement_of(sql):
+        bare = sql_quoted.sub(lambda m: "''" if m.group(0)[0] == "'" else "x" if m.group(0)[0] in '"`' else " ", str(sql or "")).strip()
+        return re.sub(r";\s*$", "", bare)
+
+    # A quote or a comment left open, a second statement or a dollar-quoted body is not read as a read.
+    def selects(bare):
+        if sql_open.search(bare.replace("''", "")):
+            return False
+        return bool(sql_shows.match(bare)) or bool(sql_selects.match(bare) and not sql_writes.search(bare) and not sql_hands_on.search(bare))
+
+    def analytics(parts, header_of):
+        try:
+            port = parts.port
+        except ValueError:
+            port = None
+        return port in (8123, 8443) or bool(analytics_name.search(parts.hostname or "")) or bool(analytics_name.search(str(header_of("user-agent") or ""))) \
+            or any(header_of(name) for name in analytics_headers) or parts.path == "/v1/statement"
+
+    def reads_only(raw, url=None, header_of=None):
+        sent = str(raw or "").strip()
+        b = parsed(sent) if sent else None
+        if b is not None:
+            q = b.get("query") if isinstance(b, dict) else None
+            return isinstance(q, str) and bool(re.match(r"^\s*(?:\{|query\b|fragment\b)", q)) and not re.search(r"\bmutation\b", q)
+        try:
+            parts = urlsplit(str(url)) if url else None
+            if parts is None or not analytics(parts, header_of or (lambda name: None)):
+                return False
+            # ClickHouse joins a `query` in the address to the body: both are read as the one statement.
+            asked = "%s %s" % (dict(parse_qsl(parts.query)).get("query", ""), sent)
+            # ClickHouse reads a backslash before a quote as part of the string and Trino as its end,
+            # so where a string stops is not known here: held.
+            return not re.search(r"""\\['"`]""", asked) and selects(statement_of(asked))
+        except Exception:
+            return False
 
     held_count = itertools.count(1)
 
@@ -1381,7 +1425,7 @@ def _install():
             return
         held_said.add((method, host))
         try:
-            sys.stderr.write("cortad: a request Cortad sent made this app send %s to %s. Cortad kept that call on this machine and answered it with a stand-in success, since it could change something real. A failure right after this line comes from that stand-in, not from your code. With that service's test key the call goes out as sent.\n" % (method, host))
+            sys.stderr.write("cortad: a request Cortad sent made this app send %s to %s. Cortad kept that call on this machine and answered it with a stand-in success, since it could change something real. A failure right after this line may come from that stand-in rather than from your code. With that service's test key the call goes out as sent.\n" % (method, host))
         except Exception:
             pass
 
@@ -2426,7 +2470,7 @@ def _install():
 
         # A held call that cannot be answered fails in the app; it is never sent instead.
         def held_httpx(request, sent):
-            if not held_here(request.url, request.method, lambda: keys_in(request.headers)) or reads_only(sent):
+            if not held_here(request.url, request.method, lambda: keys_in(request.headers)) or reads_only(sent, request.url, request.headers.get):
                 return None
             kind = request.headers.get("content-type", "")
             held_row(request.url, request.method, sent, kind, ctx.get())
@@ -2489,7 +2533,7 @@ def _install():
             if not held_here(request.url, request.method, lambda: keys_in(request.headers)):
                 return None
             raw = text(request.body, reply_max)
-            if reads_only(raw):
+            if reads_only(raw, request.url, request.headers.get):
                 return None
             import datetime
             models, structures = sys.modules["requests.models"], sys.modules["requests.structures"]
@@ -2540,6 +2584,13 @@ def _install():
             basic = k.get("auth") or getattr(self, "_default_auth", None)
             return [given.get(n) or defaults.get(n) for n in key_headers] + [basic.encode() if basic else None]
 
+        def header_of(self, k, name):
+            for headers in (k.get("headers"), getattr(self, "_default_headers", None)):
+                for n, v in dict(headers or {}).items():
+                    if str(n).lower() == name:
+                        return v
+            return None
+
         # A path relative to the session's base address is decided on the whole address.
         def whole(self, str_or_url):
             try:
@@ -2550,7 +2601,7 @@ def _install():
         async def requested(self, method, str_or_url, *a, **k):
             body = k.get("json") if k.get("json") is not None else k.get("data")
             url = whole(self, str_or_url)
-            if held_here(url, method, lambda: keys_of(self, k)) and not reads_only(text(body, reply_max)):
+            if held_here(url, method, lambda: keys_of(self, k)) and not reads_only(text(body, reply_max), url, lambda name: header_of(self, k, name)):
                 port = held_port()
                 if port is None:
                     raise module.ClientConnectionError("this write was kept from leaving and could not be answered")
