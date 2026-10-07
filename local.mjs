@@ -38,7 +38,7 @@ import { CAPTURED, makeCapture } from "./lib/replay.mjs";
 import { sampleHere } from "./lib/sample.mjs";
 import { mintAcross, originFor, servicePort, waitForPort } from "./lib/service.mjs";
 import { listingUrl } from "./lib/listing.mjs";
-import { hookable, installPlan, missingDependency, startPlan, workspaces } from "./lib/start.mjs";
+import { hookable, installPlan, missingDependency, shownCommand, startPlan, workspaces } from "./lib/start.mjs";
 import { openProxy } from "./lib/proxy.mjs";
 import { liftedLimits, sessionLifts } from "./lib/switches.mjs";
 import { makeKeeping } from "./lib/keeping.mjs";
@@ -663,6 +663,10 @@ async function ask(question) {
   return line.trim() || null;
 }
 let child = null;
+// An app this command did not start carries nothing that counts its model calls, and no run plays
+// against it (the API holds Run): databuddy's free run played 39 conversations into a route that
+// answers from code.
+const UNSEEN = "your app was already running, so Cortad cannot see the calls it makes to its model, and no run can start.";
 async function startApp() {
   const wanted = Number(flag("--port"));
   // "--port 8106 --start ..." is "start it, it will answer on 8106", not "it is already on 8106":
@@ -671,11 +675,10 @@ async function startApp() {
     if (!(await answers(wanted))) return { port: null, said: "", why: `nothing is answering on port ${wanted}, so there is nothing to ask.`, noStart: true };
     const took = await takeOver(wanted);
     if (took) return took;
-    say("your app was already running, so its request limits stay as they are; if it answers 429, stop it and run this without --port and they are raised for the session");
     if (proxyAsked) {
       await useProxy();
-      say(`to have its model calls seen, start your app with: ${Object.entries(proxy.env({ ...envExports(envFiles), ...process.env })).map(([k, v]) => `${k}=${v}`).join(" ")}`);
-    }
+      say(`your app was already running, so Cortad cannot see the calls it makes to its model until it is started with: ${Object.entries(proxy.env({ ...envExports(envFiles), ...process.env })).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+    } else say(`${UNSEEN} Stop it and run this again without --port: this command starts your app itself.`);
     return { port: wanted, cmd: null };
   }
   const plan = startPlan({ root, typed: flag("--start"), onPath });
@@ -718,7 +721,7 @@ async function startApp() {
       await keeping.forget();
       const took = await takeOver(held.port);
       if (took) return took;
-      say(`your app is already running on port ${held.port}, so that one is used; its request limits stay as they are`);
+      say(`${UNSEEN} Stop the one on port ${held.port} and run this again: this command starts your app itself.`);
       return { port: held.port, cmd: null };
     }
   }
@@ -1288,7 +1291,7 @@ const announce = async () => {
   // Through the proxy, a message is seen arriving at its front, and its model calls once the app was started with its settings on the proxy.
   const hooked = Boolean(proxy ? launched || proxy.seen() : launched && capture?.watching(app.port));
   const started = Boolean(launched);
-  const told = await call("POST", `/local/${box}/app`, { port: doorPort(), cmd: app.cmd, origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: (await keeping.lines(started)).map(mask), blocked: await keeping.blocked(started), watching: hooked, metered: hooked, proves: hooked });
+  const told = await call("POST", `/local/${box}/app`, { port: doorPort(), cmd: shownCommand(app.cmd, mask), origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: (await keeping.lines(started)).map(mask), blocked: await keeping.blocked(started), watching: hooked, metered: hooked, proves: hooked });
   if (told.ok) await allowOutbound(told.data?.consent);
   return told;
 };
@@ -1337,7 +1340,7 @@ async function appLife(firstStart) {
   clearStep();
   if (!told.ok) return quit(told.data?.error ?? `could not register your app (${told.status})`);
   machineOf = () => (app ? {
-    cmd: app.cmd ?? "", dir: relative(root, appDir) || ".", port: app.port, started: Boolean(launched),
+    cmd: shownCommand(app.cmd, mask) ?? "", dir: relative(root, appDir) || ".", port: app.port, started: Boolean(launched),
     hooked: Boolean(launched && !proxy && capture?.watching(app.port)), proxy: proxy?.port ?? null,
     changed: [...new Set([...(app.lifted ?? []), ...Object.keys(keeping.envNow())])],
     copies: Object.keys(keeping.envNow()).length ? "made" : "none",
