@@ -1548,7 +1548,7 @@ def _install():
 
     try:
         from cortad_tied import Tied
-        tied = Tied(norm, body_of, reply_of, lambda req: (req.get("said") or (0, ""))[1] if req.get("late") else None)
+        tied = Tied(norm, body_of, reply_of, lambda req: req.get("said_all", []) if req.get("late") else None)
     except Exception:
         tied = None
 
@@ -1749,6 +1749,7 @@ def _install():
                 if req and req.get("late"):
                     if not row.get("embedding"):
                         req["said"] = (row["status"], reply_text(events)[:model_words], now)
+                        req["said_all"] = (req.get("said_all", []) + [req["said"][1]])[-12:]
                     settle(req)
             row.update(inside_of(req))
             if req and (req.get("kept") or req.get("turn")):

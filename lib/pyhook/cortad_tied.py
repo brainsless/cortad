@@ -97,8 +97,8 @@ def _said_sentences(text):
 
 class Tied:
     # `body_of(req)` and `reply_of(req)` read what a request carried and what the app answered.
-    # `said_of(req)`: the words a model call made for an ask answered later has written, "" before
-    # one has, None where the hook hears none.
+    # `said_of(req)`: what the model calls made for an ask answered later have written, one entry a
+    # call and none before one has, None where the hook hears none (tied.cjs saidOf).
     def __init__(self, norm, body_of, reply_of, said_of=None):
         self.norm, self.body_of, self.reply_of = norm, body_of, reply_of
         self.said_of = said_of or (lambda req: None)
@@ -201,7 +201,7 @@ class Tied:
         if _under_way(_json(raw)):
             return False
         reply = self.norm(raw)
-        return any(self.norm(w)[:CARRY] in reply for w in _said_sentences(said))
+        return any(self.norm(w)[:CARRY] in reply for one in (said if isinstance(said, (list, tuple)) else [said]) for w in _said_sentences(one))
 
     def _answered(self, tie, at):
         for i in tie:
