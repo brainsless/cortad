@@ -1173,7 +1173,7 @@ identities = makeIdentities({ root, work, envFiles, sourceFiles: () => files, sa
 // A real request that reached their model proves its door (lib/proof.mjs). What it proved goes up,
 // masked like everything else, and nothing goes up that the mask could not read; the sign-in each
 // request carried stays here.
-capture = makeCapture({ work, keepSecret, writes: join(homeOf(projectOf(root)), "writes"), root, files: () => files, appFolder: () => relative(root, appDir), printed: printedBetween, onProof: (proof) => {
+capture = makeCapture({ work, keepSecret, signIns: join(homeOf(projectOf(root)), "sign-ins.json"), writes: join(homeOf(projectOf(root)), "writes"), root, files: () => files, appFolder: () => relative(root, appDir), printed: printedBetween, onProof: (proof) => {
   let masked;
   try { masked = JSON.parse(mask(JSON.stringify(proof))); } catch { return; }
   call("POST", `/local/${box}/proof`, masked).catch(() => {});
