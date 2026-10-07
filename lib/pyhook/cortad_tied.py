@@ -28,6 +28,21 @@ BEFORE_MS = 60000
 PROMPTS_KEPT, PROMPT_HEAD = 64, 500
 # How much of a sentence the model wrote a fetched reply has to carry to be the answer.
 CARRY = 60
+# tied.cjs UNDER_WAY: a job's own word for work still going on.
+UNDER_WAY = re.compile(r"^(?:queued|pending|waiting|scheduled|submitted|accepted|created|starting|started|running|processing|generating|working|thinking|searching|retrieving|streaming|in[_ -]?progress|not[_ -]?(?:started|ready))$", re.I)
+
+
+def _under_way(v, depth=0):
+    if depth > 4:
+        return False
+    if isinstance(v, list):
+        return bool(v) and _under_way(v[-1], depth + 1)
+    if not isinstance(v, dict):
+        return False
+    state = v.get("status", v.get("state"))
+    if isinstance(state, str) and UNDER_WAY.match(state):
+        return True
+    return any(isinstance(x, list) and _under_way(x, depth + 1) for x in v.values())
 # The ask the last call pinned in this handler's context was made for. A queue runs each handler in a
 # context of its own, so its later calls, which carry none of the person's words, are told apart by
 # it when several asks are open at once. Only a tiebreak: it never outranks what the rules decide.
@@ -182,7 +197,10 @@ class Tied:
         said = self.said_of(asker)
         if said is None:
             return True
-        reply = self.norm(self.reply_of(fetch))
+        raw = self.reply_of(fetch)
+        if _under_way(_json(raw)):
+            return False
+        reply = self.norm(raw)
         return any(self.norm(w)[:CARRY] in reply for w in _said_sentences(said))
 
     def _answered(self, tie, at):

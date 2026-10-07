@@ -12,7 +12,7 @@
 // on with the key this connect leaves in ~/.cortad. Nothing here touches git. Your environment
 // never leaves this machine. Ctrl-C ends everything.
 
-import { storesOf } from "./lib/stores.mjs";
+import { storesOf, withoutStoreSettings } from "./lib/stores.mjs";
 import { notAnApp, withoutStores } from "./lib/app-port.mjs";
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
@@ -912,7 +912,7 @@ async function freed(cmd, lifted) {
 // was copied, started, or left where trials write into it is told in the terminal here and to the
 // run with the app (announce), so status says it beside Run and the report keeps it.
 const keeping = makeKeeping({
-  root, work, ledgerFile: join(homeOf(project), "made.json"), onPath, say, hold,
+  root, work, ledgerFile: join(homeOf(project), "made.json"), onPath, say, hold, typed: Boolean(flag("--start")),
   launch: (plan) => sidecar(plan.cmd, plan.cwd),
   connections: () => capture?.connections() ?? [],
   settings: () => {
@@ -941,7 +941,10 @@ async function start(waitMs, tries = 3) {
   loaded = note;
   const copies = await keeping.env(true);
   await allowOutbound();
-  const base = { ...envExports(envFiles), ...process.env, ...lifted, ...copies };
+  // A start command the person typed says which databases the app uses: the store settings of their
+  // settings files are left for the app to load, since handed over here they outrank the
+  // environment that command chose, and no copy is pointed at.
+  const base = flag("--start") ? { ...withoutStoreSettings(envExports(envFiles)), ...process.env, ...lifted } : { ...envExports(envFiles), ...process.env, ...lifted, ...copies };
   child = spawnTied(cmd, { cwd: appDir, env: { ...base, ...(proxy ? proxy.env(base) : capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
   const mine = child;
   become("starting", { app: mine.pid ?? null });
