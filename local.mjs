@@ -133,15 +133,10 @@ if (viaToken) await holdProject();
 
 // ---- what leaves the machine: the source git would commit, and nothing git is told to ignore
 const SKIP_DIR = /^(node_modules|\.git|dist|build|out|coverage|vendor|venv|\.venv|env|target|tmp|\.next|\.nuxt|\.turbo|\.cache|__pycache__|\.terraform|\.wrangler|\.svelte-kit|\.output|\.parcel-cache|\.idea|\.vscode|secrets?|\.secrets?)$/i;
-// Env files by any name (scripts/books.env is one), keys, and data rather than code.
-const SKIP_FILE = /^\.env(\..*)?$|^\.envrc$|\.env$|\.(pem|key|p12|pfx|jks|keystore|sqlite|sqlite3|db|log|lock|map|zip|tar|gz|tgz|7z|rar|png|jpe?g|gif|webp|ico|svg|mp3|mp4|wav|mov|pdf|woff2?|ttf|otf|eot|bin|exe|dll|so|dylib|wasm|onnx|pt|pth|safetensors|parquet|csv|tsv|jsonl|ndjson|xlsx?|numbers|DS_Store)$/i;
-const MAX_FILE = 1_000_000;
-// A JSON or YAML file this large is a dataset (exports, catalogues, fixtures), not code or a prompt,
-// and datasets are where projects keep what they would never paste into a chat.
-const MAX_DATA = 200_000;
-const DATA_FILE = /\.(json|ya?ml)$/i;
-const MANIFEST_FILE = /^(package|tsconfig|composer|app|manifest)\.json$/i;
-const MAX_TOTAL = 80_000_000;
+// Env files by any name (scripts/books.env is one), keys, credentials, media and compiled output.
+const SKIP_FILE = /^\.env(\..*)?$|^\.envrc$|\.env$|\.(pem|key|p12|pfx|jks|keystore|sqlite|sqlite3|db|log|lock|map|zip|tar|gz|tgz|7z|rar|png|jpe?g|gif|webp|ico|svg|mp3|mp4|wav|mov|pdf|woff2?|ttf|otf|eot|bin|exe|dll|so|dylib|wasm|onnx|pt|pth|safetensors|numbers|DS_Store)$/i;
+const MAX_FILE = 25_000_000;
+const MAX_TOTAL = 256_000_000;
 const ENV_FILE = /^\.env(\.(local|staging|stage|development|dev|test|example|sample))?$/;
 
 function walk(dir, depth, out, envs, total) {
@@ -156,7 +151,6 @@ function walk(dir, depth, out, envs, total) {
     let size;
     try { size = statSync(full).size; } catch { continue; }
     if (size > MAX_FILE || total + size > MAX_TOTAL) continue;
-    if (size > MAX_DATA && DATA_FILE.test(e.name) && !MANIFEST_FILE.test(e.name)) continue;
     if (!shareable(relative(root, full), false)) continue;
     out.push(relative(root, full));
     total += size;
@@ -1150,8 +1144,8 @@ if (explain) {
     `talks to        ${origin.origin}, localhost (your app's port only), and your own model providers, to ask each which models your key can use`,
     `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once${listed ? " (what git would commit)" : ""}`,
     ...(kept.length ? [`kept here       ${kept.length} file${kept.length === 1 ? " that holds" : "s that hold"} keys: ${kept.slice(0, 6).join(", ")}${kept.length > 6 ? ", ..." : ""}`] : []),
-    ...(left.length ? [`also not sent   ${left.length} tracked data, media or lock file${left.length === 1 ? "" : "s"}: ${left.slice(0, 6).join(", ")}${left.length > 6 ? ", ..." : ""}`] : []),
-    `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, data files, node_modules, .git`,
+    ...(left.length ? [`also not sent   ${left.length} tracked media or lock file${left.length === 1 ? "" : "s"}: ${left.slice(0, 6).join(", ")}${left.length > 6 ? ", ..." : ""}`] : []),
+    `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, node_modules, .git`,
     `env files       values read here only: to hide them in replies, to sign in a test account, and to ask your providers what your keys reach. Variable names and whether a switch is on or off go up; no value does`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (only after your yes, for this session only)`}`,
