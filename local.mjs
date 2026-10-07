@@ -410,7 +410,12 @@ async function verb(job) {
         if (role === CAPTURED || role.startsWith(`${CAPTURED}:`)) {
           spokenAs = role;
           // Speaking as one of the customers whose requests we watched: every header their own client sent.
-          for (const [name, value] of Object.entries(capture?.headers(role) ?? {})) { for (const k of Object.keys(headers)) if (k.toLowerCase() === name) delete headers[k]; headers[name] = value; }
+          const theirs = capture?.headers(role);
+          for (const [name, value] of Object.entries(theirs ?? {})) { for (const k of Object.keys(headers)) if (k.toLowerCase() === name) delete headers[k]; headers[name] = value; }
+          // No request of theirs is held (a new connect): sent from the app's own address, as Cortad's
+          // own test request is, so an app that lets visitors in by Origin lets this one in.
+          const from = !theirs && app ? ownOrigin(app.port) : null;
+          if (from && !Object.keys(headers).some((k) => k.toLowerCase() === "origin")) { headers.origin = from; headers.referer = `${from}/`; }
         } else {
           const held = await identities?.headerFor(role);
           if (held) { for (const k of Object.keys(headers)) if (k.toLowerCase() === held.name) delete headers[k]; headers[held.name] = held.value; }
