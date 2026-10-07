@@ -26,6 +26,8 @@ RECENT_KEPT, RECENT_MS = 32, 300000
 # turn (a chat UI shows the message with one event, then answers it with the next).
 BEFORE_MS = 60000
 PROMPTS_KEPT, PROMPT_HEAD = 64, 500
+# How much of a sentence the model wrote a fetched reply has to carry to be the answer.
+CARRY = 60
 # The ask the last call pinned in this handler's context was made for. A queue runs each handler in a
 # context of its own, so its later calls, which carry none of the person's words, are told apart by
 # it when several asks are open at once. Only a tiebreak: it never outranks what the rules decide.
@@ -68,10 +70,23 @@ def _address_ids(req):
     return {v for v in path.split("/") + [v for _, v in parse_qsl(query)] if ID.match(v)}
 
 
+# tied.cjs saidSentences: a JSON answer the clip cut short is read by its strings.
+def _said_sentences(text):
+    text = text.decode("utf-8", "replace") if isinstance(text, (bytes, bytearray)) else str(text or "")
+    v = _json(text)
+    whole = [s for s in (_scalars(v, []) if v is not None else [text]) if _sentence(s)]
+    if len(whole) != 1 or not re.match(r"\s*[\[{]", whole[0]):
+        return whole
+    return [m for m in re.findall(r'"((?:[^"\\]|\\.){8,})"', whole[0]) if _sentence(m)]
+
+
 class Tied:
     # `body_of(req)` and `reply_of(req)` read what a request carried and what the app answered.
-    def __init__(self, norm, body_of, reply_of):
+    # `said_of(req)`: the words a model call made for an ask answered later has written, "" before
+    # one has, None where the hook hears none.
+    def __init__(self, norm, body_of, reply_of, said_of=None):
         self.norm, self.body_of, self.reply_of = norm, body_of, reply_of
+        self.said_of = said_of or (lambda req: None)
         self.open = {}
         self.recent = collections.deque(maxlen=RECENT_KEPT)
         # The heads of the prompts this process sent: one arriving at a server in the same process (an
@@ -127,7 +142,7 @@ class Tied:
         now = int(time.time() * 1000)
         for t in reversed(list(self.recent)) if mine else []:
             # A request answered later is fetched afterwards only by a read of it, never by a new message.
-            if t["at"] <= req["at"] and now - t["at"] <= RECENT_MS and (t.get("pinned") or not pinned_only) and (not t.get("settled") or req["method"] == "GET"):
+            if t["at"] <= req["at"] and now - t.get("call_at", t["at"]) <= RECENT_MS and (t.get("pinned") or not pinned_only) and (not t.get("settled") or req["method"] == "GET"):
                 shared = mine & self._ids(t)
                 if shared:
                     return t, shared
@@ -146,7 +161,7 @@ class Tied:
     def closed(self, req):
         self.open.pop(req["id"], None)
         asker = req.get("asker")
-        if asker and not asker.get("written") and not asker.get("calls_open"):
+        if asker and not asker.get("written") and not asker.get("calls_open") and self._carries(req, asker):
             since = max([self.answered[i] for i in req["tie"] if self.answered.get(i, asker["at"]) < asker["at"]], default=0)
             before = [p for p in list(self.recent) if p is not asker and not p.get("settled") and since < p["at"] < asker["at"] and asker["at"] - p["at"] <= BEFORE_MS and self._ids(p) & req["tie"]]
             for s in before + [asker]:
@@ -160,6 +175,15 @@ class Tied:
         if req["method"] != "GET" and self.body_of(req)[:PROMPT_HEAD] not in self.prompts and (not req.get("noted") or req.get("calls_open") or req.get("late")):
             self.recent.append(req)
         return None
+
+    # tied.cjs carries: a page polling for an answer several calls build comes back many times
+    # between two of them, on a document with no answer in it yet.
+    def _carries(self, fetch, asker):
+        said = self.said_of(asker)
+        if said is None:
+            return True
+        reply = self.norm(self.reply_of(fetch))
+        return any(self.norm(w)[:CARRY] in reply for w in _said_sentences(said))
 
     def _answered(self, tie, at):
         for i in tie:
@@ -230,6 +254,7 @@ class Tied:
             asker["late"] = True
         asker["pinned"] = True
         asker["calls_open"] = asker.get("calls_open", 0) + 1
+        asker["call_at"] = int(time.time() * 1000)
         _HELD.set(asker)
         return asker
 
@@ -260,6 +285,7 @@ class Tied:
         if req.get("late"):
             req["pinned"] = True
             req["calls_open"] = req.get("calls_open", 0) + 1
+            req["call_at"] = int(time.time() * 1000)
         else:
             req["waiting"] = req.get("waiting", 0) + 1
         return req
@@ -285,7 +311,7 @@ class Tied:
     # request tied to it came to fetch the answer. It stays where a fetch that comes later can still
     # find it and complete the exchange on a second request, but no call is pinned to it by its words.
     def settled(self, req):
-        if not req or not req.get("late") or not req.get("ended") or req.get("calls_open") or req.get("waiting") or req.get("written") or req.get("settled") or req.get("fetched"):
+        if not req or not req.get("late") or not req.get("ended") or req.get("calls_open") or req.get("waiting") or req.get("written") or req.get("settled") or (req.get("fetched") and self.said_of(req) is None):
             return False
         req["settled"] = req["answered"] = True
         return True

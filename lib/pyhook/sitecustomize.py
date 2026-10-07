@@ -1548,7 +1548,7 @@ def _install():
 
     try:
         from cortad_tied import Tied
-        tied = Tied(norm, body_of, reply_of)
+        tied = Tied(norm, body_of, reply_of, lambda req: (req.get("said") or (0, ""))[1] if req.get("late") else None)
     except Exception:
         tied = None
 
