@@ -18,6 +18,13 @@ The tools are the `cortad` MCP tools. Where they are missing, each one is `npx {
 
 ## A session, start to finish
 
+## Connecting
+
+`npx {{cortad}}` in the repository's folder connects it, with nothing to copy. Run it as a background command (in Claude Code: Bash with run_in_background) and leave it running: it starts the app and keeps it reachable from the browser until it is stopped.
+- A folder connected before reconnects at once with the key it kept.
+- A folder connected for the first time prints a link and four characters, good for ten minutes. Give the person both as printed; they approve the link in their browser, signed in to Cortad, and the command goes on by itself.
+- When a result says no connect command is running, run `npx {{cortad}}` again in this folder. No code is needed from the person.
+
 The connect command prints "Go back to the browser" once it is connected. Cortad then finds the AI endpoints in the app's code and sends each one a test request itself, from this machine to the app on its port.
 
 1. Call `status` and tell the person, in a few plain lines:

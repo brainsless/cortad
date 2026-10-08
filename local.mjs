@@ -61,7 +61,7 @@ if (unknownVerb(argv[0])) {
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const verbose = argv.includes("--verbose");
 // A code is eight characters from the connect screen's alphabet, which has no I, O, 0 or 1.
-const code = (argv.find((a) => /^[A-HJ-NP-Za-hj-np-z2-9-]{8,9}$/.test(a) && !a.startsWith("-")) ?? "").toUpperCase().replace(/-/g, "");
+let code = (argv.find((a) => /^[A-HJ-NP-Za-hj-np-z2-9-]{8,9}$/.test(a) && !a.startsWith("-")) ?? "").toUpperCase().replace(/-/g, "");
 const say = (line) => console.log(`cortad  ${line}`);
 const fail = (line) => { console.error(`cortad  ${line}`); process.exit(1); };
 
@@ -82,7 +82,10 @@ const step = (line) => {
 };
 const clearStep = () => { if (process.stdout.isTTY) process.stdout.write("\r\x1b[K"); };
 const stepDone = (line) => { clearStep(); say(line); };
-if (!explain && !viaToken && !/^[A-Z0-9]{8}$/.test(code)) fail(`usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--proxy]   |   npx cortad --explain   |   npx cortad ${[...VERBS, "wait"].join(" | ")}`);
+// `npx cortad` alone connects too: with the key this folder kept from its last connect, or, with none,
+// by one approval in the browser (pairing below). A word that is neither a code nor a flag is refused.
+const words = argv.filter((a, i) => !a.startsWith("-") && !["--port", "--start"].includes(argv[i - 1] ?? ""));
+if (!explain && !viaToken && words.length && !/^[A-Z0-9]{8}$/.test(code)) fail(`usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--proxy]   |   npx cortad --explain   |   npx cortad ${[...VERBS, "wait"].join(" | ")}`);
 // Where Brainsless is. The host is not on the command line: a code cannot point at an impostor.
 const origin = new URL(process.env.CORTAD_ORIGIN || "https://cortad.com");
 // Ours, and only ours. brainsless.com is the same service under its earlier name and stays trusted
@@ -300,6 +303,27 @@ const mask = (text) => maskWith(String(text ?? ""), secrets);
 // ---- the wire
 let box = "";
 let key = "";
+// The browser approves this computer: a link to open where the person is signed in, and four
+// characters the page shows too. The terminal waits, and is handed a code once it is approved.
+async function paired() {
+  const machine = hostname().replace(/[^\w.-]/g, "-").slice(0, 80);
+  const opened = await call("POST", "/local/pair", { name: basename(root).replace(/[^\w.-]/g, "-").slice(0, 80), machine }).catch(unreachable);
+  if (!opened.ok) fail(opened.data?.error ?? `could not start connecting (${opened.status})`);
+  const link = `${origin.origin}/approve/${opened.data.id}`;
+  say(`approve this computer in your browser, where you are signed in to Cortad: ${link}`);
+  say(`the page shows ${opened.data.words} and ${machine}; approve only if both match`);
+  if (process.stdout.isTTY) {
+    const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
+    try { spawn(opener, [link], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); } catch { /* the link is printed */ }
+  }
+  for (const until = Date.now() + 10 * 60_000; Date.now() < until; await new Promise((r) => setTimeout(r, 2_000))) {
+    const got = await call("POST", `/local/pair/${opened.data.id}/collect`, { secret: opened.data.secret }).catch(() => null);
+    if (got?.ok && typeof got.data?.code === "string") { say("approved"); return got.data.code; }
+    if (got && got.status === 410) break;
+  }
+  fail("the link was not approved within ten minutes. Run npx cortad again for a new one.");
+}
+
 async function call(method, path, body, { raw = false, timeoutMs = 60_000, headers = {} } = {}) {
   const res = await fetch(`${api}${path}`, {
     method,
@@ -1188,15 +1212,21 @@ if (!files.length) fail("no source files here to read.");
 try { copyFileSync(join(homeOf(project), "tools.json"), join(work, "tools.json")); } catch { /* no run has read this project's tools yet */ }
 // The key the last connect left for this project, if any: the token face signs in with it. A connect
 // from the screen always asks for a fresh one, since the code may belong to another account or site.
-const stored = readToken(project);
-if (viaToken && !stored) fail("this project has no stored key. Run the command from the connect screen once.");
+let stored = readToken(project);
+if (viaToken && !stored) fail("this project has no stored key. Run npx cortad in this folder once.");
 // A network that drops while connecting ends here in a sentence, never a stack trace: running the
 // command again starts a clean connection.
 const unreachable = (err) => fail(`could not reach ${origin.host}: ${err?.name === "TimeoutError" ? "it did not answer in time" : "the connection failed"}. Check your connection and run the command again.`);
 // The key goes up beside a code too: a code that has lapsed while this project's key still holds is
 // the same person coming back, and the server signs them in by the key instead of refusing.
-const attach = await call("POST", "/local/attach", { ...(viaToken ? {} : { code }), name: basename(root), project },
+let attach = !code && !viaToken && !stored ? null : await call("POST", "/local/attach", { ...(viaToken ? {} : { code }), name: basename(root), project },
   stored ? { headers: { authorization: `Bearer ${stored}` } } : {}).catch(unreachable);
+// No code and no key that still signs in: the person approves this computer in their browser.
+if (!viaToken && !code && !attach?.ok) {
+  if (attach && stored) { say("the key this folder kept no longer signs in, so this computer is connected again"); stored = null; }
+  code = await paired();
+  attach = await call("POST", "/local/attach", { code, name: basename(root), project }).catch(unreachable);
+}
 if (!attach.ok) fail(attach.data?.error ?? `could not sign in (${attach.status})`);
 box = attach.data.box;
 key = attach.data.key;
@@ -1244,7 +1274,7 @@ for (let off = 0; off < bytes.length; off += PART) {
   // The last part asks for this machine's key when none is stored yet: minted once the repository
   // row exists, kept in ~/.cortad for the runs a coding agent asks for on later days.
   const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART),
-    { raw: true, timeoutMs: 120_000, ...(last && !viaToken ? { headers: { "x-cortad-machine": hostname().slice(0, 80) } } : {}) }).catch(unreachable);
+    { raw: true, timeoutMs: 120_000, ...(last && !viaToken && !stored ? { headers: { "x-cortad-machine": hostname().slice(0, 80) } } : {}) }).catch(unreachable);
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
   if (last) {
     resumed = put.data?.resumed === true;
