@@ -887,6 +887,7 @@ def _install():
     # POST. /collections/aliases names no collection: a write of the server itself.
     qdrant_collection = re.compile(r"^/collections/([^/]+)(/.*)?$")
     qdrant_read_post = re.compile(r"^/points(?:/(?:search|query|recommend|discover)(?:/(?:batch|groups))?|/scroll|/count|/facet|/search/matrix/(?:pairs|offsets))?$")
+    qdrant_points = re.compile(r"^/points(?:/(?:delete|payload|payload/delete|payload/clear|vectors|vectors/delete|batch))?$")
 
     def qdrant_call(url, method):
         try:
@@ -901,7 +902,10 @@ def _install():
         name, rest = m.group(1), m.group(2) or ""
         verb = str(method or "GET").upper()
         write = verb in ("PUT", "PATCH", "DELETE") or (verb == "POST" and not qdrant_read_post.match(rest))
-        return {"collection": None if name == "aliases" else unquote(name), "rest": rest, "write": write, "parts": parts}
+        # "points" changes what the collection holds and a copy stands in for it; "create" makes it;
+        # "schema" (an index, an alias, a snapshot, its settings or its deletion) is held, never copied.
+        kind = None if not write else "create" if rest == "" and verb == "PUT" else "points" if qdrant_points.match(rest) and verb != "DELETE" else "schema"
+        return {"collection": None if name == "aliases" else unquote(name), "rest": rest, "write": write, "kind": kind, "parts": parts}
 
     def passages_from(raw):
         out, nodes = [], [0]
@@ -1391,6 +1395,20 @@ def _install():
     copies = {}
     copies_lock = threading.Lock()
     qdrant_cap = 200000
+    # What one process copies at most: collections, and points across them; past it a write is held.
+    copies_max = 8
+    points_max = 300000
+    copied = {"collections": 0, "points": 0}
+    copy_said = set()
+
+    def copy_say(host, collection, why):
+        if (host, collection) in copy_said:
+            return
+        copy_said.add((host, collection))
+        try:
+            sys.stderr.write("cortad: a request Cortad sent made this app write into the Qdrant collection %s at %s. Cortad could not copy that collection on its server (%s), so the write was kept on this machine and answered with a stand-in success.\n" % (collection, host, why))
+        except Exception:
+            pass
 
     def in_run():
         req = ctx.get()
@@ -1412,7 +1430,14 @@ def _install():
         copy = copies.get(key)
         if copy:
             return {"key": key, "call": call, "copy": copy}
-        return {"key": key, "call": call, "copy": None} if call["write"] else None
+        if not call["write"]:
+            return None
+        if call["kind"] == "schema":
+            return {"hold": True}
+        if copied["collections"] >= copies_max or copied["points"] >= points_max:
+            copy_say(call["parts"].netloc, call["collection"], "this run already copied %d collections, %d points" % (copied["collections"], copied["points"]))
+            return {"hold": True}
+        return {"key": key, "call": call, "copy": None}
 
     # Qdrant's own API over urllib, which this file leaves unpatched: never through the app's clients.
     def qdrant_http(base, key, method, path, body=None):
@@ -1435,7 +1460,7 @@ def _install():
         at = lambda name: "/collections/" + quote(name, safe="")
         info, status = qdrant_http(base, key, "GET", at(source))
         if status == 404:
-            return "empty"
+            return ("empty", 0)
         result = (info or {}).get("result") if status == 200 else None
         if not result:
             return None
@@ -1463,7 +1488,7 @@ def _install():
                     raise RuntimeError("upsert")
                 offset = got.get("next_page_offset")
                 if offset is None:
-                    return "points"
+                    return ("points", result.get("points_count") or 0)
         except Exception:
             qdrant_http(base, key, "DELETE", at(clone))
             return None
@@ -1481,8 +1506,12 @@ def _install():
             bearer = re.match(r"^Bearer\s+(\S+)", auth, re.I)
             key = str(header_of("api-key") or "") or (bearer.group(1) if bearer else "")
             clone = "%s_cortad_%d" % (g["call"]["collection"][:40], os.getpid())
-            if not clone_qdrant(base, key, g["call"]["collection"], clone):
+            made = clone_qdrant(base, key, g["call"]["collection"], clone)
+            if not made:
+                copy_say(parts.netloc, g["call"]["collection"], "the copy did not go through")
                 return None
+            copied["collections"] += 1
+            copied["points"] += made[1]
             copies[g["key"]] = clone
             write({"copy": {"host": parts.hostname or "", "base": base, "collection": g["call"]["collection"], "clone": clone}})
             return clone
