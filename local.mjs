@@ -947,6 +947,7 @@ const keeping = makeKeeping({
   root, work, ledgerFile: join(homeOf(project), "made.json"), onPath, say, hold, typed: Boolean(flag("--start")),
   launch: (plan) => sidecar(plan.cmd, plan.cwd),
   connections: () => capture?.connections() ?? [],
+  copies: () => capture?.copies() ?? [],
   settings: () => {
     const from = {};
     for (const file of envFiles.filter((f) => !/\.(example|sample)$/.test(f))) {

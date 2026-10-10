@@ -118,7 +118,7 @@ def _install():
     import re
     import sys
     import time
-    from urllib.parse import urlsplit
+    from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
     ctx = contextvars.ContextVar("cortad_request", default=None)
     limit = 65536
@@ -882,6 +882,27 @@ def _install():
             return False
         return bool(retrieval_host.search(parts.hostname or "")) or bool(retrieval_path.search(parts.path or ""))
 
+    # A call to one Qdrant collection, by Qdrant's own REST shape (lib/wire.cjs qdrantCall): every
+    # PUT, PATCH and DELETE writes, and a POST does unless it is one of Qdrant's reads spelled as a
+    # POST. /collections/aliases names no collection: a write of the server itself.
+    qdrant_collection = re.compile(r"^/collections/([^/]+)(/.*)?$")
+    qdrant_read_post = re.compile(r"^/points(?:/(?:search|query|recommend|discover)(?:/(?:batch|groups))?|/scroll|/count|/facet|/search/matrix/(?:pairs|offsets))?$")
+
+    def qdrant_call(url, method):
+        try:
+            parts = urlsplit(str(url))
+        except ValueError:
+            return None
+        if parts.scheme not in ("http", "https"):
+            return None
+        m = qdrant_collection.match(parts.path or "")
+        if not m:
+            return None
+        name, rest = m.group(1), m.group(2) or ""
+        verb = str(method or "GET").upper()
+        write = verb in ("PUT", "PATCH", "DELETE") or (verb == "POST" and not qdrant_read_post.match(rest))
+        return {"collection": None if name == "aliases" else unquote(name), "rest": rest, "write": write, "parts": parts}
+
     def passages_from(raw):
         out, nodes = [], [0]
 
@@ -1344,6 +1365,11 @@ def _install():
                 return False
         elif run_seen["at"] is None or time.monotonic() - run_seen["at"] > run_live_s:
             return False
+        # A read of a Qdrant collection, however its server is named, and any call to a copy this
+        # hook made (copy_of below), go out.
+        q = qdrant_call(url, method)
+        if q and (not q["write"] or (q["collection"] and our_copy.search(q["collection"]))):
+            return False
         try:
             parts = urlsplit(str(url))
             host = (parts.hostname or "").lower()
@@ -1352,6 +1378,125 @@ def _install():
             return not any(host == p or host.endswith("." + p) for p in pass_now())
         except Exception:
             return True
+
+    # A write to a Qdrant collection made inside a run goes to a copy of that collection on the same
+    # server, made at the first such write: the collection is read page by page and written under
+    # `<name>_cortad_<pid>`, and from then on every call a run makes to that collection, reads too,
+    # goes to the copy, so the app finds what it wrote. The original is never written. A copy that
+    # cannot be made (over the size a run copies, a server that refused) leaves the write held like
+    # any other. Each copy is reported as a `copy` row and the command deletes them when it ends.
+    # The person's own calls, outside a run, go where they were sent (lib/trace.cjs does the same).
+    import threading
+    our_copy = re.compile(r"_cortad_\d+$")
+    copies = {}
+    copies_lock = threading.Lock()
+    qdrant_cap = 200000
+
+    def in_run():
+        req = ctx.get()
+        if req:
+            return bool(req.get("turn"))
+        return run_seen["at"] is not None and time.monotonic() - run_seen["at"] <= run_live_s
+
+    # None to leave the call alone; hold for a write of the server itself; else the collection's
+    # copy when there is one, or none yet for a write, which makes it.
+    def guarded(url, method):
+        call = qdrant_call(url, method)
+        if not call:
+            return None
+        if not call["collection"]:
+            return {"hold": True} if call["write"] and in_run() else None
+        if our_copy.search(call["collection"]) or not in_run():
+            return None
+        key = "%s|%s" % (call["parts"].netloc, call["collection"])
+        copy = copies.get(key)
+        if copy:
+            return {"key": key, "call": call, "copy": copy}
+        return {"key": key, "call": call, "copy": None} if call["write"] else None
+
+    # Qdrant's own API over urllib, which this file leaves unpatched: never through the app's clients.
+    def qdrant_http(base, key, method, path, body=None):
+        import urllib.error
+        import urllib.request
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        headers = {"content-type": "application/json"}
+        if key:
+            headers["api-key"] = key
+        req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read().decode("utf-8", "replace") or "null"), r.status
+        except urllib.error.HTTPError as e:
+            return None, e.code
+
+    # The copy made: "empty" when the server holds no such collection yet (the app makes it, under
+    # the copy's name), "points" once every point is across, None when none could be made.
+    def clone_qdrant(base, key, source, clone):
+        at = lambda name: "/collections/" + quote(name, safe="")
+        info, status = qdrant_http(base, key, "GET", at(source))
+        if status == 404:
+            return "empty"
+        result = (info or {}).get("result") if status == 200 else None
+        if not result:
+            return None
+        if (result.get("points_count") or 0) > qdrant_cap:
+            return None
+        params = (result.get("config") or {}).get("params") or {}
+        made = {"vectors": params.get("vectors")}
+        if params.get("sparse_vectors"):
+            made["sparse_vectors"] = params["sparse_vectors"]
+        if "on_disk_payload" in params:
+            made["on_disk_payload"] = params["on_disk_payload"]
+        if qdrant_http(base, key, "PUT", at(clone), made)[1] != 200:
+            return None
+        try:
+            for field, schema in (result.get("payload_schema") or {}).items():
+                qdrant_http(base, key, "PUT", at(clone) + "/index?wait=true", {"field_name": field, "field_schema": schema.get("params") or schema.get("data_type")})
+            offset = None
+            while True:
+                page, status = qdrant_http(base, key, "POST", at(source) + "/points/scroll", {"limit": 256, "with_payload": True, "with_vector": True, **({"offset": offset} if offset is not None else {})})
+                if status != 200:
+                    raise RuntimeError(status)
+                got = (page or {}).get("result") or {}
+                points = got.get("points") or []
+                if points and qdrant_http(base, key, "PUT", at(clone) + "/points?wait=true", {"points": [{"id": p.get("id"), "vector": p.get("vector"), "payload": p.get("payload")} for p in points]})[1] != 200:
+                    raise RuntimeError("upsert")
+                offset = got.get("next_page_offset")
+                if offset is None:
+                    return "points"
+        except Exception:
+            qdrant_http(base, key, "DELETE", at(clone))
+            return None
+
+    # The copy's name, made now when none exists; None when none could be made. The key the app
+    # sent is the key the copy is made with, and never leaves this process.
+    def copy_of(g, header_of):
+        with copies_lock:
+            have = copies.get(g["key"])
+            if have:
+                return have
+            parts = g["call"]["parts"]
+            base = "%s://%s" % (parts.scheme, parts.netloc)
+            auth = str(header_of("authorization") or "")
+            bearer = re.match(r"^Bearer\s+(\S+)", auth, re.I)
+            key = str(header_of("api-key") or "") or (bearer.group(1) if bearer else "")
+            clone = "%s_cortad_%d" % (g["call"]["collection"][:40], os.getpid())
+            if not clone_qdrant(base, key, g["call"]["collection"], clone):
+                return None
+            copies[g["key"]] = clone
+            write({"copy": {"host": parts.hostname or "", "base": base, "collection": g["call"]["collection"], "clone": clone}})
+            return clone
+
+    def to_copy(url, clone, call):
+        parts = call["parts"]
+        return urlunsplit((parts.scheme, parts.netloc, "/collections/" + quote(clone, safe="") + call["rest"], parts.query, parts.fragment))
+
+    # The copy a call goes to, waited for off the event loop: None to hold the call instead.
+    async def copy_for(g, header_of):
+        import asyncio
+        if g.get("hold"):
+            return None
+        return g["copy"] or await asyncio.get_running_loop().run_in_executor(None, copy_of, g, header_of)
 
     # A GraphQL query reads; a mutation writes. A `query` in JSON that is not GraphQL (SQL over HTTP,
     # where a SELECT can write through a function) is held.
@@ -2468,19 +2613,34 @@ def _install():
                 dep(request.url, response.status_code, req=req, caller=caller)
             return response
 
+        def held_answer(request, sent):
+            kind = request.headers.get("content-type", "")
+            held_row(request.url, request.method, sent, kind, ctx.get())
+            return module.Response(200, headers={"content-type": "application/json"}, content=held_reply(sent, kind), request=request)
+
         # A held call that cannot be answered fails in the app; it is never sent instead.
         def held_httpx(request, sent):
             if not held_here(request.url, request.method, lambda: keys_in(request.headers)) or reads_only(sent, request.url, request.headers.get):
                 return None
-            kind = request.headers.get("content-type", "")
-            held_row(request.url, request.method, sent, kind, ctx.get())
-            return module.Response(200, headers={"content-type": "application/json"}, content=held_reply(sent, kind), request=request)
+            return held_answer(request, sent)
+
+        # A call to a Qdrant collection goes to the run's copy of it, `clone`; with none, it is held.
+        def routed_httpx(request, g, clone, sent):
+            if clone is None:
+                return held_answer(request, sent)
+            request.url = module.URL(to_copy(request.url, clone, g["call"]))
+            return None
 
         for cls in (module.Client, module.AsyncClient):
             send = cls.send
             if cls is module.Client:
                 def sync_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
+                    g = guarded(request.url, request.method)
+                    if g is not None:
+                        answered = routed_httpx(request, g, None if g.get("hold") else (g["copy"] or copy_of(g, request.headers.get)), sent)
+                        if answered is not None:
+                            return answered
                     held = held_httpx(request, sent)
                     if held is not None:
                         return held
@@ -2504,6 +2664,11 @@ def _install():
             else:
                 async def async_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
+                    g = guarded(request.url, request.method)
+                    if g is not None:
+                        answered = routed_httpx(request, g, await copy_for(g, request.headers.get), sent)
+                        if answered is not None:
+                            return answered
                     held = held_httpx(request, sent)
                     if held is not None:
                         return held
@@ -2535,6 +2700,9 @@ def _install():
             raw = text(request.body, reply_max)
             if reads_only(raw, request.url, request.headers.get):
                 return None
+            return held_answer(request, raw)
+
+        def held_answer(request, raw):
             import datetime
             models, structures = sys.modules["requests.models"], sys.modules["requests.structures"]
             kind = request.headers.get("content-type", "")
@@ -2546,6 +2714,12 @@ def _install():
             return response
 
         def sent(self, request, *a, **k):
+            g = guarded(request.url, request.method)
+            if g is not None:
+                clone = None if g.get("hold") else (g["copy"] or copy_of(g, request.headers.get))
+                if clone is None:
+                    return held_answer(request, text(request.body, reply_max))
+                request.url = to_copy(request.url, clone, g["call"])
             answered = held(request)
             if answered is not None:
                 return answered
@@ -2601,7 +2775,18 @@ def _install():
         async def requested(self, method, str_or_url, *a, **k):
             body = k.get("json") if k.get("json") is not None else k.get("data")
             url = whole(self, str_or_url)
-            if held_here(url, method, lambda: keys_of(self, k)) and not reads_only(text(body, reply_max), url, lambda name: header_of(self, k, name)):
+            g = guarded(url, method)
+            hold = False
+            if g is not None:
+                clone = await copy_for(g, lambda name: header_of(self, k, name))
+                if clone is None:
+                    hold = True
+                else:
+                    parts = g["call"]["parts"]
+                    url = to_copy(url, clone, g["call"])
+                    # A session with a base address takes the path alone.
+                    str_or_url = url if getattr(self, "_base_url", None) is None else url[len("%s://%s" % (parts.scheme, parts.netloc)):]
+            if hold or (held_here(url, method, lambda: keys_of(self, k)) and not reads_only(text(body, reply_max), url, lambda name: header_of(self, k, name))):
                 port = held_port()
                 if port is None:
                     raise module.ClientConnectionError("this write was kept from leaving and could not be answered")
