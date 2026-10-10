@@ -1272,9 +1272,11 @@ for (let off = 0; off < bytes.length; off += PART) {
   const last = off + PART >= bytes.length;
   step(parts > 1 ? `connecting, ${Math.floor(off / PART) + 1} of ${parts}` : "connecting");
   // The last part asks for this machine's key when none is stored yet: minted once the repository
-  // row exists, kept in ~/.cortad for the runs a coding agent asks for on later days.
+  // row exists, kept in ~/.cortad for the runs a coding agent asks for on later days. A connect by a
+  // code asks too, since the code may be another account's: the key kept from the account before
+  // signed the coding agent's tools into that one, its runs and its counts.
   const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART),
-    { raw: true, timeoutMs: 120_000, ...(last && !viaToken && !stored ? { headers: { "x-cortad-machine": hostname().slice(0, 80) } } : {}) }).catch(unreachable);
+    { raw: true, timeoutMs: 120_000, ...(last && !viaToken && (!stored || code) ? { headers: { "x-cortad-machine": hostname().slice(0, 80) } } : {}) }).catch(unreachable);
   if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
   if (last) {
     resumed = put.data?.resumed === true;
