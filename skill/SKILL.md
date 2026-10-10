@@ -34,22 +34,23 @@ The connect command prints "Go back to the browser" once it is connected. Cortad
    - each `For the person:` line, as printed.
 2. When `status` lists an endpoint as `Needs a signed-in user`, Cortad could not make a sign-in for it on this machine. Tell the person; when they ask for it, sign in a test account through the app's own sign-in on this machine, send that endpoint one request in that session, then call `status` again. That is the only sign-in this needs, and only for the endpoints listed that way.
 3. A failure on the app's side that every conversation would repeat, such as a model provider refusing, a retrieval with no answer or a tool returning an error: say what you would change, change it when the person agrees, then call `reach` to send Cortad's test request to that endpoint again.
-4. The first run starts by itself once every endpoint has answered or failed; the person can also press Run on the card, or ask you, and then you call `run`. Before you stop, start `npx -y {{cortad}} wait` as a background command (in Claude Code: Bash with run_in_background). It returns when the next run ends, with what it found, and its ending wakes you. Then follow "After a run".
+4. The first run starts when the person presses Run on the card, or asks you, and then you call `run`. Before you stop, start `npx -y {{cortad}} wait` as a background command (in Claude Code: Bash with run_in_background). It returns when the next run or verify ends, with what it found, and its ending wakes you. Then follow "After a run".
 
 `status` with `show` lists one section in full: `rules`, `standards`, `journeys`, `endpoints`, `trials`, `records` or `reviews` (in a shell, `npx {{cortad}} status rules`). `status` with show `machine` says what Cortad does on this machine; hand the person its `For the person:` lines when they ask.
 
 ## After a run
 
-The person asked for this when they connected Cortad: fix what a run found and check each fix.
+The run is Cortad's; the code is the person's. You report first, and you change nothing until they say so.
 
-1. Tell the person in three lines: how many conversations played; the run's "All N conversations" line as printed, how many completed their request fully or partly with its rate and range; the two worst problems at their file and line.
-2. Call `findings` and fix the worst problem: one change, in the file and near the line it names. Then `verify <findingId>` and follow it with `run_status` until it decides.
-3. Go on to the next problem until each one is fixed or needs a decision only the person can make; tell them that decision in one line.
-4. After the last verify, tell the person what each verify decided, then start `npx -y {{cortad}} wait` in the background again.
+1. Call `findings`. Tell the person, in plain lines: how many conversations played and how many completed their request, with the rate and range as printed; each problem worth their time, worst first, with its file and line and what you would change there in one line; which findings read their app wrong (see "A check that reads wrong"); and which problems need a decision only they can make.
+2. Then stop, and let them answer. Until their go, nothing is edited, no verify starts and no run starts. They choose which problems to fix, in what order, and whether the change you propose fits their product.
+3. On their go, one problem at a time: one change, in the file and near the line the finding names, then `verify <findingId>`. Its first line says how many conversations the round replays and what that counts against this month; start `npx -y {{cortad}} wait` in the background, and it wakes you when the verify ends, so `run_status` is called once at most.
+4. Tell them what the verify decided, in its own words; the next change comes after their next go. A verify that cannot tell offers another round in its last line; it plays only when you call `verify` again, and only when the person wants it.
+5. When they stop, say what changed, what each verify decided, and what is still open, then start `npx -y {{cortad}} wait` in the background again.
 
 ## Following a run
 
-`run` answers within a second; when the app is still starting it says so, and `run_status` holds until the run has an id. `run_status` follows the run this machine started last, or the latest run. Each call holds up to 45 seconds, returns as soon as the count moves, and ends with the next call; call it again rather than a shell loop. Hand the person its `For the person:` line at most once every two minutes. When the plan is spent, `run` says so and nothing runs.
+`run` answers within a second; when the app is still starting it says so, and `run_status` holds until the run has an id. `run_status` follows the run this machine started last, or the latest run. Each call holds up to 45 seconds, returns as soon as the count moves, and ends with the next call; `npx -y {{cortad}} wait` in the background does the following for you and wakes you at the end of a run or a verify. Hand the person its `For the person:` line at most once every two minutes. When the plan is spent, `run` says so and nothing runs.
 
 ## The first run: the baseline
 
@@ -65,8 +66,8 @@ The first finished run on a repository prints, in order: what ran; the simulated
 
 ## Fixing one finding
 
-1. One change, in the file and near the line the finding names.
-2. `verify <findingId>` replays the conversations the finding failed on, word for word, against the saved edit; Cortad starts the app again first when its code changed. Undecided after a round, it plays another by itself, and `run_status` follows every round under the same id. A `crash:N` finding replays the requests that were out when the app stopped.
+1. One change, in the file and near the line the finding names, after the person's go.
+2. `verify <findingId>` replays the conversations the finding failed on, word for word, against the saved edit; Cortad starts the app again first when its code changed. Its first line says how many conversations the round replays and what they count against. Undecided after a round, it says what another round would play; that round starts only when `verify` is called again. A `crash:N` finding replays the requests that were out when the app stopped.
 3. Read the verdict. Replies the app refused or failed on the replay come first.
    - Worse on the conversations saved to test the fix: undo the change, and aim the next one at the behavior the question asks about.
    - Gone on the saved conversations while its own still fail: keep the fix; a reply that changed is another problem to fix next.
