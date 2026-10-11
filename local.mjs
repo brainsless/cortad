@@ -134,10 +134,11 @@ async function holdProject() {
 // A verb waits on this record from the moment it starts this process, so it is taken first.
 if (viaToken) await holdProject();
 
-// ---- what leaves the machine: the source git would commit, and nothing git is told to ignore
+// ---- what leaves the machine
 const SKIP_DIR = /^(node_modules|\.git|dist|build|out|coverage|vendor|venv|\.venv|env|target|tmp|\.next|\.nuxt|\.turbo|\.cache|__pycache__|\.terraform|\.wrangler|\.svelte-kit|\.output|\.parcel-cache|\.idea|\.vscode|secrets?|\.secrets?)$/i;
 // Env files by any name (scripts/books.env is one), keys, credentials, media and compiled output.
 const SKIP_FILE = /^\.env(\..*)?$|^\.envrc$|\.env$|\.(pem|key|p12|pfx|jks|keystore|sqlite|sqlite3|db|log|lock|map|zip|tar|gz|tgz|7z|rar|png|jpe?g|gif|webp|ico|svg|mp3|mp4|wav|mov|pdf|woff2?|ttf|otf|eot|bin|exe|dll|so|dylib|wasm|onnx|pt|pth|safetensors|numbers|DS_Store)$/i;
+const EVALS = /(?:^|\/)(?:evals?|evaluations?|benchmarks?|gold(?:ens?)?|red[-_]?team)\/|(?:^|[\/._-])(?:evals?|evaluations?|gold(?:en)?|benchmarks?|fidelity|red[-_]?team|cases)(?:[._-][^\/]*)?$/i;
 const MAX_FILE = 25_000_000;
 const MAX_TOTAL = 256_000_000;
 const ENV_FILE = /^\.env(\.(local|staging|stage|development|dev|test|example|sample))?$/;
@@ -178,7 +179,7 @@ function gitListed() {
 function shareable(rel, askGit = true) {
   const parts = rel.split(sep);
   if (parts.slice(0, -1).some((d) => SKIP_DIR.test(d)) || SKIP_FILE.test(parts.at(-1))) return false;
-  if (listed === null || listed.has(rel)) return true;
+  if (listed === null || listed.has(rel) || EVALS.test(parts.join("/"))) return true;
   // Off the list git gave a moment ago: ignored, or inside a nested checkout. The walk takes git's
   // word for it; asking per file was one process each, two minutes on a repository with a worktree
   // inside it. A read asked later, of a file made after the list was taken (an agent edit), asks.
@@ -1263,8 +1264,7 @@ const firstStart = startApp();
 firstStart.catch(() => { /* appLife reads the failure */ });
 const archive = join(work, "tree.tgz");
 step("connecting");
-// A Mac's tar packs a "._name" beside every file that carries Finder metadata: its own bookkeeping,
-// never their code. COPYFILE_DISABLE is how it is told not to; other systems ignore it.
+// COPYFILE_DISABLE: a Mac's tar adds no "._name" entries.
 await exec("tar", ["-czf", archive, "-C", root, "-T", list], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
 const bytes = readFileSync(archive);
 const PART = 1_500_000;
