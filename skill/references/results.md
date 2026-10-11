@@ -98,7 +98,7 @@ Rules in the code: 16, in 5 files.
 Sends Cortad's test request again, from the connect command on this machine, after a fix:
 
 ```
-Sent 1 request to your app on port 3100, one at a time:
+Sent 1 request to your app on port 3100, up to four at a time:
   POST /api/homework/explain: 200 in 2.4 seconds.
 status shows which of them reached your model.
 next: status

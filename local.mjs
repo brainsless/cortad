@@ -1517,9 +1517,12 @@ const autoReach = makeAutoReach({
   stampOf: (m) => { try { return m.file ? String(statSync(join(root, m.file)).mtimeMs) : ""; } catch { return ""; } },
   asked: () => existsSync(join(homeOf(project), ASK)),
   report: async (answers) => {
-    if (!answers.length && reachedBox === box) return;
+    if (!answers.length && reachedBox === box) return true;
     const to = box;
-    if ((await call("POST", `/local/${to}/reached`, { answers }, { timeoutMs: 15_000 })).ok) reachedBox = to;
+    // False where the server did not take it: the answers are kept and said again (lib/auto-reach.mjs).
+    const ok = Boolean((await call("POST", `/local/${to}/reached`, { answers }, { timeoutMs: 15_000 }).catch(() => null))?.ok);
+    if (ok) reachedBox = to;
+    return ok;
   },
   say,
   fetchImpl: countedFetch,
