@@ -1263,7 +1263,9 @@ const firstStart = startApp();
 firstStart.catch(() => { /* appLife reads the failure */ });
 const archive = join(work, "tree.tgz");
 step("connecting");
-await exec("tar", ["-czf", archive, "-C", root, "-T", list]);
+// A Mac's tar packs a "._name" beside every file that carries Finder metadata: its own bookkeeping,
+// never their code. COPYFILE_DISABLE is how it is told not to; other systems ignore it.
+await exec("tar", ["-czf", archive, "-C", root, "-T", list], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
 const bytes = readFileSync(archive);
 const PART = 1_500_000;
 let resumed = false;
