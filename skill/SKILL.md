@@ -96,6 +96,10 @@ After the fixes, `run` again. It plays what your changes since the last full run
 
 Once a fix is verified gone and production is not connected, the result offers production: connect it to see what real users are doing as it happens and where the AI lets them down. `field_connect` gives the steps; the owner creates the key in the browser. `field` gives the numbers; message text stays out.
 
+## An AI that is not a chat: a world
+
+For a worker or agent in this app that reads data and writes a verdict, `world` builds a copy of the product's data on this machine from the app's own seed, plants problems whose answers are known, runs the app's own detection on each, and scores what it raised: found, missed, false alarms where nothing was planted, and flips between repeats. Call it with what was built or what to test, in a sentence; `world_status <id>` follows it, and the person sees it on the World page. A repository no world is written for yet says so: send `feedback` naming the AI to test, and the Cortad team writes one.
+
 ## Making it stick
 
 `npx {{cortad}} stick` makes this part of the repository: one line in AGENTS.md, CLAUDE.md, the Cursor rules and the Copilot instructions; a hook after each edit that names the changed prompt and tool files; and a hook on the person's prompt that hands you a run or verify that ended, for clients that a background command cannot wake. Run it only when the person asks for it. `npx {{cortad}} unstick` takes them out.
