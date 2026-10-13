@@ -393,10 +393,12 @@ async function verb(job) {
       if (verbose) say(`$ ${cmd.slice(0, 160)}`);
       // No lock, no shell: a world never gets an unlocked one on this machine.
       if (!lock) return { success: false, exitCode: 126, stdout: "", stderr: "refused: this machine has no sandbox tool (sandbox-exec or bubblewrap), so no shell line is run here" };
-      const { file, args } = lock.wrap(cmd);
-      // A world's command (opts.app) runs with the app's own settings: the values of its env files and
-      // the copies made of its stores, which the sandbox keeps a command from reading off the disk.
-      const env = b.opts?.app === true ? { ...envExports(envFiles), ...keeping.envNow(), ...plainEnv } : plainEnv;
+      // A world's command (opts.app) runs as the app: with the values of its env files and the copies
+      // made of its stores, which the sandbox keeps a command from reading off the disk, and with the
+      // app's reach on the network, since it runs the app's own AI against the app's model provider.
+      const asApp = b.opts?.app === true;
+      const { file, args } = lock.wrap(cmd, { network: asApp });
+      const env = asApp ? { ...envExports(envFiles), ...keeping.envNow(), ...plainEnv } : plainEnv;
       return new Promise((done) => {
         const child = spawn(file, args, { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
         let out = "", err = "";
