@@ -96,9 +96,9 @@ After the fixes, `run` again. It plays what your changes since the last full run
 
 Once a fix is verified gone and production is not connected, the result offers production: connect it to see what real users are doing as it happens and where the AI lets them down. `field_connect` gives the steps; the owner creates the key in the browser. `field` gives the numbers; message text stays out.
 
-## An AI that is not a chat: a world
+## After a change: the one call, and a world
 
-For a worker or agent in this app that reads data and writes a verdict, `world` builds a copy of the product's data on this machine from the app's own seed, plants problems whose answers are known, runs the app's own detection on each, and scores what it raised: found, missed, false alarms where nothing was planted, and flips between repeats. Call it with what was built or what to test, in a sentence; `world_status <id>` follows it, and the person sees it on the World page. A repository no world is written for yet says so: send `feedback` naming the AI to test, and the Cortad team writes one.
+`test <what you built or want tested>` is the call after a change. Cortad decides what kind of test that is: a world, where this app has one and the sentence names something it can plant, or a run of the app's chat surfaces; the answer says which started and the call that follows it. A world is for an AI that is not a chat, a worker that reads data and writes a verdict: Cortad builds a copy of the product's data on this machine from the app's own seed, plants problems whose answers are known, runs the app's own detection and investigation on each, and scores what it raised and published: found, missed, false alarms where nothing was planted, flips between repeats. `world <ask>` asks for one outright, `world_status <id>` follows it, and the person sees it on the World page. A repository no world is written for yet says so: send `feedback` naming the AI to test, and the Cortad team writes one.
 
 ## Making it stick
 
