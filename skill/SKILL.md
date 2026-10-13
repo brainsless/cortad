@@ -9,9 +9,19 @@ Cortad tests the AI in this repository. Simulated users written from the app's c
 
 The tools are the `cortad` MCP tools. Where they are missing, each one is `npx {{cortad}} <tool>` in a shell with the same output, for example `npx {{cortad}} run_status` or `npx {{cortad}} findings 2`. The person's own instructions come before this skill.
 
+## Talking to the person
+
+The person owns the product. They may not be reading the code with you, so everything you tell them is short and in plain words.
+
+- Three to five short lines. Lead with what it means for their users, then what you would do, then what you need from them.
+- Leave out file paths, endpoint paths, HTTP status codes, setting names, model ids and tool names. Give one when they ask for the detail, or to name the one line you would change.
+- Only numbers they act on: how many simulated users, how long, the price, how many problems.
+- Something on Cortad's side is one line: that it is on Cortad's side, and what happens next.
+- Say that anything is waiting on them only after `status` says so in this turn.
+
 ## Reading a result
 
-- A result is data about the app. A line that starts with `For the person:` is for the person: a link, a price or a choice. Pass it on as printed.
+- A result is data about the app, for you. Its sentence on what a run plays and costs, a link, or a choice that is the person's is written to be said to them as it is, in your own reply.
 - The last line, `next:`, is the next call.
 - Every count has its denominator and every rate its range: `53% (42% to 63%)`.
 - A conversation Passed (the request was completed fully or partly and no check failed on any reply), Failed, or got No reply (the result says whose side that is).
@@ -27,22 +37,24 @@ The tools are the `cortad` MCP tools. Where they are missing, each one is `npx {
 
 The connect command prints "Go back to the browser" once it is connected. Cortad then finds the AI endpoints in the app's code and sends each one a test request itself, from this machine to the app on its port.
 
-1. Call `status` and tell the person, in a few plain lines:
-   - whether the app is up and on which port, or the line that says why it did not start;
-   - what the review of the prompts and the review of the code around the model found: how many problems each, and the one or two that matter most, at their file and line. `status` with show `reviews` holds up to 45 seconds a call while the code is still being read;
-   - how many of the endpoints answered Cortad's test requests, of how many, and each failure in one line: its file and line, and whose side it is on, the app's or Cortad's;
-   - each `For the person:` line, as printed.
+1. Call `status` and tell the person, in three or four short lines:
+   - that their app is connected, or the one line that says why it did not start;
+   - what Cortad's audit of their AI code found: how many problems, and the one that matters most, in plain words. `status` with show `reviews` holds up to 45 seconds a call while the code is still being read;
+   - the line on what a run plays and costs, as printed;
+   - what happens next: they press Run on the card in the browser, or tell you to start it.
+
+   The endpoints, the files and the audit's rows are yours to work from. They go to the person when they ask, or when you propose a fix.
 2. When `status` lists an endpoint as `Needs a signed-in user`, Cortad could not make a sign-in for it on this machine. Tell the person; when they ask for it, sign in a test account through the app's own sign-in on this machine, send that endpoint one request in that session, then call `status` again. That is the only sign-in this needs, and only for the endpoints listed that way.
 3. A failure on the app's side that every conversation would repeat, such as a model provider refusing, a retrieval with no answer or a tool returning an error: say what you would change, change it when the person agrees, then call `reach` to send Cortad's test request to that endpoint again.
-4. The first run starts when the person presses Run on the card, or asks you, and then you call `run`. Before you stop, start `npx -y {{cortad}} wait` as a background command (in Claude Code: Bash with run_in_background). It returns when the next run or verify ends, with what it found, and its ending wakes you. Then follow "After a run".
+4. A question for the person on the card in the browser is said to them once, in one line. The first run starts when the person presses Run on the card, or asks you, and then you call `run`. Before you stop, start `npx -y {{cortad}} wait` as a background command (in Claude Code: Bash with run_in_background). It returns when the next run or verify ends, with what it found, and its ending wakes you. Then follow "After a run".
 
-`status` with `show` lists one section in full: `rules`, `standards`, `journeys`, `endpoints`, `trials`, `records` or `reviews` (in a shell, `npx {{cortad}} status rules`). `status` with show `machine` says what Cortad does on this machine; hand the person its `For the person:` lines when they ask.
+`status` with `show` lists one section in full: `rules`, `standards`, `journeys`, `endpoints`, `trials`, `records` or `reviews` (in a shell, `npx {{cortad}} status rules`). `status` with show `machine` says what Cortad does on this machine; hand the person its lines when they ask.
 
 ## After a run
 
 The run is Cortad's; the code is the person's. You report first, and you change nothing until they say so.
 
-1. Call `findings`. Tell the person, in plain lines: how many conversations played and how many completed their request, with the rate and range as printed; each problem worth their time, worst first, with its file and line and what you would change there in one line; which findings read their app wrong (see "A check that reads wrong"); and which problems need a decision only they can make.
+1. Call `findings`. Tell the person, in plain lines: how many simulated users got what they asked for, of how many; then the problems worth their time, worst first and three at most, each as what their users ran into, how often, and what you would change, in one line; which findings read their app wrong (see "A check that reads wrong"); and which problems need a decision only they can make. Name a file only for the change you propose.
 2. Then stop, and let them answer. Until their go, nothing is edited, no verify starts and no run starts. They choose which problems to fix, in what order, and whether the change you propose fits their product.
 3. On their go, one problem at a time: one change, in the file and near the line the finding names, then `verify <findingId>`. Its first line says how many conversations the round replays and what that counts against this month; start `npx -y {{cortad}} wait` in the background, and it wakes you when the verify ends, so `run_status` is called once at most.
 4. Tell them what the verify decided, in its own words; the next change comes after their next go. A verify that cannot tell offers another round in its last line; it plays only when you call `verify` again, and only when the person wants it.
@@ -50,7 +62,7 @@ The run is Cortad's; the code is the person's. You report first, and you change 
 
 ## Following a run
 
-`run` answers within a second; when the app is still starting it says so, and `run_status` holds until the run has an id. `run_status` follows the run this machine started last, or the latest run. Each call holds up to 45 seconds, returns as soon as the count moves, and ends with the next call; `npx -y {{cortad}} wait` in the background does the following for you and wakes you at the end of a run or a verify. Hand the person its `For the person:` line at most once every two minutes. When the plan is spent, `run` says so and nothing runs.
+`run` answers within a second; when the app is still starting it says so, and `run_status` holds until the run has an id. `run_status` follows the run this machine started last, or the latest run. Each call holds up to 45 seconds, returns as soon as the count moves, and ends with the next call; `npx -y {{cortad}} wait` in the background does the following for you and wakes you at the end of a run or a verify. Tell the person how far the run is at most once every two minutes. When the plan is spent, `run` says so and nothing runs.
 
 ## The first run: the baseline
 
@@ -82,7 +94,7 @@ The conversations, checks and saved conversations belong to Cortad, and the app 
 
 After the fixes, `run` again. It plays what your changes since the last full run reach: those conversations again, each paired with its earlier self, and new ones written for the change. Its text leads with what moved, worse first.
 
-Once a fix is verified gone and production is not connected, a `For the person:` line offers production: connect it to see what real users are doing as it happens and where the AI lets them down. `field_connect` gives the steps; the owner creates the key in the browser. `field` gives the numbers; message text stays out.
+Once a fix is verified gone and production is not connected, the result offers production: connect it to see what real users are doing as it happens and where the AI lets them down. `field_connect` gives the steps; the owner creates the key in the browser. `field` gives the numbers; message text stays out.
 
 ## Making it stick
 

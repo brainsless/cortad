@@ -28,7 +28,7 @@ import { changesOf, commandText, RELOADER, sourceOf } from "./lib/fresh.mjs";
 import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawnTied, stopTree, supervisorOf } from "./lib/proc.mjs";
 import { claimRunner, readRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
 import { registerAll } from "./lib/register.mjs";
-import { machineText } from "./lib/read-text.mjs";
+import { connectedText } from "./lib/read-text.mjs";
 import { VERSION } from "./lib/spec.mjs";
 import { maskedLines, maskWith, secretValues } from "./lib/env-secrets.mjs";
 import { finished, unseenText } from "./lib/text.mjs";
@@ -598,7 +598,9 @@ async function verb(job) {
       } catch { return { text: "", root, size: 0 }; }
     }
     // The person changed what they said yes to while this command runs.
-    case "consent": await allowOutbound(b); return { ok: true };
+    // Said in the terminal: an agent that read "one question for the person" here told them the run
+    // was still waiting two minutes after they had answered.
+    case "consent": await allowOutbound(b); say("the person's answer on the card in the browser arrived"); return { ok: true };
     // A line for the agent reading this terminal: the read of the code landing, said the moment it does.
     // One marked news (a run ending) is also kept for the hook, so an agent that was not listening
     // hears it on its next prompt or edit.
@@ -1198,7 +1200,7 @@ if (explain) {
   ].join("\n"));
   process.exit(0);
 }
-if (kept.length) say(`not uploaded, left on this machine: ${kept.join(", ")}`);
+if (kept.length) say(`left on this machine because it holds a key: ${kept.join(", ")}`);
 const keepSecret = (v) => { if (v && v.length >= 12 && !secrets.includes(v)) secrets.push(v); };
 identities = makeIdentities({ root, work, envFiles, sourceFiles: () => files, say, keepSecret, appDir: () => appDir });
 // A real request that reached their model proves its door (lib/proof.mjs). What it proved goes up,
@@ -1297,7 +1299,7 @@ stepDone(moved ? "connected: your change is in, and what Cortad read before stil
 if (!viaToken && process.env.CORTAD_NO_REGISTER !== "1") {
   const got = await registerAll().catch((err) => { if (verbose) say(`could not register with your coding agents: ${err?.message ?? err}`); return { clients: [], changed: [] }; });
   const and = (list) => new Intl.ListFormat("en", { type: "conjunction" }).format(list);
-  if (got.changed.length) say(`For the person: ${and(got.clients)} can now use Cortad: its MCP server and skill were added to ${got.changed.map((f) => `~/${f}`).join(", ")}. This repository was not changed.`);
+  if (got.changed.length) say(`${and(got.clients)} can now use Cortad: its tools and skill were added to ${got.changed.map((f) => `~/${f}`).join(", ")}. This repository was not changed.`);
 }
 
 lock = await makeLock({ root, work });
@@ -1389,7 +1391,7 @@ async function appLife(firstStart) {
   say(`your app is answering on port ${app.port}${app.cmd ? ` · ${app.cmd}` : ""}`);
   if (launched) say(`your app's output for this session is kept in ${bootLog}, with the values from your env files masked`);
   if (proxy) say(`send requests to port ${proxy.port}: it passes them to your app and Cortad sees each one. Requests sent straight to port ${app.port} are not seen`);
-  for (const line of machineText(machineOf())) say(line);
+  for (const line of connectedText(machineOf())) say(line);
   say("leave this open. Go back to the browser; Ctrl-C disconnects.");
   let downSince = 0;
   let toldDown = false;
