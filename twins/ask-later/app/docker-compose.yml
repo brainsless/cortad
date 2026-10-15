@@ -1,0 +1,13 @@
+services:
+  mongo:
+    image: mongo:7.0.14
+    ports:
+      - "27118:27017"
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_USER: research
+      POSTGRES_PASSWORD: research-local
+      POSTGRES_DB: research_test
+    ports:
+      - "55433:5432"
