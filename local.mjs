@@ -15,6 +15,7 @@
 import { storesOf, withoutStoreSettings } from "./lib/stores.mjs";
 import { notAnApp, withoutStores } from "./lib/app-port.mjs";
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
+import { appEnv, localEnv, valuesOf } from "./lib/env-files.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
@@ -212,22 +213,6 @@ function envOrigins(envFiles) {
   }
   return [...out].slice(0, 8);
 }
-// Every name your env files set, with its value, read here and used only here. An example file is
-// read first so a real one's value wins: a placeholder key asked for a model listing comes back
-// refused, and that would read as your own key being refused.
-function envValues(envFiles) {
-  const example = /\.(example|sample)$/;
-  const out = {};
-  for (const file of [...envFiles.filter((f) => example.test(f)), ...envFiles.filter((f) => !example.test(f))]) {
-    let text = "";
-    try { text = readFileSync(file, "utf8"); } catch { continue; }
-    for (const line of text.split("\n")) {
-      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-      if (m) out[m[1]] = m[2].trim().replace(/^(['"])(.*)\1$/, "$2");
-    }
-  }
-  return out;
-}
 // Switch-shaped names and the word each one reads as. The name and the word travel, never the value.
 const SWITCH_NAME = /(?:_ENABLED|_DISABLED|_MODE|_ON|_OFF|_FLAG)$|^(?:ENABLE|USE|DISABLE|SKIP)_/;
 const switchStates = (values) => Object.fromEntries(Object.entries(values)
@@ -239,22 +224,31 @@ const switchStates = (values) => Object.fromEntries(Object.entries(values)
 // is set under, the host, what the host answered, the model ids, and which switches are on.
 const MODEL_ID = /^[\w./:@-]{1,160}$/;
 async function inventoryOf(listings) {
-  const values = envValues(envFiles);
+  const values = settingsNow();
   const providers = await Promise.all(Object.entries(listings)
     .filter(([name]) => values[name])
     .map(async ([name, canonical]) => {
       const url = listingUrl(name, canonical, values);
       let host = "";
       try { host = new URL(url).host; } catch { return null; }
-      try {
-        const res = await fetch(url, { headers: { authorization: `Bearer ${values[name]}` }, signal: AbortSignal.timeout(20_000) });
-        const body = res.ok ? await res.json().catch(() => null) : null;
-        const models = (Array.isArray(body?.data) ? body.data : [])
-          .map((m) => String(m?.id ?? "")).filter((id) => MODEL_ID.test(id)).slice(0, 1500);
-        return { env: name, host, status: res.status, models };
-      } catch {
-        return { env: name, host, status: 0, models: [] };
+      // Each value a file of theirs holds for the key, until one is let in: which of them the app's own
+      // loader picks is its business, and "refuses your key" was said of a test file's key while the
+      // app called its provider on the real one.
+      let first = null;
+      for (const key of valuesOf(name, envFiles, appDir, root, process.env)) {
+        try {
+          const res = await fetch(url, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20_000) });
+          const body = res.ok ? await res.json().catch(() => null) : null;
+          const models = (Array.isArray(body?.data) ? body.data : [])
+            .map((m) => String(m?.id ?? "")).filter((id) => MODEL_ID.test(id)).slice(0, 1500);
+          const seen = { env: name, host, status: res.status, models };
+          if (res.ok) return seen;
+          first ??= seen;
+        } catch {
+          first ??= { env: name, host, status: 0, models: [] };
+        }
       }
+      return first;
     }));
   return { providers: providers.filter(Boolean), flags: switchStates(values) };
 }
@@ -398,7 +392,7 @@ async function verb(job) {
       // app's reach on the network, since it runs the app's own AI against the app's model provider.
       const asApp = b.opts?.app === true;
       const { file, args } = lock.wrap(cmd, { network: asApp });
-      const env = asApp ? { ...envExports(envFiles), ...keeping.envNow(), ...plainEnv } : plainEnv;
+      const env = asApp ? { ...localEnv(envFiles, appDir, root, process.env), ...keeping.envNow(), ...plainEnv } : plainEnv;
       return new Promise((done) => {
         const child = spawn(file, args, { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
         let out = "", err = "";
@@ -620,7 +614,7 @@ async function verb(job) {
     case "inventory": return inventoryOf(b.probe && typeof b.probe === "object" ? b.probe : {});
     // Your own pages, read here rather than in a world's shell: that shell is sealed away from
     // every env file and every host but this one, so inside it no store of yours has an address.
-    case "sample": return { report: JSON.parse(mask(JSON.stringify(await sampleHere(b, envValues(envFiles), root)))) };
+    case "sample": return { report: JSON.parse(mask(JSON.stringify(await sampleHere(b, settingsNow(), root)))) };
     case "lock": return { locked: Array.isArray(b.hosts) ? b.hosts.length : 0 };
     // What your app spent on its providers, from the hook inside it. An app this command did not
     // start has no hook, and the empty answer says the meter is absent rather than that nothing was spent.
@@ -656,12 +650,10 @@ const answers = async (port) => {
   }
   return false;
 };
-// The values an env file beside the app declares, exported into its process the way `source .env`
-// would: an app with no dotenv loader of its own crashed every route without them. Example files
-// hold placeholders and are left out; the shell's own environment and the lifted limits win.
-function envExports(envFiles) {
-  return envValues(envFiles.filter((f) => !/\.(example|sample)$/.test(f)));
-}
+// What the app's own start takes from its env files (lib/env-files.mjs appEnv), and every value its
+// settings could hold, for reading which stores and ports it names.
+const envExports = () => appEnv(envFiles, appDir, root, process.env);
+const settingsNow = () => ({ ...localEnv(envFiles, appDir, root, process.env), ...process.env });
 const onPath = (bin) => (process.env.PATH ?? "").split(":").some((dir) => dir && existsSync(join(dir, bin)));
 // Where their app lives inside this repository, and how it starts. Worked out in lib/start.mjs.
 let appDir = root;
@@ -714,7 +706,7 @@ async function startApp() {
     if (took) return took;
     if (proxyAsked) {
       await useProxy();
-      say(`your app was already running, so Cortad cannot see the calls it makes to its model until it is started with: ${Object.entries(proxy.env({ ...envExports(envFiles), ...process.env })).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+      say(`your app was already running, so Cortad cannot see the calls it makes to its model until it is started with: ${Object.entries(proxy.env({ ...envExports(), ...process.env })).map(([k, v]) => `${k}=${v}`).join(" ")}`);
     } else say(`${UNSEEN} Stop it and run this again without --port: this command starts your app itself.`);
     return { port: wanted, cmd: null };
   }
@@ -933,12 +925,12 @@ async function freePortAbove(port) {
 }
 const PORT_FLAG = /(--port[= ]|-p |\bPORT=)(\d{4,5})\b/;
 // The port a start names: its command's flag, or PORT as this command sets it or an env file does.
-const namedPort = (cmd, lifted) => Number(PORT_FLAG.exec(cmd)?.[2] ?? lifted.PORT ?? envExports(envFiles).PORT ?? 0) || 0;
+const namedPort = (cmd, lifted) => Number(PORT_FLAG.exec(cmd)?.[2] ?? lifted.PORT ?? settingsNow().PORT ?? 0) || 0;
 async function freed(cmd, lifted) {
   const m = PORT_FLAG.exec(cmd);
   // The app's own env file names its port too: yunqiao's PORT=8105 sat in .env, and a stale copy
   // on that port was reported as "your app stopped" instead of moved past.
-  const named = m ? Number(m[2]) : Number(lifted.PORT) || Number(envExports(envFiles).PORT) || 0;
+  const named = m ? Number(m[2]) : Number(lifted.PORT) || Number(settingsNow().PORT) || 0;
   if (!named || (!lost.has(named) && !(await listenerOn(named)))) return { cmd, lifted };
   const port = await freePortAbove(named);
   if (!port) return { cmd, lifted };
@@ -963,7 +955,7 @@ const keeping = makeKeeping({
       try { text = readFileSync(file, "utf8"); } catch { continue; }
       for (const line of text.split("\n")) { const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line); if (m && !(m[1] in process.env)) from[m[1]] = file; }
     }
-    return { values: { ...envExports(envFiles), ...process.env }, from, appDir, sources: files.map((f) => join(root, f)) };
+    return { values: settingsNow(), from, appDir, sources: files.map((f) => join(root, f)) };
   },
 });
 
@@ -985,7 +977,7 @@ async function start(waitMs, tries = 3) {
   // A start command the person typed says which databases the app uses: the store settings of their
   // settings files are left for the app to load, since handed over here they outrank the
   // environment that command chose, and no copy is pointed at.
-  const base = flag("--start") ? { ...withoutStoreSettings(envExports(envFiles)), ...process.env, ...lifted } : { ...envExports(envFiles), ...process.env, ...lifted, ...copies };
+  const base = flag("--start") ? { ...withoutStoreSettings(envExports()), ...process.env, ...lifted } : { ...envExports(), ...process.env, ...lifted, ...copies };
   child = spawnTied(cmd, { cwd: appDir, env: { ...base, ...(proxy ? proxy.env(base) : capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
   const mine = child;
   become("starting", { app: mine.pid ?? null });
@@ -1093,7 +1085,7 @@ const savedSinceStart = () => Boolean(loaded?.files) && changesOf({
 // at again after each restart, for a save made while it was under way.
 // The stores the settings name, as copies are made of them: a change here is a change of what the app
 // writes into, so its copies and holds are made again for the new settings, and said again.
-const storesNamed = () => { try { return JSON.stringify(storesOf({ ...envExports(envFiles), ...process.env }).map((s) => [s.engine, s.host, s.port, s.db, s.names])); } catch { return ""; } };
+const storesNamed = () => { try { return JSON.stringify(storesOf(settingsNow()).map((s) => [s.engine, s.host, s.port, s.db, s.names])); } catch { return ""; } };
 let storesAt = null;
 // Looked at before the first wait too: the app now starts while the code is uploaded, and a save made
 // before this watch began was otherwise never seen.
@@ -1124,13 +1116,14 @@ async function restartNow() {
     return { error };
   }
   become("up", { ...upAt(up.port), app: child?.pid ?? null });
-  if (up.port !== port) {
-    // It moved anyway: the world follows the app, never the other way round.
-    app = up;
-    const told = await announce().catch(() => null);
-    if (!told?.ok) return { error: `Your app came back on port ${up.port}, not ${port}. Run the command again to reconnect.` };
-    say(`your app came back on port ${up.port}; the run follows it there`);
-  }
+  // Said to the server every time, on the same port too: what its endpoints' test messages met before
+  // the restart is not what they meet now, and a key fixed in the env file left Run held on the old
+  // refusal. On another port the world follows the app, never the other way round.
+  const moved = up.port !== port;
+  if (moved) app = up;
+  const told = await announce().catch(() => null);
+  if (moved && !told?.ok) return { error: `Your app came back on port ${up.port}, not ${port}. Run the command again to reconnect.` };
+  if (moved) say(`your app came back on port ${up.port}; the run follows it there`);
   return { restarted: true, port: up.port };
 }
 const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -1278,23 +1271,35 @@ const PART = 1_500_000;
 let resumed = false;
 let moved = false;
 const parts = Math.max(1, Math.ceil(bytes.length / PART));
-for (let off = 0; off < bytes.length; off += PART) {
-  const last = off + PART >= bytes.length;
-  step(parts > 1 ? `connecting, ${Math.floor(off / PART) + 1} of ${parts}` : "connecting");
-  // The last part asks for this machine's key when none is stored yet: minted once the repository
-  // row exists, kept in ~/.cortad for the runs a coding agent asks for on later days. A connect by a
-  // code asks too, since the code may be another account's: the key kept from the account before
-  // signed the coding agent's tools into that one, its runs and its counts.
-  const put = await call("PUT", `/local/${box}/tree?last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART),
-    { raw: true, timeoutMs: 120_000, ...(last && !viaToken && (!stored || code) ? { headers: { "x-cortad-machine": hostname().slice(0, 80) } } : {}) }).catch(unreachable);
-  if (!put.ok) fail(put.data?.error ?? `upload failed (${put.status})`);
-  if (last) {
-    resumed = put.data?.resumed === true;
-    moved = put.data?.moved === true;
-    if (typeof put.data?.machineKey === "string" && put.data.machineKey) writeToken(project, put.data.machineKey);
-    writeDigest(project, treeDigest);
+// The whole upload, part by part. A part that did not land is the upload's to send again, from its
+// first part, once, a few seconds later: a part numbered 0 begins the archive afresh on the server, so
+// a second pass never lands on what the first left. A refusal of this machine's key is not retried.
+async function sendTree() {
+  for (let off = 0; off < bytes.length; off += PART) {
+    const last = off + PART >= bytes.length;
+    step(parts > 1 ? `connecting, ${Math.floor(off / PART) + 1} of ${parts}` : "connecting");
+    // The last part asks for this machine's key when none is stored yet: minted once the repository
+    // row exists, kept in ~/.cortad for the runs a coding agent asks for on later days. A connect by a
+    // code asks too, since the code may be another account's: the key kept from the account before
+    // signed the coding agent's tools into that one, its runs and its counts.
+    const put = await call("PUT", `/local/${box}/tree?part=${Math.floor(off / PART)}&last=${last ? 1 : 0}${last ? `&digest=${treeDigest}${head ? `&head=${head}` : ""}` : ""}`, bytes.subarray(off, off + PART),
+      { raw: true, timeoutMs: 120_000, ...(last && !viaToken && (!stored || code) ? { headers: { "x-cortad-machine": hostname().slice(0, 80) } } : {}) }).catch((err) => ({ ok: false, status: 0, err }));
+    if (!put.ok) return put;
+    if (last) {
+      resumed = put.data?.resumed === true;
+      moved = put.data?.moved === true;
+      if (typeof put.data?.machineKey === "string" && put.data.machineKey) writeToken(project, put.data.machineKey);
+      writeDigest(project, treeDigest);
+    }
   }
+  return { ok: true };
 }
+let sent = await sendTree();
+if (!sent.ok && sent.status !== 401 && sent.status !== 404) {
+  await new Promise((r) => setTimeout(r, 2000 + Math.random() * 3000));
+  sent = await sendTree();
+}
+if (!sent.ok) sent.err ? unreachable(sent.err) : fail(sent.data?.error ?? `upload failed (${sent.status})`);
 // Unchanged code has already been read: coming back says so instead of claiming a second read.
 stepDone(moved ? "connected: your change is in, and what Cortad read before still stands" : resumed ? "connected: nothing changed since last time" : "connected");
 // The coding agents on this machine learn about Cortad now, once: an MCP entry and a skill in each
@@ -1572,6 +1577,18 @@ process.on("SIGUSR2", () => {
   void restartApp();
 });
 
+// A job's result is work already done on this machine: sent until the server has it, through a dropped
+// network, for as long as the server can still be waiting on it (the bus's five-minute call). Sent once
+// and dropped on a failure, a reply the app gave during a thirty-second outage was lost and the run
+// waited out its turn. Any answer below 500 ends it: 404 is a server that no longer holds the job.
+async function deliver(id, out) {
+  for (let wait = 1000, until = Date.now() + 300_000; Date.now() < until && !closing; wait = Math.min(wait * 2, 15_000)) {
+    const res = await call("POST", `/local/${box}/jobs/${id}`, out).catch(() => null);
+    if (res && res.status < 500) return;
+    await new Promise((r) => setTimeout(r, wait / 2 + Math.random() * (wait / 2)));
+  }
+}
+
 let quiet = 0;
 // Each poll names the jobs the last one brought. A poll's answer can die on the way (the network
 // drops, the lid closes): the server sends again whatever is not named, and a job seen twice is
@@ -1601,6 +1618,6 @@ for (;;) {
     if (seenJobs.has(job.id)) continue;
     seenJobs.add(job.id);
     if (seenJobs.size > 2000) seenJobs.delete(seenJobs.values().next().value);
-    verb(job).catch((e) => ({ error: String(e.message) })).then((out) => call("POST", `/local/${box}/jobs/${job.id}`, out).catch(() => {}));
+    verb(job).catch((e) => ({ error: String(e.message) })).then((out) => deliver(job.id, out));
   }
 }

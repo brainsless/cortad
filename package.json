@@ -23,6 +23,7 @@
     "lib/held.mjs",
     "lib/home.mjs",
     "lib/hosted.mjs",
+    "lib/env-files.mjs",
     "lib/env-secrets.mjs",
     "lib/identities.mjs",
     "lib/keeping.mjs",
