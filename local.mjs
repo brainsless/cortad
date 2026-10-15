@@ -1190,7 +1190,7 @@ if (explain) {
     `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once${listed ? " (what git would commit)" : ""}`,
     ...(kept.length ? [`kept here       ${kept.length} file${kept.length === 1 ? " that holds" : "s that hold"} keys: ${kept.slice(0, 6).join(", ")}${kept.length > 6 ? ", ..." : ""}`] : []),
     ...(left.length ? [`also not sent   ${left.length} tracked media or lock file${left.length === 1 ? "" : "s"}: ${left.slice(0, 6).join(", ")}${left.length > 6 ? ", ..." : ""}`] : []),
-    `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, node_modules, .git`,
+    `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, node_modules`,
     `env files       values read here only: to hide them in replies, to sign in a test account, and to ask your providers what your keys reach. Variable names and whether a switch is on or off go up; no value does`,
     `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
     `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (only after your yes, for this session only)`}`,
@@ -1296,9 +1296,9 @@ for (let off = 0; off < bytes.length; off += PART) {
     writeDigest(project, treeDigest);
   }
 }
-// Their commit history follows the code: the commits newer than the ones Cortad holds, with the
-// newest commits' diffs cut to the files above and to lines that carry no key (lib/commits.mjs).
-// Never a reason to stop the connect.
+// Their commit history follows the code: the commits newer than the ones Cortad holds, the whole
+// history the first time, each diff cut to the files above and to lines that carry no key
+// (lib/commits.mjs). It goes on after the connect is reported and never stops it.
 async function sendHistory() {
   const last = await call("GET", `/local/${box}/commits/last`);
   if (!last.ok) return;
@@ -1309,9 +1309,9 @@ async function sendHistory() {
     if (!put.ok) throw new Error(put.data?.error ?? `history upload failed (${put.status})`);
   }
 }
-if (head) await sendHistory().catch((err) => { if (verbose) say(`commit history not sent: ${err?.message ?? err}`); });
 // Unchanged code has already been read: coming back says so instead of claiming a second read.
 stepDone(moved ? "connected: your change is in, and what Cortad read before still stands" : resumed ? "connected: nothing changed since last time" : "connected");
+if (head) void sendHistory().catch((err) => { if (verbose) say(`commit history not sent: ${err?.message ?? err}`); });
 // The coding agents on this machine learn about Cortad now, once: an MCP entry and a skill in each
 // one's own home folder. A run started by an agent later comes back through lib/cli.mjs.
 // CORTAD_NO_REGISTER=1 leaves the coding agents' global skill and MCP entries alone: a stack under
