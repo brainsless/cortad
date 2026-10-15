@@ -39,8 +39,11 @@ The hooks run after an edit and on your next message: the first names the prompt
 --explain            show what would be sent and started, then exit
 --port 3000          use an app that is already running
 --start "make dev"   how your app starts
+--data .env.staging  copy the databases this settings file names, not the ones your app's settings name
 --verbose            print your app's output
 ```
+
+Your app runs on copies of its databases, made when it starts and deleted when the command ends; the originals are only read. A database it uses that cannot be copied holds Run until you say yes to writing into it.
 
 ## Files it creates
 

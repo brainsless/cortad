@@ -1,4 +1,5 @@
-"""Legal research API: a lawyer asks, the answer is written in the background, the client polls."""
+"""Legal research API: a lawyer asks, the answer is written in the background from the legislation
+the search index finds, and the client polls."""
 import asyncio
 import datetime
 import os
@@ -7,6 +8,7 @@ import uuid
 import asyncpg
 import firebase_admin
 import uvicorn
+from elasticsearch import AsyncElasticsearch
 from fastapi import Depends, FastAPI, Header, HTTPException
 from firebase_admin import auth as firebase_auth
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -29,6 +31,7 @@ class Settings(BaseSettings):
     MONGO_URI: str
     MONGO_DB: str = "research"
     PG_DSN: str
+    ELASTICSEARCH_URL: str
     FIREBASE_AUTH_EMULATOR_HOST: str = ""
     FIREBASE_PROJECT_ID: str = "demo-twin"
     ADMIN_TOKEN: str = ""
@@ -49,16 +52,11 @@ ANSWERER_PROMPT = """You are the quick-answer stage of a legal research system f
 app = FastAPI(title="Research API")
 mongo = AsyncIOMotorClient(settings.MONGO_URI)
 threads = mongo[settings.MONGO_DB]["threads"]
-texts = mongo[settings.MONGO_DB]["legislation"]
+library = mongo[settings.MONGO_DB]["library"]
+search = AsyncElasticsearch(settings.ELASTICSEARCH_URL)
 model = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
 pool: asyncpg.Pool | None = None
 answering: set[asyncio.Task] = set()
-
-SEED = [
-    {"cite": "قانون أصول المحاكمات المدنية، المادة 178", "text": "مدة الاستئناف ثلاثون يوماً تبدأ من اليوم التالي لتاريخ تفهم الحكم إذا كان وجاهياً."},
-    {"cite": "القانون المدني، المادة 171", "text": "لا ينفذ تصرف الفضولي في حق المالك إلا إذا أجازه."},
-    {"cite": "قانون العمل، المادة 23", "text": "على صاحب العمل أن يشعر العامل كتابة قبل شهر واحد على الأقل من إنهاء عقد العمل غير محدود المدة."},
-]
 
 
 @app.on_event("startup")
@@ -67,8 +65,6 @@ async def startup() -> None:
     pool = await asyncpg.create_pool(settings.PG_DSN, min_size=1, max_size=4)
     async with pool.acquire() as conn:
         await conn.execute("create table if not exists usage_log (thread_id text, at timestamptz, ok boolean, tokens int)")
-    if await texts.count_documents({}) == 0:
-        await texts.insert_many([dict(row) for row in SEED])
 
 
 def caller(authorization: str = Header(default="")) -> str:
@@ -91,9 +87,14 @@ class Ask(BaseModel):
 async def answer(thread_id: str) -> None:
     await threads.update_one({"_id": thread_id}, {"$set": {"status": "running"}})
     thread = await threads.find_one({"_id": thread_id})
-    found = await texts.find({}).to_list(5)
+    asked = thread["turns"][-1]["text"]
+    edition = (await library.find_one({"_id": "edition"}) or {}).get("name", "")
+    hits = (await search.search(index="legislation", query={"match": {"text": asked}}, size=3))["hits"]["hits"]
+    found = [h["_source"] for h in hits]
+    await search.index(index="asks", document={"thread_id": thread_id, "asked": asked, "at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+    await threads.update_one({"_id": thread_id}, {"$set": {"edition": edition, "sources": [t["cite"] for t in found]}})
     sources = "\n".join(f"[{t['cite']}] {t['text']}" for t in found)
-    messages = [{"role": "system", "content": f"{ANSWERER_PROMPT}\n\nTexts read for this request:\n{sources}"}]
+    messages = [{"role": "system", "content": f"{ANSWERER_PROMPT}\n\nLibrary edition: {edition}\nTexts read for this request:\n{sources}"}]
     messages += [{"role": t["role"], "content": t["text"]} for t in thread["turns"]]
     ok, tokens = False, 0
     try:
@@ -131,7 +132,7 @@ async def thread(thread_id: str, uid: str = Depends(caller)) -> dict:
     found = await threads.find_one({"_id": thread_id, "owner": uid})
     if not found:
         raise HTTPException(404, "no such thread")
-    return {"thread_id": thread_id, "status": found["status"], "answer": found.get("answer"), "error": found.get("error")}
+    return {"thread_id": thread_id, "status": found["status"], "answer": found.get("answer"), "error": found.get("error"), "edition": found.get("edition"), "sources": found.get("sources")}
 
 
 @app.post("/v1/admin/billing/{org_id}/suspend")
