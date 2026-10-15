@@ -15,7 +15,7 @@
 import { storesOf, withoutStoreSettings } from "./lib/stores.mjs";
 import { notAnApp, withoutStores } from "./lib/app-port.mjs";
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
-import { appEnv, localEnv, valuesOf } from "./lib/env-files.mjs";
+import { appEnv, devEnv, fileValues, keyTries, localEnv } from "./lib/env-files.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
@@ -228,14 +228,17 @@ async function inventoryOf(listings) {
   const providers = await Promise.all(Object.entries(listings)
     .filter(([name]) => values[name])
     .map(async ([name, canonical]) => {
-      const url = listingUrl(name, canonical, values);
-      let host = "";
-      try { host = new URL(url).host; } catch { return null; }
-      // Each value a file of theirs holds for the key, until one is let in: which of them the app's own
-      // loader picks is its business, and "refuses your key" was said of a test file's key while the
-      // app called its provider on the real one.
+      // The shell's key, which outranks every loader, else each key a file of theirs holds, until one
+      // is let in: which file the app's own loader takes it from is its business, and "refuses your
+      // key" was said of a test file's key while the app called its provider on the real one. A key
+      // goes only to the address the shell or its own file names, else the one the development files
+      // name, else the provider's own; never to one only a test or staging file names, which the
+      // app may not use, so where only such a file names one the key is not asked about at all.
+      const tries = keyTries(name, canonical, { shell: process.env, files: fileValues(envFiles, appDir, root, process.env), dev: devEnv(envFiles, appDir, root, process.env) });
       let first = null;
-      for (const key of valuesOf(name, envFiles, appDir, root, process.env)) {
+      for (const { key, url } of tries) {
+        let host = "";
+        try { host = new URL(url).host; } catch { continue; }
         try {
           const res = await fetch(url, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20_000) });
           const body = res.ok ? await res.json().catch(() => null) : null;
