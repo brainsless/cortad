@@ -65,6 +65,7 @@
     "lib/trace.cjs",
     "lib/wire.cjs",
     "lib/verbs.mjs",
+    "lib/intel-text.mjs",
     "lib/writes.mjs",
     "lib/words.mjs",
     "local.mjs",
