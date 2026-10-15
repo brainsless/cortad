@@ -52,6 +52,7 @@ threads = mongo[settings.MONGO_DB]["threads"]
 texts = mongo[settings.MONGO_DB]["legislation"]
 model = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
 pool: asyncpg.Pool | None = None
+answering: set[asyncio.Task] = set()
 
 SEED = [
     {"cite": "قانون أصول المحاكمات المدنية، المادة 178", "text": "مدة الاستئناف ثلاثون يوماً تبدأ من اليوم التالي لتاريخ تفهم الحكم إذا كان وجاهياً."},
@@ -118,7 +119,10 @@ async def ask(body: Ask, uid: str = Depends(caller)) -> dict:
     else:
         thread_id = uuid.uuid4().hex
         await threads.insert_one({"_id": thread_id, "owner": uid, "mode": body.mode, "status": "pending", "answer": None, "turns": [{"role": "user", "text": body.request}]})
-    asyncio.create_task(answer(thread_id))
+    task = asyncio.create_task(answer(thread_id))
+    # The loop keeps only a weak reference to a task; one nothing holds can vanish mid-answer.
+    answering.add(task)
+    task.add_done_callback(answering.discard)
     return {"thread_id": thread_id, "status": "pending"}
 
 

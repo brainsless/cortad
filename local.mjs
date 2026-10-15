@@ -1592,6 +1592,18 @@ async function deliver(id, out) {
   }
 }
 
+// Asked again through a server that is still starting or a network that dropped, for as long as a
+// restart can take: only the server saying it does not know this terminal ends the session. Ended on
+// the first slow answer, a deploy that restarted the server ended every session it held.
+async function reattach() {
+  for (let wait = 2000, until = Date.now() + 300_000; ; wait = Math.min(wait * 2, 30_000)) {
+    const back = await call("POST", "/local/reattach", { box, name: basename(root), project }, { timeoutMs: 120_000 }).catch(() => null);
+    if (back && (back.ok || back.status < 500)) return back;
+    if (Date.now() >= until || closing) return back;
+    await new Promise((r) => setTimeout(r, wait / 2 + Math.random() * (wait / 2)));
+  }
+}
+
 let quiet = 0;
 // Each poll names the jobs the last one brought. A poll's answer can die on the way (the network
 // drops, the lid closes): the server sends again whatever is not named, and a job seen twice is
@@ -1606,7 +1618,7 @@ for (;;) {
   if (res.status === 404) {
     // The server restarted and forgot this terminal. It is the same terminal: it proves so with the
     // key it was given, its box is opened again, and the app it is holding is announced again.
-    const back = await call("POST", "/local/reattach", { box, name: basename(root), project }).catch(() => null);
+    const back = await reattach();
     if (!back?.ok) { say("this session ended on the server. Run the command again for a new one."); await close(1); }
     if (app?.port) await announce().catch(() => {});
     forgetTold?.();
