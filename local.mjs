@@ -15,6 +15,7 @@
 import { storesOf, withoutStoreSettings } from "./lib/stores.mjs";
 import { notAnApp, withoutStores } from "./lib/app-port.mjs";
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
+import { historyParts, repoFacts } from "./lib/commits.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
@@ -1257,8 +1258,8 @@ const treeDigest = (() => {
   }
   return h.digest("hex");
 })();
-// The commit this tree is. Your .git is never uploaded -- nothing of your history leaves this
-// machine -- so the one sha the report needs is read here and sent as forty characters. A folder
+// The commit this tree is. Your .git is never uploaded; the one sha the report needs is read here
+// and sent as forty characters, and the commits themselves follow the code (sendHistory). A folder
 // that is not a checkout sends nothing, and the report says so rather than inventing one.
 const head = (() => {
   try {
@@ -1295,6 +1296,20 @@ for (let off = 0; off < bytes.length; off += PART) {
     writeDigest(project, treeDigest);
   }
 }
+// Their commit history follows the code: the commits newer than the ones Cortad holds, with the
+// newest commits' diffs cut to the files above and to lines that carry no key (lib/commits.mjs).
+// Never a reason to stop the connect.
+async function sendHistory() {
+  const last = await call("GET", `/local/${box}/commits/last`);
+  if (!last.ok) return;
+  const keeps = (rel) => { const parts = rel.split("/"); return !parts.slice(0, -1).some((d) => SKIP_DIR.test(d)) && !SKIP_FILE.test(parts.at(-1)) && !ENV_FILE.test(parts.at(-1)) && !kept.includes(rel); };
+  const parts = historyParts(root, typeof last.data?.sha === "string" ? last.data.sha : null, { keep: keeps, holdsKey: (line) => holdsKeys(line, envKeys) });
+  for (const [i, commits] of parts.entries()) {
+    const put = await call("PUT", `/local/${box}/commits`, { commits, ...(i === 0 ? { repo: repoFacts(root) } : {}) }, { timeoutMs: 120_000 });
+    if (!put.ok) throw new Error(put.data?.error ?? `history upload failed (${put.status})`);
+  }
+}
+if (head) await sendHistory().catch((err) => { if (verbose) say(`commit history not sent: ${err?.message ?? err}`); });
 // Unchanged code has already been read: coming back says so instead of claiming a second read.
 stepDone(moved ? "connected: your change is in, and what Cortad read before still stands" : resumed ? "connected: nothing changed since last time" : "connected");
 // The coding agents on this machine learn about Cortad now, once: an MCP entry and a skill in each
