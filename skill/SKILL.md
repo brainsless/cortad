@@ -34,6 +34,7 @@ The person owns the product. They may not be reading the code with you, so every
 - A folder connected before reconnects at once with the key it kept.
 - A folder connected for the first time prints a link and four characters, good for ten minutes. Give the person both as printed; they approve the link in their browser, signed in to Cortad, and the command goes on by itself.
 - When a result says no connect command is running, run `npx {{cortad}}` again in this folder. No code is needed from the person.
+- The app runs on copies of the databases its settings name, deleted when the command ends. When the person wants a run on other data, such as their staging databases instead of the test ones, stop the command and run `npx {{cortad}} --data <settings file>`: the databases that file names are copied instead, under the names the app reads them by, and the app keeps the rest of its own settings. The choice holds for later runs until the next connect, and every setting the app needs stays in place.
 
 The connect command prints "Go back to the browser" once it is connected. Cortad then finds the AI endpoints in the app's code and sends each one a test request itself, from this machine to the app on its port.
 

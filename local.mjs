@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Cortad on your own machine. Run from your repository's root with the code the connect screen
 // showed:
-//   npx cortad ABCD2345   [--port 3000] [--start "npm run dev"] [--proxy] [--verbose]
+//   npx cortad ABCD2345   [--port 3000] [--start "npm run dev"] [--data .env.staging] [--proxy] [--verbose]
 //
 // What it does: signs in with the code, uploads your source files once (never .env, never
 // node_modules) so your code can be read, starts your app the way you start it, then holds one
@@ -12,10 +12,10 @@
 // on with the key this connect leaves in ~/.cortad. Nothing here touches git. Your environment
 // never leaves this machine. Ctrl-C ends everything.
 
-import { storesOf, withoutStoreSettings } from "./lib/stores.mjs";
+import { storeSettings, storesOf, withoutStoreSettings } from "./lib/stores.mjs";
 import { notAnApp, withoutStores } from "./lib/app-port.mjs";
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
-import { appEnv, devEnv, fileValues, keyTries, localEnv } from "./lib/env-files.mjs";
+import { appEnv, devEnv, fileValues, keyTries, localEnv, parseEnv } from "./lib/env-files.mjs";
 import { historyParts, repoFacts } from "./lib/commits.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -86,8 +86,8 @@ const clearStep = () => { if (process.stdout.isTTY) process.stdout.write("\r\x1b
 const stepDone = (line) => { clearStep(); say(line); };
 // `npx cortad` alone connects too: with the key this folder kept from its last connect, or, with none,
 // by one approval in the browser (pairing below). A word that is neither a code nor a flag is refused.
-const words = argv.filter((a, i) => !a.startsWith("-") && !["--port", "--start"].includes(argv[i - 1] ?? ""));
-if (!explain && !viaToken && words.length && !/^[A-Z0-9]{8}$/.test(code)) fail(`usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--proxy]   |   npx cortad --explain   |   npx cortad ${[...VERBS, "wait"].join(" | ")}`);
+const words = argv.filter((a, i) => !a.startsWith("-") && !["--port", "--start", "--data"].includes(argv[i - 1] ?? ""));
+if (!explain && !viaToken && words.length && !/^[A-Z0-9]{8}$/.test(code)) fail(`usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--data <settings file>] [--proxy]   |   npx cortad --explain   |   npx cortad ${[...VERBS, "wait"].join(" | ")}`);
 // Where Brainsless is. The host is not on the command line: a code cannot point at an impostor.
 const origin = new URL(process.env.CORTAD_ORIGIN || "https://cortad.com");
 // Ours, and only ours. brainsless.com is the same service under its earlier name and stays trusted
@@ -110,6 +110,23 @@ if (!MANIFEST.some((f) => existsSync(join(root, f))) && !workspaces(root).length
 // Which project this is, as a hash of where it lives: the same folder coming back resumes the same
 // connection, and the path itself never leaves this machine.
 const project = projectOf(root);
+// --data: the databases a run copies are the ones this settings file names, in place of the ones the
+// app's own settings name. Only its store settings are taken, and they outrank every other source.
+// The choice holds for the sessions a run starts by itself (--token) until the next connect makes its
+// own: a run started later would otherwise copy the databases the person chose not to use.
+const choiceFile = join(homeOf(project), "data-choice");
+const dataArg = flag("--data") ?? (viaToken ? (() => { try { return readFileSync(choiceFile, "utf8").trim() || undefined; } catch { return undefined; } })() : undefined);
+const dataFile = dataArg ? resolve(root, dataArg) : null;
+let chosen = {};
+if (dataFile) {
+  let text = null;
+  try { text = readFileSync(dataFile, "utf8"); } catch { fail(`--data ${dataArg}: there is no settings file there to read the databases from.`); }
+  chosen = storeSettings(parseEnv(text, process.env));
+  if (!storesOf(chosen).length) fail(`--data ${dataArg}: that file names no database. Give the settings file that holds the database settings the run should copy, under the names your app reads them by.`);
+}
+if (!viaToken && !explain) {
+  try { mkdirSync(homeOf(project), { recursive: true, mode: 0o700 }); writeFileSync(choiceFile, dataFile ?? "", { mode: 0o600 }); } catch { /* later sessions copy the app's own databases */ }
+}
 
 // One process holds a project's app up (lib/runner.mjs), and its state is what every reader reports.
 // `reach: "ask"`: an agent's reach is sent by this process (lib/auto-reach.mjs), signed in where it can.
@@ -297,6 +314,12 @@ const held = makeHeld({ rows: () => capture?.usage()?.rows ?? [], say: (line) =>
 let gate = null;
 const hold = () => { if (!gate) { let open; gate = new Promise((r) => { open = r; }); gate.open = () => { gate = null; open(); }; } };
 const release = () => gate?.open();
+// A store with no copy that the person has not said yes to: until they do, nothing of ours that can
+// write reaches the app or runs as it, so nothing lands in that store. Reads still go: they list the
+// app's routes and answer its health.
+const WRITES_HELD = "A store your app writes into has no copy and waits for the person's yes on the card in the browser.";
+const writesHeld = () => keeping.holding(consent).length > 0;
+const reads = (method) => /^(?:GET|HEAD|OPTIONS)$/i.test(String(method ?? "GET"));
 const mask = (text) => maskWith(String(text ?? ""), secrets);
 
 // ---- the wire
@@ -395,6 +418,7 @@ async function verb(job) {
       // made of its stores, which the sandbox keeps a command from reading off the disk, and with the
       // app's reach on the network, since it runs the app's own AI against the app's model provider.
       const asApp = b.opts?.app === true;
+      if (asApp && writesHeld()) return { success: false, exitCode: 126, stdout: "", stderr: WRITES_HELD };
       const { file, args } = lock.wrap(cmd, { network: asApp });
       const env = asApp ? { ...localEnv(envFiles, appDir, root, process.env), ...keeping.envNow(), ...plainEnv } : plainEnv;
       return new Promise((done) => {
@@ -412,6 +436,7 @@ async function verb(job) {
       // Only the app's own port: this machine's other services are not the world.
       const port = Number(b.port) || doorPort();
       if (!app || (port !== app.port && port !== doorPort())) return { error: `refused: port ${port} is not your app` };
+      if (!reads(b.method) && writesHeld()) return { error: WRITES_HELD };
       const path = typeof b.path === "string" && b.path.startsWith("/") ? b.path : "/";
       const headers = {};
       for (const [k, v] of Object.entries(b.headers ?? {})) if (!/^(host|content-length|connection)$/i.test(k)) headers[k] = String(v);
@@ -657,7 +682,7 @@ const answers = async (port) => {
 // What the app's own start takes from its env files (lib/env-files.mjs appEnv), and every value its
 // settings could hold, for reading which stores and ports it names.
 const envExports = () => appEnv(envFiles, appDir, root, process.env);
-const settingsNow = () => ({ ...localEnv(envFiles, appDir, root, process.env), ...process.env });
+const settingsNow = () => ({ ...localEnv(envFiles, appDir, root, process.env), ...process.env, ...chosen });
 const onPath = (bin) => (process.env.PATH ?? "").split(":").some((dir) => dir && existsSync(join(dir, bin)));
 // Where their app lives inside this repository, and how it starts. Worked out in lib/start.mjs.
 let appDir = root;
@@ -948,7 +973,7 @@ async function freed(cmd, lifted) {
 // was copied, started, or left where trials write into it is told in the terminal here and to the
 // run with the app (announce), so status says it beside Run and the report keeps it.
 const keeping = makeKeeping({
-  root, work, ledgerFile: join(homeOf(project), "made.json"), onPath, say, hold, typed: Boolean(flag("--start")),
+  root, work, ledgerFile: join(homeOf(project), "made.json"), onPath, say, hold, typed: Boolean(flag("--start")), chosen,
   launch: (plan) => sidecar(plan.cmd, plan.cwd),
   connections: () => capture?.connections() ?? [],
   copies: () => capture?.copies() ?? [],
@@ -980,8 +1005,8 @@ async function start(waitMs, tries = 3) {
   await allowOutbound();
   // A start command the person typed says which databases the app uses: the store settings of their
   // settings files are left for the app to load, since handed over here they outrank the
-  // environment that command chose, and no copy is pointed at.
-  const base = flag("--start") ? { ...withoutStoreSettings(envExports()), ...process.env, ...lifted } : { ...envExports(), ...process.env, ...lifted, ...copies };
+  // environment that command chose. Only the copies of databases chosen with --data are handed over.
+  const base = flag("--start") ? { ...withoutStoreSettings(envExports()), ...process.env, ...lifted, ...copies } : { ...envExports(), ...process.env, ...lifted, ...copies };
   child = spawnTied(cmd, { cwd: appDir, env: { ...base, ...(proxy ? proxy.env(base) : capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
   const mine = child;
   become("starting", { app: mine.pid ?? null });
@@ -1167,7 +1192,7 @@ const envFiles = [];
 const files = [];
 listed = gitListed();
 walk(root, 0, files, envFiles, 0);
-secrets = secretValues(envFiles);
+secrets = secretValues(dataFile ? [...envFiles, dataFile] : envFiles);
 envKeys = secretEnvValues(envFiles, (f) => readFileSync(f, "utf8"));
 const kept = [];
 for (let i = files.length - 1; i >= 0; i -= 1) if (carriesKey(files[i])) kept.unshift(...files.splice(i, 1));
@@ -1193,7 +1218,8 @@ if (explain) {
     `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records each request during which your app calls a model, what it answered and the model calls on the way; header values stay here`,
     `other apps      a local proxy on 127.0.0.1 in front of your app's port and where its model settings point (OPENAI_BASE_URL and the others), recording the same; it passes each call on to the provider your settings name`,
     `your files      never written by this program; your own coding agent edits them`,
-    `your database   a database file your env or code names is copied to this program's temp folder; a Postgres, Redis or MongoDB database or a Qdrant collection on this machine is copied on its own server under a name of ours and deleted at the end; your app is started on the copies. Any other store is named, not copied`,
+    `your database   a database file your env or code names is copied to this program's temp folder; a Postgres, Redis or MongoDB database or a Qdrant collection on this machine is copied on its own server under a name of ours, and a MongoDB or Elasticsearch server whose databases your code names is copied whole into a Docker container of ours; all are deleted at the end, and your app is started on the copies. A store with no copy holds Run until you say yes to writing into it`,
+    `choose data     ${dataFile ? `the databases ${relative(root, dataFile) || dataFile} names are the ones copied` : "--data <settings file> copies the databases that file names instead of the ones your app's settings name; your app keeps the rest of its settings"}`,
     `your services   a store your compose file runs, or a second service of this repository, is started when your app reaches for it and nothing answers there, and stopped at the end`,
     `test shell      confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
     `for your agent  an MCP entry and a skill in each coding agent's own home folder (Claude Code, Codex, Cursor), and a key in ~/.cortad for later runs`,
@@ -1541,9 +1567,10 @@ const autoReach = makeAutoReach({
     return res?.ok ? res.data : null;
   },
   runner: () => (became?.state === "up" && !restarting ? { state: "up", ...became.fields } : null),
-  // One test request per endpoint is what the person's own agent sends by hand, so it does not wait on
-  // the yes a run's writes into an uncopied store need; it waits only while a copy is being made.
-  waiting: async () => (gate ? "Your app's data is being copied for this session." : null),
+  // A test request writes what a run's turn writes: it waits while a copy is being made, and while a
+  // store with no copy waits for the person's yes. Sent anyway, the test requests to a twin of a legal
+  // research API wrote into its own MongoDB and Elasticsearch while both held Run.
+  waiting: async () => (gate ? "Your app's data is being copied for this session." : writesHeld() ? WRITES_HELD : null),
   origin: () => (app ? ownOrigin(app.port) : null),
   signIn: async (m) => { const role = typeof m.as === "string" ? m.as : identities?.roles()[0]; return role ? identities.headerFor(role) : null; },
   stampOf: (m) => { try { return m.file ? String(statSync(join(root, m.file)).mtimeMs) : ""; } catch { return ""; } },

@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "ask-later-api"
 version = "0.1.0"
-description = "A stand-in for an AI research API that answers later: a FastAPI app on Poetry that loads its settings by mode, signs callers in with Firebase, keeps threads in Mongo and usage in Postgres, and answers each ask from a background task the client polls."
+description = "A stand-in for an AI research API that answers later: a FastAPI app on Poetry that loads its settings by mode, signs callers in with Firebase, keeps threads and its library edition in Mongo, searches legislation in Elasticsearch, keeps usage in Postgres, and answers each ask from a background task the client polls."
 authors = ["Cortad <team@cortad.com>"]
 package-mode = false
 
@@ -14,6 +14,7 @@ firebase-admin = "7.7.0"
 openai = "3.31.0"
 motor = "3.7.1"
 asyncpg = "0.32.0"
+elasticsearch = { version = "8.15.1", extras = ["async"] }
 
 [build-system]
 requires = ["poetry-core"]
