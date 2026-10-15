@@ -13,6 +13,7 @@
     "lib/backing.mjs",
     "lib/calls.mjs",
     "lib/cli.mjs",
+    "lib/commits.mjs",
     "lib/contact-text.mjs",
     "lib/data.mjs",
     "lib/dissection-text.mjs",
