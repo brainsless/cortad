@@ -1,33 +1,33 @@
 #!/usr/bin/env node
 // Cortad on your own machine. Run from your repository's root with the code the connect screen
 // showed:
-//   npx cortad ABCD2345   [--port 3000] [--start "npm run dev"] [--data .env.staging] [--proxy] [--verbose]
+//   npx cortad ABCD2345 -- <how you start your app>      your command, run here with Cortad's hook inside it
+//   npx cortad ABCD2345 --port 3000                      an app already running: its replies are seen, its model calls are not
 //
 // What it does: signs in with the code, uploads your source files once (never .env, never
-// node_modules) so your code can be read, starts your app the way you start it, then holds one
-// outbound connection open and does what a run asks: a request to your app, a file read, a shell
-// line. The shell is locked by the operating system (lib/lock.mjs) and cannot write your code;
+// node_modules) so your code can be read, runs your start command as you typed it with nothing
+// added but the hook, then holds one outbound connection open and does what a run asks: a request to
+// your app, a file read, a shell line. It guesses nothing about your environment: your command
+// decides the settings, the databases and the services, and nothing is copied or started beside it. The shell is locked by the operating system (lib/lock.mjs) and cannot write your code;
 // nothing here writes your files at all. It also makes Cortad known to the coding agents on this
 // machine (lib/register.mjs): an MCP entry and a skill, so `npx cortad mcp` answers them from then
 // on with the key this connect leaves in ~/.cortad. Nothing here touches git. Your environment
 // never leaves this machine. Ctrl-C ends everything.
 
-import { storeSettings, storesOf, withoutStoreSettings } from "./lib/stores.mjs";
 import { notAnApp, withoutStores } from "./lib/app-port.mjs";
 import { holdsKeys, secretEnvValues } from "./lib/keys.mjs";
-import { appEnv, devEnv, fileValues, keyTries, localEnv, parseEnv } from "./lib/env-files.mjs";
+import { parseEnv } from "./lib/env-files.mjs";
 import { historyParts, repoFacts } from "./lib/commits.mjs";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, watch, writeFileSync } from "node:fs";
-import { homedir, hostname, tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { COMMANDS, main as face, unknownVerb, VERBS } from "./lib/cli.mjs";
 import { addNews, homeOf, projectOf, readToken, writeApp, writeDigest, writeToken } from "./lib/home.mjs";
 import { changesOf, commandText, RELOADER, sourceOf } from "./lib/fresh.mjs";
-import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawnTied, stopTree, supervisorOf } from "./lib/proc.mjs";
+import { chainOf, elapsedMs, holderOf, listening, listenerOn, portInError, spawnTied, stopTree } from "./lib/proc.mjs";
 import { claimRunner, readRunner, releaseRunner, replaceRunner, startedAtOf, writeRunner } from "./lib/runner.mjs";
 import { registerAll } from "./lib/register.mjs";
 import { connectedText } from "./lib/read-text.mjs";
@@ -35,15 +35,11 @@ import { VERSION } from "./lib/spec.mjs";
 import { maskedLines, maskWith, secretValues } from "./lib/env-secrets.mjs";
 import { finished, unseenText } from "./lib/text.mjs";
 import { lockHolds, makeLock } from "./lib/lock.mjs";
-import { AS_HEADER, makeIdentities } from "./lib/mint.mjs";
-import { CAPTURED, makeCapture } from "./lib/replay.mjs";
+import { AS_HEADER, CAPTURED, makeCapture } from "./lib/replay.mjs";
 import { sampleHere } from "./lib/sample.mjs";
-import { mintAcross, originFor, servicePort, waitForPort } from "./lib/service.mjs";
-import { listingUrl } from "./lib/listing.mjs";
-import { hookable, installPlan, missingDependency, shownCommand, startPlan, workspaces } from "./lib/start.mjs";
+import { hookable, shownCommand, startPlan, workspaces } from "./lib/start.mjs";
 import { openProxy } from "./lib/proxy.mjs";
-import { liftedLimits, sessionLifts } from "./lib/switches.mjs";
-import { makeKeeping } from "./lib/keeping.mjs";
+import { liftedLimits } from "./lib/switches.mjs";
 import { downLine, makeHealth } from "./lib/health.mjs";
 import { markRun, writesDirOf, writtenPaths } from "./lib/writes.mjs";
 import { makeHeld } from "./lib/held.mjs";
@@ -60,18 +56,21 @@ if (unknownVerb(argv[0])) {
   console.error(`cortad  ${argv[0]} is not a command of cortad ${VERSION}. Its commands are ${VERBS.slice(0, -1).join(", ")} and ${VERBS.at(-1)}; npx cortad@latest <command> runs the newest. A connect code is typed in capitals, as the connect screen shows it.`);
   process.exit(1);
 }
-const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
-const verbose = argv.includes("--verbose");
+// Everything after `--` is the start command, as typed; `--start "cmd"` says the same for an older skill.
+const dash = argv.indexOf("--");
+const own = dash >= 0 ? argv.slice(0, dash) : argv;
+const flag = (name) => { const i = own.indexOf(name); return i >= 0 ? own[i + 1] : undefined; };
+const verbose = own.includes("--verbose");
 // A code is eight characters from the connect screen's alphabet, which has no I, O, 0 or 1.
-let code = (argv.find((a) => /^[A-HJ-NP-Za-hj-np-z2-9-]{8,9}$/.test(a) && !a.startsWith("-")) ?? "").toUpperCase().replace(/-/g, "");
+let code = (own.find((a) => /^[A-HJ-NP-Za-hj-np-z2-9-]{8,9}$/.test(a) && !a.startsWith("-")) ?? "").toUpperCase().replace(/-/g, "");
 const say = (line) => console.log(`cortad  ${line}`);
 const fail = (line) => { console.error(`cortad  ${line}`); process.exit(1); };
 
-const explain = argv.includes("--explain");
+const explain = own.includes("--explain");
 // The app is seen through a local proxy (lib/proxy.mjs) even where the hook could load into it.
-const proxyAsked = argv.includes("--proxy");
+const proxyAsked = own.includes("--proxy");
 // Started by lib/cli.mjs for a run on a later day: no code, the key the first connect left behind.
-const viaToken = argv.includes("--token");
+const viaToken = own.includes("--token");
 // What is happening right now, on one line that rewrites itself. npx spends its own seconds fetching
 // this package before anything here runs, and the first thing we printed used to be after the whole
 // upload: a minute or more of a cursor sitting still, which reads as nothing happening.
@@ -86,8 +85,9 @@ const clearStep = () => { if (process.stdout.isTTY) process.stdout.write("\r\x1b
 const stepDone = (line) => { clearStep(); say(line); };
 // `npx cortad` alone connects too: with the key this folder kept from its last connect, or, with none,
 // by one approval in the browser (pairing below). A word that is neither a code nor a flag is refused.
-const words = argv.filter((a, i) => !a.startsWith("-") && !["--port", "--start", "--data"].includes(argv[i - 1] ?? ""));
-if (!explain && !viaToken && words.length && !/^[A-Z0-9]{8}$/.test(code)) fail(`usage: npx cortad <code from the connect screen> [--port N] [--start \"cmd\"] [--data <settings file>] [--proxy]   |   npx cortad --explain   |   npx cortad ${[...VERBS, "wait"].join(" | ")}`);
+const words = own.filter((a, i) => !a.startsWith("-") && !["--port", "--start"].includes(own[i - 1] ?? ""));
+const USAGE = `usage: npx cortad <code from the connect screen> -- <how you start your app>   |   npx cortad <code> --port <port of your running app>   |   npx cortad --explain   |   npx cortad ${[...VERBS, "wait"].join(" | ")}`;
+if (!explain && !viaToken && words.length && !/^[A-Z0-9]{8}$/.test(code)) fail(USAGE);
 // Where Brainsless is. The host is not on the command line: a code cannot point at an impostor.
 const origin = new URL(process.env.CORTAD_ORIGIN || "https://cortad.com");
 // Ours, and only ours. brainsless.com is the same service under its earlier name and stays trusted
@@ -110,23 +110,25 @@ if (!MANIFEST.some((f) => existsSync(join(root, f))) && !workspaces(root).length
 // Which project this is, as a hash of where it lives: the same folder coming back resumes the same
 // connection, and the path itself never leaves this machine.
 const project = projectOf(root);
-// --data: the databases a run copies are the ones this settings file names, in place of the ones the
-// app's own settings name. Only its store settings are taken, and they outrank every other source.
-// The choice holds for the sessions a run starts by itself (--token) until the next connect makes its
-// own: a run started later would otherwise copy the databases the person chose not to use.
-const choiceFile = join(homeOf(project), "data-choice");
-const dataArg = flag("--data") ?? (viaToken ? (() => { try { return readFileSync(choiceFile, "utf8").trim() || undefined; } catch { return undefined; } })() : undefined);
-const dataFile = dataArg ? resolve(root, dataArg) : null;
-let chosen = {};
-if (dataFile) {
-  let text = null;
-  try { text = readFileSync(dataFile, "utf8"); } catch { fail(`--data ${dataArg}: there is no settings file there to read the databases from.`); }
-  chosen = storeSettings(parseEnv(text, process.env));
-  if (!storesOf(chosen).length) fail(`--data ${dataArg}: that file names no database. Give the settings file that holds the database settings the run should copy, under the names your app reads them by.`);
+// How this app starts, kept on this machine for the sessions a run starts by itself (--token) and
+// for the next connect: the command typed after `--`, or the port of an app already running.
+const startFile = join(homeOf(project), "start.json");
+const keptStart = (() => { try { return JSON.parse(readFileSync(startFile, "utf8")); } catch { return {}; } })();
+const typed = dash >= 0 ? own.length === argv.length ? "" : argv.slice(dash + 1).join(" ").trim() : flag("--start") ?? (viaToken ? keptStart.cmd ?? "" : "");
+const wantedPort = Number(flag("--port")) || (viaToken && !typed ? Number(keptStart.port) || 0 : 0);
+const onPath = (bin) => (process.env.PATH ?? "").split(":").some((dir) => dir && existsSync(join(dir, bin)));
+// Nothing was said about how the app starts: the one suggestion the repository makes obvious is
+// printed, never run. A guess shown to a person is fine; a guess acted on at runtime is what put an
+// app on a placeholder key and its library in an empty copy.
+if (!explain && !viaToken && !typed && !wantedPort) {
+  const plan = startPlan({ root, onPath });
+  const shown = code || "<code>";
+  console.error(`cortad  how does your app start? Run this again with your command after --:`);
+  console.error(`cortad    npx cortad ${shown} -- ${plan?.cmd ?? "<your start command>"}${plan?.cmd ? `   (from this folder that looks like it${plan.within ? `, in ${plan.within}` : ""}; change it if not)` : ""}`);
+  console.error(`cortad  or, if your app is already running:   npx cortad ${shown} --port ${plan?.cmd ? "<its port>" : "3000"}`);
+  process.exit(2);
 }
-if (!viaToken && !explain) {
-  try { mkdirSync(homeOf(project), { recursive: true, mode: 0o700 }); writeFileSync(choiceFile, dataFile ?? "", { mode: 0o600 }); } catch { /* later sessions copy the app's own databases */ }
-}
+if (viaToken && !typed && !wantedPort) fail("this project has no saved start command. Run npx cortad <code> -- <how you start your app> in this folder once.");
 
 // One process holds a project's app up (lib/runner.mjs), and its state is what every reader reports.
 // `reach: "ask"`: an agent's reach is sent by this process (lib/auto-reach.mjs), signed in where it can.
@@ -212,67 +214,6 @@ function carriesKey(rel) {
   try { return holdsKeys(readFileSync(join(root, rel), "utf8"), envKeys); } catch { return false; }
 }
 
-// Origins your environment names (FRONTEND_URL, CORS_ORIGIN, ...): an app that trusts a browser
-// Origin is asked as that browser. Sent as origins only, never the variable's full value.
-function envOrigins(envFiles) {
-  const out = new Set();
-  for (const file of envFiles) {
-    let text = "";
-    try { text = readFileSync(file, "utf8"); } catch { continue; }
-    for (const line of text.split("\n")) {
-      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-      if (!m || !/ORIGIN|URL|HOST|DOMAIN|FRONTEND|CLIENT|SITE|WEB/i.test(m[1])) continue;
-      // OPENAI_BASE_URL names where a key is sent, not a page a browser opens the app from.
-      if (/(?:BASE_URL|API_BASE|ENDPOINT)$/i.test(m[1]) && !/ORIGIN|FRONTEND|CLIENT|SITE|WEB|PUBLIC|APP/i.test(m[1])) continue;
-      for (const v of m[2].replace(/^(['"])(.*)\1$/, "$2").split(",")) {
-        try { const u = new URL(v.trim()); if (/^https?:$/.test(u.protocol)) out.add(u.origin); } catch { /* not an origin */ }
-      }
-    }
-  }
-  return [...out].slice(0, 8);
-}
-// Switch-shaped names and the word each one reads as. The name and the word travel, never the value.
-const SWITCH_NAME = /(?:_ENABLED|_DISABLED|_MODE|_ON|_OFF|_FLAG)$|^(?:ENABLE|USE|DISABLE|SKIP)_/;
-const switchStates = (values) => Object.fromEntries(Object.entries(values)
-  .filter(([name]) => SWITCH_NAME.test(name))
-  .map(([name, value]) => [name, value === "" ? "unset" : /^(?:1|true|yes|on)$/i.test(value) ? "on" : /^(?:0|false|no|off)$/i.test(value) ? "off" : "set"]));
-
-// What your app can actually reach: each provider key your env files set is asked that provider
-// for its own model listing, from this machine. Your key stays here; what goes back is the name it
-// is set under, the host, what the host answered, the model ids, and which switches are on.
-const MODEL_ID = /^[\w./:@-]{1,160}$/;
-async function inventoryOf(listings) {
-  const values = settingsNow();
-  const providers = await Promise.all(Object.entries(listings)
-    .filter(([name]) => values[name])
-    .map(async ([name, canonical]) => {
-      // The shell's key, which outranks every loader, else each key a file of theirs holds, until one
-      // is let in: which file the app's own loader takes it from is its business, and "refuses your
-      // key" was said of a test file's key while the app called its provider on the real one. A key
-      // goes only to the address the shell or its own file names, else the one the development files
-      // name, else the provider's own; never to one only a test or staging file names, which the
-      // app may not use, so where only such a file names one the key is not asked about at all.
-      const tries = keyTries(name, canonical, { shell: process.env, files: fileValues(envFiles, appDir, root, process.env), dev: devEnv(envFiles, appDir, root, process.env) });
-      let first = null;
-      for (const { key, url } of tries) {
-        let host = "";
-        try { host = new URL(url).host; } catch { continue; }
-        try {
-          const res = await fetch(url, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20_000) });
-          const body = res.ok ? await res.json().catch(() => null) : null;
-          const models = (Array.isArray(body?.data) ? body.data : [])
-            .map((m) => String(m?.id ?? "")).filter((id) => MODEL_ID.test(id)).slice(0, 1500);
-          const seen = { env: name, host, status: res.status, models };
-          if (res.ok) return seen;
-          first ??= seen;
-        } catch {
-          first ??= { env: name, host, status: 0, models: [] };
-        }
-      }
-      return first;
-    }));
-  return { providers: providers.filter(Boolean), flags: switchStates(values) };
-}
 let secrets = [];
 // A run's request to an endpoint your app answers later carries the first (src/customer/endpoint.ts),
 // with how long the run waits for this reply; a reply with no answer says in the second why none came.
@@ -283,7 +224,6 @@ const trialJars = new Map();
 // Endpoints that refused a new visitor: their trials carry the person's own session.
 const ownSession = new Set();
 const TRIAL_JARS = 500;
-let identities = null;
 let capture = null;
 // The local proxy an app is seen through when the hook cannot load into it (lib/proxy.mjs).
 let proxy = null;
@@ -309,17 +249,10 @@ let forgetTold = null;
 // load on it, not a hang.
 let answering = 0;
 const held = makeHeld({ rows: () => capture?.usage()?.rows ?? [], say: (line) => say(line) });
-// Closed while a store the app reaches is brought up and copied, until the app runs on the copy: the
-// run's requests wait at it rather than write into the original.
+// Closed while the app is started again: the run's requests wait at it and are sent once it answers.
 let gate = null;
 const hold = () => { if (!gate) { let open; gate = new Promise((r) => { open = r; }); gate.open = () => { gate = null; open(); }; } };
 const release = () => gate?.open();
-// A store with no copy that the person has not said yes to: until they do, nothing of ours that can
-// write reaches the app or runs as it, so nothing lands in that store. Reads still go: they list the
-// app's routes and answer its health.
-const WRITES_HELD = "A store your app writes into has no copy and waits for the person's yes on the card in the browser.";
-const writesHeld = () => keeping.holding(consent).length > 0;
-const reads = (method) => /^(?:GET|HEAD|OPTIONS)$/i.test(String(method ?? "GET"));
 const mask = (text) => maskWith(String(text ?? ""), secrets);
 
 // ---- the wire
@@ -361,13 +294,6 @@ async function call(method, path, body, { raw = false, timeoutMs = 60_000, heade
 
 // ---- the box on this machine: your folder, read where it stands
 const work = join(tmpdir(), `cortad-${process.pid}`);
-// Where the hook reads the hosts a trial's writes may reach (lib/trace.cjs, lib/pyhook), and the
-// yes they come from.
-const outboundFile = join(work, "outbound.json");
-let consent = {};
-// The person's yes to raising their app's own limits and opening its sign-in switches for this
-// session, from the browser. Until it arrives the app runs with its guards as they are.
-let limitsYes = false;
 mkdirSync(work, { recursive: true });
 // What the app printed this session, beside the project's other records rather than in a temp folder
 // the agent is never told of. Emptied once this process holds the project (holdProject), so a second
@@ -414,13 +340,12 @@ async function verb(job) {
       if (verbose) say(`$ ${cmd.slice(0, 160)}`);
       // No lock, no shell: a world never gets an unlocked one on this machine.
       if (!lock) return { success: false, exitCode: 126, stdout: "", stderr: "refused: this machine has no sandbox tool (sandbox-exec or bubblewrap), so no shell line is run here" };
-      // A world's command (opts.app) runs as the app: with the values of its env files and the copies
-      // made of its stores, which the sandbox keeps a command from reading off the disk, and with the
-      // app's reach on the network, since it runs the app's own AI against the app's model provider.
+      // A world's command (opts.app) runs as the app: with this terminal's settings, which are the
+      // app's own where the person started it from here, and with the app's reach on the network,
+      // since it runs the app's own AI against the app's model provider.
       const asApp = b.opts?.app === true;
-      if (asApp && writesHeld()) return { success: false, exitCode: 126, stdout: "", stderr: WRITES_HELD };
       const { file, args } = lock.wrap(cmd, { network: asApp });
-      const env = asApp ? { ...localEnv(envFiles, appDir, root, process.env), ...keeping.envNow(), ...plainEnv } : plainEnv;
+      const env = asApp ? { ...process.env, ...plainEnv } : plainEnv;
       return new Promise((done) => {
         const child = spawn(file, args, { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
         let out = "", err = "";
@@ -436,7 +361,6 @@ async function verb(job) {
       // Only the app's own port: this machine's other services are not the world.
       const port = Number(b.port) || doorPort();
       if (!app || (port !== app.port && port !== doorPort())) return { error: `refused: port ${port} is not your app` };
-      if (!reads(b.method) && writesHeld()) return { error: WRITES_HELD };
       const path = typeof b.path === "string" && b.path.startsWith("/") ? b.path : "/";
       const headers = {};
       for (const [k, v] of Object.entries(b.headers ?? {})) if (!/^(host|content-length|connection)$/i.test(k)) headers[k] = String(v);
@@ -453,8 +377,9 @@ async function verb(job) {
       const later = laterAt !== undefined && (headers[laterAt] === "later" || laterMs > 0);
       if (laterAt !== undefined) delete headers[laterAt];
       if (later) capture?.forget(turn || headers["x-cortad-turn"]);
-      // A request that speaks as one of your app's own callers carries the role, not the token:
-      // the token was issued on this machine and is put in here, so it never travels.
+      // A request that speaks as one of your app's own callers carries the role, not the sign-in: the
+      // sign-in was seen on this machine, on the request the person or their agent sent, and is put in
+      // here, so it never travels. There is no other caller: Cortad makes no accounts.
       const marker = Object.keys(headers).find((k) => k.toLowerCase() === AS_HEADER);
       let spokenAs = null;
       if (marker) {
@@ -462,16 +387,8 @@ async function verb(job) {
         delete headers[marker];
         if (role === CAPTURED || role.startsWith(`${CAPTURED}:`)) {
           spokenAs = role;
-          // Speaking as one of the customers whose requests we watched: every header their own client sent.
           const theirs = capture?.headers(role);
           for (const [name, value] of Object.entries(theirs ?? {})) { for (const k of Object.keys(headers)) if (k.toLowerCase() === name) delete headers[k]; headers[name] = value; }
-          // No request of theirs is held (a new connect): sent from the app's own address, as Cortad's
-          // own test request is, so an app that lets visitors in by Origin lets this one in.
-          const from = !theirs && app ? ownOrigin(app.port) : null;
-          if (from && !Object.keys(headers).some((k) => k.toLowerCase() === "origin")) { headers.origin = from; headers.referer = `${from}/`; }
-        } else {
-          const held = await identities?.headerFor(role);
-          if (held) { for (const k of Object.keys(headers)) if (k.toLowerCase() === held.name) delete headers[k]; headers[held.name] = held.value; }
         }
       }
       const method = String(b.method ?? "GET").toUpperCase();
@@ -608,11 +525,8 @@ async function verb(job) {
       }
       catch (e) { return { success: false, stderr: String(e.message) }; }
     }
-    case "mint": return identities ? JSON.parse(mask(JSON.stringify(await mintAcross({
-      recipes: b.recipes, root, appDir, onPath, appPort: app?.port, portFor: serviceUp,
-      mint: (recipes, port, origin) => identities.mint({ ...b, recipes, headers: { ...(b.headers ?? {}), ...(origin ? { origin, referer: `${origin}/` } : {}) } }, port),
-      originFor: (port) => originFor(port, envOrigins(envFiles)),
-    })))) : { identities: [] };
+    // Cortad makes no accounts in your sign-in system: the request your agent sent carries the one it uses.
+    case "mint": return { identities: [] };
     // The last of what your app printed, for a reply it failed: the traceback a developer reads.
     // Masked like everything else, and the folder named so its paths can be read as your files.
     case "log": {
@@ -628,7 +542,7 @@ async function verb(job) {
     // The person changed what they said yes to while this command runs.
     // Said in the terminal: an agent that read "one question for the person" here told them the run
     // was still waiting two minutes after they had answered.
-    case "consent": await allowOutbound(b); say("the person's answer on the card in the browser arrived"); return { ok: true };
+    case "consent": say("the person's answer on the card in the browser arrived"); return { ok: true };
     // A line for the agent reading this terminal: the read of the code landing, said the moment it does.
     // One marked news (a run ending) is also kept for the hook, so an agent that was not listening
     // hears it on its next prompt or edit.
@@ -640,10 +554,9 @@ async function verb(job) {
       return { ok: true };
     }
     case "restart": return restartApp();
-    case "inventory": return inventoryOf(b.probe && typeof b.probe === "object" ? b.probe : {});
-    // Your own pages, read here rather than in a world's shell: that shell is sealed away from
-    // every env file and every host but this one, so inside it no store of yours has an address.
-    case "sample": return { report: JSON.parse(mask(JSON.stringify(await sampleHere(b, settingsNow(), root)))) };
+    // Your own pages, read here rather than in a world's shell, with this terminal's settings: the
+    // ones your app was started with.
+    case "sample": return { report: JSON.parse(mask(JSON.stringify(await sampleHere(b, { ...process.env }, root)))) };
     case "lock": return { locked: Array.isArray(b.hosts) ? b.hosts.length : 0 };
     // What your app spent on its providers, from the hook inside it. An app this command did not
     // start has no hook, and the empty answer says the meter is absent rather than that nothing was spent.
@@ -679,155 +592,47 @@ const answers = async (port) => {
   }
   return false;
 };
-// What the app's own start takes from its env files (lib/env-files.mjs appEnv), and every value its
-// settings could hold, for reading which stores and ports it names.
-const envExports = () => appEnv(envFiles, appDir, root, process.env);
-const settingsNow = () => ({ ...localEnv(envFiles, appDir, root, process.env), ...process.env, ...chosen });
-const onPath = (bin) => (process.env.PATH ?? "").split(":").some((dir) => dir && existsSync(join(dir, bin)));
-// Where their app lives inside this repository, and how it starts. Worked out in lib/start.mjs.
-let appDir = root;
+// Where the app's model settings point, for the proxy that stands in for a hook the app cannot load:
+// this terminal's values, else the ones the repository's env files hold. Read here and handed to no
+// process: the proxy forwards each call to the address the app's own settings name, and the app is
+// handed only the proxy's address in their place (lib/proxy.mjs env).
+const modelHints = () => ({ ...Object.assign({}, ...envFiles.filter((f) => !/\.(example|sample)$/.test(f)).map((f) => { try { return parseEnv(readFileSync(f, "utf8"), process.env); } catch { return {}; } })), ...process.env });
+// Where their app runs inside this repository: where the person's command runs it.
+const appDir = root;
 
-// ---- a sign-in mounted in another workspace
-// One app served its AI from apps/api and mounted sign-in in apps/dashboard: a test account can
-// only be made where the sign-in is, and posting a sign-up at the AI's own port is a 404.
-const toldService = new Set();
-const signedInAt = (dir, port) => { if (!toldService.has(dir)) { toldService.add(dir); say(`signed in a test account through ${dir}`); } return port; };
-// Everything else this command started, stopped with it: each started the way the app is, on the
-// same copies of its data.
-const sidecars = [];
-function sidecar(cmd, cwd) {
-  const kid = spawnTied(cmd, { cwd, env: { ...process.env, ...(capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}), ...keeping.envNow() } });
-  sidecars.push(kid);
-  kid.stdout.on("data", logTo());
-  kid.stderr.on("data", logTo());
-  return kid;
-}
-// The port that workspace's sign-in answers on. One it is already serving on comes first: starting
-// a second copy of a dashboard that is already up costs a minute and takes its port.
-async function serviceUp(group) {
-  const named = servicePort(group.cwd);
-  if (named && named !== app?.port && (await answers(named))) return signedInAt(group.dir, named);
-  // Its own port taken by the app leaves nothing to wait on: whatever answers there is the app.
-  if (!named || named === app?.port || !group.plan?.cmd) return null;
-  sidecar(group.plan.cmd, group.plan.cwd);
-  return (await waitForPort(named, 90_000)) ? signedInAt(group.dir, named) : null;
-}
-
-async function ask(question) {
-  if (!process.stdin.isTTY) return null;
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const line = await new Promise((r) => rl.question(question, r));
-  rl.close();
-  return line.trim() || null;
-}
 let child = null;
-// An app this command did not start carries nothing that counts its model calls, and no run plays
-// against it (the API holds Run): databuddy's free run played 39 conversations into a route that
-// answers from code.
-const UNSEEN = "your app was already running, so Cortad cannot see the calls it makes to its model, and no run can start.";
+// An app this command did not start carries nothing that counts its model calls: its replies are seen
+// through the proxy, and the person is told so, as what they chose.
+const UNSEEN = "your app was already running, so Cortad sees its replies and not the calls it makes to its model.";
+const keepStart = (record) => { try { mkdirSync(homeOf(project), { recursive: true, mode: 0o700 }); writeFileSync(startFile, JSON.stringify(record), { mode: 0o600 }); } catch { /* kept for this session only */ } };
 async function startApp() {
-  const wanted = Number(flag("--port"));
-  // "--port 8106 --start ..." is "start it, it will answer on 8106", not "it is already on 8106":
-  // read as the latter it said nothing was answering and never ran the command it was given.
-  if (wanted && !flag("--start")) {
-    if (!(await answers(wanted))) return { port: null, said: "", why: `nothing is answering on port ${wanted}, so there is nothing to ask.`, noStart: true };
-    const took = await takeOver(wanted);
-    if (took) return took;
-    if (proxyAsked) {
-      await useProxy();
-      say(`your app was already running, so Cortad cannot see the calls it makes to its model until it is started with: ${Object.entries(proxy.env({ ...envExports(), ...process.env })).map(([k, v]) => `${k}=${v}`).join(" ")}`);
-    } else say(`${UNSEEN} Stop it and run this again without --port: this command starts your app itself.`);
-    return { port: wanted, cmd: null };
+  // "--port 8106 -- ..." is "start it, it will answer on 8106", not "it is already on 8106".
+  if (wantedPort && !typed) {
+    if (!(await answers(wantedPort))) return { port: null, said: "", why: `nothing is answering on port ${wantedPort}, so there is nothing to ask. Start your app, then run this again.`, noStart: true };
+    await useProxy();
+    say(`${UNSEEN} To see them, start it through Cortad instead: npx cortad ${code || "<code>"} -- <how you start your app>`);
+    keepStart({ port: wantedPort });
+    return { port: wantedPort, cmd: null };
   }
-  const plan = startPlan({ root, typed: flag("--start"), onPath });
-  // A package is not a broken app, and asking its owner how it starts is the wrong question.
-  const cmd = plan?.cmd ?? (plan?.noServer ? null : await ask("How do you start your app? (for example: npm run dev) "));
-  // Your code is already here and already being read: quitting now would throw away what you have
-  // paid for. This stays connected, the read finishes, and the browser says what is missing.
-  if (!cmd) {
-    return { port: null, said: "", noStart: true,
-      why: plan?.noServer
-        ? "this repository has no server to run; connect the app that serves it. If it does have one, run this again with --start \"how you start it\"."
-        : "your code is being read, but I could not work out how your app starts, so nothing is running to ask. Run the command again with --start \"how you start it\", or start your app yourself and run it again with --port <the port it answers on>." };
-  }
-  appDir = plan?.cwd ?? root;
-  pinned = pinnedNode();
-  if (plan?.within) say(`your app is in ${plan.within}, started there with: ${cmd}`);
   const sourceFiles = files.map((f) => join(root, f));
-  const lifted = sessionLifts(limitsYes, envFiles, sourceFiles);
-  const raised = Object.keys(lifted).filter((n) => /^\d+$/.test(lifted[n]));
-  const opened = Object.keys(lifted).filter((n) => !raised.includes(n));
+  // Only its own request limits, raised for this session by name: who the app lets in is never touched.
+  const lifted = liftedLimits(sourceFiles);
+  const raised = Object.keys(lifted);
   if (raised.length) say(`higher request limits for this session: ${raised.join(", ")}`);
-  // Said out loud, because it changes who their app lets in for as long as this command runs.
-  if (opened.length) say(`for this session your app runs with ${opened.map((n) => `${n}=${lifted[n]}`).join(", ")}`);
-  launched = { cmd, lifted };
+  launched = { cmd: typed, lifted };
   if (proxyAsked || !hookable(appDir)) await useProxy();
-  step(`starting your app: ${cmd}`);
+  step(`starting your app with: ${shownCommand(typed, mask)}${viaToken ? " (saved from your last connect)" : ""}`);
   const up = await launch(180_000);
-  if (up.port) return { port: up.port, cmd: launched.cmd, lifted: Object.keys(lifted) };
-  // Already running: a second start dies on the port the first one holds. Held by a process running
-  // in this repository, started from the terminal the person was already working in, it is the app
-  // and is used as it stands. "Another next dev server is already running" is the same fact in a
-  // framework's own words, and the port it holds is not always the one asked for. A holder running
-  // from any other folder is another program: it is named, never tested as this app.
-  const ports = up.held ? [] : up.exited !== null && ALREADY.test(up.tail) ? [...new Set([...up.tail.matchAll(/(?::|port\s*[:=]?\s*)(\d{4,5})\b/gi)].map((m) => Number(m[1])))] : [];
-  const holders = up.held ? [up.held] : (await Promise.all(ports.map(holderOf))).filter(Boolean);
-  for (const held of holders) {
-    if (!ownFolder(held.cwd)) return { port: null, said: up.tail, why: whyNot({ ...up, held }) };
-    if (await answers(held.port)) {
-      launched = null; child = null;
-      await keeping.forget();
-      const took = await takeOver(held.port);
-      if (took) return took;
-      say(`${UNSEEN} Stop the one on port ${held.port} and run this again: this command starts your app itself.`);
-      return { port: held.port, cmd: null };
-    }
-  }
+  if (up.port) { keepStart({ cmd: typed }); return { port: up.port, cmd: launched.cmd, lifted: raised }; }
   if (up.tail) console.error(up.tail);
   return { port: null, said: up.tail, why: whyNot(up) };
 }
-// A start that failed because another process holds the port, in the words a framework uses.
-const ALREADY = /EADDRINUSE|address already in use|port.{0,40}(?:in use|already used|is taken|unavailable)|another .{0,20}(?:dev )?server is already running|already running (?:on|at) (?:http|port)/i;
-const rootReal = realpathSync(root);
-const ownFolder = (dir) => { try { const at = realpathSync(dir); return at === rootReal || at.startsWith(rootReal + sep); } catch { return false; } };
 // Why a start did not come up, in a sentence that stands without the terminal: the runner's state
 // carries it to the verbs, and the screen gets the app's own words beside it.
 function whyNot(up) {
   const h = up.held;
-  if (h) return `port ${h.port} is in use by another program (pid ${h.pid}${h.command ? `, ${h.command}` : ""}), so your app cannot listen there${up.fixed ? "; your app sets that port in its own code, so it cannot be moved" : ""}. Stop that program, then save a file here: your app is started again by itself.`;
-  const wrongNode = pinned.major && !pinned.bin ? ` This project pins Node ${pinned.major} and this shell runs Node ${shellNode}: switch to ${pinned.major}.` : "";
-  return `${up.exited !== null ? "your app stopped before it answered" : "your app did not answer within three minutes"}.${wrongNode} Fix it and save a file here: your app is started again by itself.`;
-}
-
-// An app the person started keeps the limits it started with, and a run needs more than a person
-// uses in a month. With their yes, the command stops that app and starts it the way it would have,
-// limits raised for the session. Only in a terminal, only when the code reads a limit, and only
-// when the command knows how to start the app.
-async function takeOver(port) {
-  const lifted = liftedLimits(envFiles, files.map((f) => join(root, f)));
-  const names = Object.keys(lifted);
-  if (!names.length || !process.stdin.isTTY) return null;
-  const plan = startPlan({ root, typed: flag("--start"), onPath });
-  if (!plan?.cmd) return null;
-  const pid = await listenerOn(port);
-  if (!pid) return null;
-  const answer = await ask(`your app is running with its own request limits (${names.join(", ")}). Restart it with them raised for this session? [Y/n] `);
-  if (answer && !/^y(?:es)?$/i.test(answer)) return null;
-  const top = await supervisorOf(pid);
-  step(`stopping your app (pid ${top}) to start it with higher limits`);
-  await stopTree(top);
-  for (let i = 0; i < 50 && (await answers(port)); i++) await new Promise((r) => setTimeout(r, 200));
-  if (await answers(port)) { say("your app did not stop, so it is used as it is"); return null; }
-  appDir = plan.cwd ?? root;
-  pinned = pinnedNode();
-  if (plan.within) say(`your app is in ${plan.within}, started there with: ${plan.cmd}`);
-  say(`higher request limits for this session: ${names.join(", ")}`);
-  launched = { cmd: plan.cmd, lifted, byTerminal: true };
-  step(`starting your app: ${plan.cmd}`);
-  const up = await launch(180_000);
-  if (up.port) return { port: up.port, cmd: launched.cmd, lifted: names };
-  if (up.tail) console.error(up.tail);
-  return { port: null, said: up.tail, why: "your app did not come back after the restart." };
+  if (h) return `port ${h.port} is in use by another program (pid ${h.pid}${h.command ? `, ${h.command}` : ""}), so your app cannot listen there. Stop that program and save a file here, and your app is started again by itself; or run this command with --port ${h.port} to use the one running as it is.`;
+  return `${up.exited !== null ? "your app stopped before it answered" : "your app did not answer within three minutes"}. What it printed is above, and it is your app's own output. Fix it and save a file here: your app is started again by itself with the same command.`;
 }
 
 // What the running app was started from, noted in app.json for the verbs, which run in another
@@ -847,41 +652,15 @@ async function noteAttached(port) {
 
 // Your app, started the way you start it, and watched until one of its own ports answers.
 let launched = null;
-// The Node this project pins, when the shell that ran this command has another. Strapi refuses
-// Node 26 outright, and a version manager that never switched in this shell is the usual reason.
-// ponytail: reads .nvmrc and .node-version only; engines ranges when a project pins no other way.
-const shellNode = Number(process.versions.node.split(".")[0]);
-function pinnedNode() {
-  let want = "";
-  for (const f of [".nvmrc", ".node-version"].flatMap((n) => [join(appDir, n), join(root, n)])) { try { want = readFileSync(f, "utf8").trim(); } catch { /* not pinned here */ } if (want) break; }
-  const major = Number(/^v?(\d+)/.exec(want)?.[1]);
-  if (!major || major === shellNode) return { major: null, bin: null };
-  const under = (dir, tail = "bin") => { try { return readdirSync(dir).filter((v) => v.replace(/^v/, "").startsWith(`${major}.`)).sort().reverse().map((v) => join(dir, v, tail)); } catch { return []; } };
-  const bins = [`/opt/homebrew/opt/node@${major}/bin`, `/usr/local/opt/node@${major}/bin`, ...under(join(homedir(), ".nvm/versions/node")), ...under(join(homedir(), ".local/share/fnm/node-versions"), "installation/bin"), ...under(join(homedir(), ".volta/tools/image/node"))];
-  return { major, bin: bins.find((d) => existsSync(join(d, "node"))) ?? null };
-}
-let pinned = { major: null, bin: null };
 
-// Their app could not start because its dependencies are not on this machine. That is an install
-// nobody ran, not a broken app: it is installed once, with the manager the project locked, and the
-// app is started again. So is a store or service it reaches that nothing runs yet (backUp). Every
-// way the app is started comes through here, so it is fixed in one place.
+// Every way the app is started comes through here. An app the hook could not load into (another
+// runtime, a container) is started again with its model settings pointed at the proxy, so its calls
+// are still seen. Nothing else is fixed for the app: a dependency it misses, a service it reaches for
+// and finds down, a port it cannot bind, are its own to report, and they are reported in its own words.
 async function launch(waitMs) {
-  let up = await start(waitMs);
-  if (up.port && !proxy && !(await hookedAt(up.port))) up = await startProxied(up, waitMs);
-  // Only an app that stopped: one still running has not failed to start, whatever it printed.
-  if (up.port || up.exited === null) return up;
-  if (await keeping.backUp(app?.port).finally(release)) {
-    up = await start(waitMs);
-    if (up.port || up.exited === null) return up;
-  }
-  const ok = await installOnce(up.tail);
-  // An install that failed is the reason their app cannot start, and it goes where the app's own
-  // output goes: the terminal, and the screen that is waiting for the app.
-  const said = (tail) => (installSaid ? `${installSaid}\n${tail}` : tail);
-  if (!ok) return installSaid ? { ...up, tail: said(up.tail) } : up;
-  const back = await start(waitMs);
-  return back.port ? back : { ...back, tail: said(back.tail) };
+  const up = await start(waitMs);
+  if (up.port && !proxy && !(await hookedAt(up.port))) return startProxied(up, waitMs);
+  return up;
 }
 // Whether the hook loaded into the process answering on `port`. A machine that cannot name that
 // process leaves the app as it is.
@@ -904,110 +683,30 @@ const IN_CONTAINER = /^\s*(?:sudo\s+)?(?:docker|podman)(?:-compose)?\b/;
 // proxy. One in a container would come back the same, so it is left up, seen at the front alone.
 async function startProxied(up, waitMs) {
   await useProxy();
-  if (IN_CONTAINER.test(launched?.cmd ?? "")) return up;
+  if (IN_CONTAINER.test(launched?.cmd ?? "")) {
+    say(`your app runs in a container, where Cortad's hook cannot load: its replies are seen through the proxy, its model calls are not. To see them, point the app's model base URL at http://host.docker.internal:${proxy.modelPort} and start it again.`);
+    return up;
+  }
   await stopTree(child.pid);
   for (let i = 0; i < 75 && (await listenerOn(up.port)); i++) await new Promise((r) => setTimeout(r, 200));
   return start(waitMs);
 }
-let installed = false;
-let installSaid = "";
-async function installOnce(said) {
-  if (installed) return false;
-  const name = missingDependency(said);
-  const cmd = name && installPlan(appDir, onPath, root);
-  if (!cmd) return false;
-  installed = true;
-  stepDone(`your app needs ${name}, which is not installed here`);
-  const started = Date.now();
-  const secondsSoFar = () => Math.round((Date.now() - started) / 1000);
-  // A line that rewrites itself in a terminal, and every tenth second where there is none.
-  const tick = () => { const n = secondsSoFar(); const line = `installing your app's dependencies, ${n} seconds so far`; if (process.stdout.isTTY) step(line); else if (n % 10 === 0) say(line); };
-  tick();
-  const ticking = setInterval(tick, 1000);
-  const done = await new Promise((r) => {
-    const child = spawn("/bin/sh", ["-c", cmd], { cwd: appDir, env: { ...process.env, CI: "1" }, stdio: ["ignore", "pipe", "pipe"] });
-    let tail = "";
-    const keep = (log) => (d) => { tail = (tail + d.toString()).slice(-4000); log(d); if (verbose) process.stdout.write(d.toString()); };
-    child.stdout.on("data", keep(logTo()));
-    child.stderr.on("data", keep(logTo()));
-    const timer = setTimeout(() => child.kill("SIGKILL"), 15 * 60_000);
-    child.on("close", (code) => { clearTimeout(timer); r({ ok: code === 0, tail }); });
-    child.on("error", (e) => { clearTimeout(timer); r({ ok: false, tail: String(e.message) }); });
-  });
-  clearInterval(ticking);
-  if (!done.ok) { installSaid = `installing your app's dependencies failed after ${secondsSoFar()} seconds:\n${done.tail.split("\n").filter(Boolean).slice(-12).join("\n")}`; lastSaid = done.tail; stepDone(`installing your app's dependencies failed after ${secondsSoFar()} seconds`); return false; }
-  stepDone(`installed your app's dependencies in ${secondsSoFar()} seconds`);
-  // A Python project that had no interpreter of its own has one now, and it is the one to start with.
-  const again = startPlan({ root, typed: flag("--start"), onPath });
-  if (again?.cmd && again.cmd !== launched.cmd) { launched = { ...launched, cmd: again.cmd }; say(`starting your app: ${again.cmd}`); }
-  return true;
-}
 
-// The port their start command names, moved when something else already holds it: two apps on one
-// laptop both said --port 8000, and the second attached to the first's server as its own.
-// Ports this program tried and lost: two connects on one machine can pick the same free port in
-// the same second, and the one that binds second sees "address already in use".
-const lost = new Set();
-async function freePortAbove(port) {
-  for (let next = port + 1; next < port + 30; next++) if (!lost.has(next) && !(await listenerOn(next))) return next;
-  return null;
-}
-const PORT_FLAG = /(--port[= ]|-p |\bPORT=)(\d{4,5})\b/;
-// The port a start names: its command's flag, or PORT as this command sets it or an env file does.
-const namedPort = (cmd, lifted) => Number(PORT_FLAG.exec(cmd)?.[2] ?? lifted.PORT ?? settingsNow().PORT ?? 0) || 0;
-async function freed(cmd, lifted) {
-  const m = PORT_FLAG.exec(cmd);
-  // The app's own env file names its port too: yunqiao's PORT=8105 sat in .env, and a stale copy
-  // on that port was reported as "your app stopped" instead of moved past.
-  const named = m ? Number(m[2]) : Number(lifted.PORT) || Number(settingsNow().PORT) || 0;
-  if (!named || (!lost.has(named) && !(await listenerOn(named)))) return { cmd, lifted };
-  const port = await freePortAbove(named);
-  if (!port) return { cmd, lifted };
-  say(`port ${named} is taken on this machine, so your app starts on ${port}`);
-  // The same port their env file names, moved the same way.
-  return m ? { cmd: cmd.replace(m[0], `${m[1]}${port}`), lifted } : { cmd, lifted: { ...lifted, PORT: String(port) } };
-}
-
-// Your app's data, read once per session: copies made before the first start, and every restart
-// after it runs against the same copies, so a crash mid-run does not lose what the run made. What
-// was copied, started, or left where trials write into it is told in the terminal here and to the
-// run with the app (announce), so status says it beside Run and the report keeps it.
-const keeping = makeKeeping({
-  root, work, ledgerFile: join(homeOf(project), "made.json"), onPath, say, hold, typed: Boolean(flag("--start")), chosen,
-  launch: (plan) => sidecar(plan.cmd, plan.cwd),
-  connections: () => capture?.connections() ?? [],
-  copies: () => capture?.copies() ?? [],
-  settings: () => {
-    const from = {};
-    for (const file of envFiles.filter((f) => !/\.(example|sample)$/.test(f))) {
-      let text = "";
-      try { text = readFileSync(file, "utf8"); } catch { continue; }
-      for (const line of text.split("\n")) { const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line); if (m && !(m[1] in process.env)) from[m[1]] = file; }
-    }
-    return { values: settingsNow(), from, appDir, sources: files.map((f) => join(root, f)) };
-  },
-});
-
-async function start(waitMs, tries = 3) {
-  const { cmd, lifted } = await freed(launched.cmd, launched.lifted ?? {});
+async function start(waitMs) {
+  const { cmd, lifted } = launched;
   // The record of what the app writes opens with the app: the first run starts itself on the
   // server's side, with no verb here to mark it, and a restart mid-run keeps the record open.
   try { markRun(writesDirOf(homeOf(projectOf(root))), "session", { keep: true }); } catch { /* the app's writes go unrecorded */ }
   toolsAtStart = toolsNow();
   // Taken before the app reads a file: a save after this moment is a change it has not loaded.
   const note = { own: true, at: Date.now(), reloads: RELOADER.test(commandText(cmd, appDir)), answered: false };
-  // The settings files count as what it loaded: an env file is rarely tracked, and an agent's edit to
-  // one left the app on the old settings until the command was started again (ulaim, 2026-10-01).
-  note.files = { ...sourceOf(root, files), ...sourceOf(root, envFiles.filter((f) => !/\.(example|sample)$/.test(f)).map((f) => relative(root, f))) };
-  storesAt ??= storesNamed();
+  note.files = sourceOf(root, files);
   loaded = note;
-  const copies = await keeping.env(true);
-  await allowOutbound();
-  // A start command the person typed says which databases the app uses: the store settings of their
-  // settings files are left for the app to load, since handed over here they outrank the
-  // environment that command chose. Only the copies of databases chosen with --data are handed over.
-  const base = flag("--start") ? { ...withoutStoreSettings(envExports()), ...process.env, ...lifted, ...copies } : { ...envExports(), ...process.env, ...lifted, ...copies };
-  child = spawnTied(cmd, { cwd: appDir, env: { ...base, ...(proxy ? proxy.env(base) : capture ? capture.env(process.env) : {}), FORCE_COLOR: "0", ...(pinned.bin ? { PATH: `${pinned.bin}:${process.env.PATH ?? ""}` } : {}) } });
+  // The app gets this terminal's environment, as a start by hand would, its own request limits raised
+  // for the session, and the hook. No env file is read into it: its own loader reads its own files, in
+  // its own order, which is the only way a test file's placeholder key never outranks the real one.
+  const base = { ...process.env, ...lifted };
+  child = spawnTied(cmd, { cwd: appDir, env: { ...base, ...(proxy ? proxy.env(modelHints()) : capture.env(base)), FORCE_COLOR: "0" } });
   const mine = child;
   become("starting", { app: mine.pid ?? null });
   let seen = "";
@@ -1034,13 +733,10 @@ async function start(waitMs, tries = 3) {
     if (taken || /app crashed - waiting for file changes|waiting for (?:file )?changes before restart|Failed running/i.test(seen)) {
       await stopTree(mine.pid);
       if (!taken) return { port: null, exited: 1, tail: tail() };
-      // Taken between the check and the bind: a port this start names moves to the next free one, a
-      // bounded number of times. A port the app sets in its own code does not follow it, and starting
-      // the app again only meets the same holder, so the holder is named instead.
-      const named = namedPort(cmd, lifted);
-      const port = portInError(seen) || named;
-      if (named && port === named && tries > 1) { lost.add(named); return start(waitMs, tries - 1); }
-      return { port: null, exited: 1, tail: tail(), held: port ? await holderOf(port) : null, fixed: Boolean(port) && port !== named };
+      // The port your command names is held by another program: it is named, and your command is
+      // never rewritten to another port.
+      const port = portInError(seen);
+      return { port: null, exited: 1, tail: tail(), held: port ? await holderOf(port) : null };
     }
     // The port is what the app's own process group listens on. Never a guess: a developer's
     // machine has other things on 3000 and 8080, and one of them answered for the app once.
@@ -1062,7 +758,6 @@ async function start(waitMs, tries = 3) {
   return { port: null, exited: null, tail: seen.replace(/\x1b\[[0-9;]*m/g, "").split("\n").filter(Boolean).slice(-12).join("\n") };
 }
 
-const COPIED = "starting your app again so it runs against the copies made for this session";
 // A restart waits this long for the run's requests already at your app, then goes ahead: one it
 // cuts is sent again once your app answers.
 const DRAIN_MS = 20_000;
@@ -1111,23 +806,11 @@ const savedSinceStart = () => Boolean(loaded?.files) && changesOf({
 }).changed.length > 0;
 // Every save that changes what your app runs starts it again, when it does not reload by itself: an
 // agent that saved a fix and asked the app eight seconds later was answered by the old code. Looked
-// at again after each restart, for a save made while it was under way.
-// The stores the settings name, as copies are made of them: a change here is a change of what the app
-// writes into, so its copies and holds are made again for the new settings, and said again.
-const storesNamed = () => { try { return JSON.stringify(storesOf(settingsNow()).map((s) => [s.engine, s.host, s.port, s.db, s.names])); } catch { return ""; } };
-let storesAt = null;
-// Looked at before the first wait too: the app now starts while the code is uploaded, and a save made
-// before this watch began was otherwise never seen.
+// at again after each restart, for a save made while it was under way, and before the first wait too:
+// the app starts while the code is uploaded, and a save made before this watch began was otherwise never seen.
 async function restartOnSave() {
   while (!closing) {
-    while (!closing && launched && child && !appGone && !loaded?.reloads && savedSinceStart()) {
-      const named = storesNamed();
-      const moved = storesAt !== null && named !== storesAt;
-      storesAt = named;
-      if (moved) await keeping.forget().catch(() => {});
-      await restartApp(moved ? "starting your app again on the settings you changed, with its data copied again for them" : undefined);
-      if (moved) await announce().catch(() => null);
-    }
+    while (!closing && launched && child && !appGone && !loaded?.reloads && savedSinceStart()) await restartApp();
     await sourceChanged();
   }
 }
@@ -1168,10 +851,6 @@ async function close(code = 0) {
   try {
     if (child?.pid) await stopTree(child.pid);
     proxy?.close();
-    // A copy lives on its store, and a store can be a service of the repository started beside the
-    // app: the copies go first, while it still answers.
-    await keeping.close();
-    for (const kid of sidecars) if (kid.pid) await stopTree(kid.pid);
     // A sign-in the app printed before its request reached this command is masked now. Only by the
     // process that writes the file: another may still be appending to it.
     if (readRunner(project)?.pid === process.pid) {
@@ -1192,7 +871,7 @@ const envFiles = [];
 const files = [];
 listed = gitListed();
 walk(root, 0, files, envFiles, 0);
-secrets = secretValues(dataFile ? [...envFiles, dataFile] : envFiles);
+secrets = secretValues(envFiles);
 envKeys = secretEnvValues(envFiles, (f) => readFileSync(f, "utf8"));
 const kept = [];
 for (let i = files.length - 1; i >= 0; i -= 1) if (carriesKey(files[i])) kept.unshift(...files.splice(i, 1));
@@ -1202,25 +881,22 @@ if (explain) {
   const going = new Set([...files, ...kept]);
   const left = listed ? [...listed].filter((f) => !going.has(f) && !ENV_FILE.test(basename(f))).sort() : [];
   const bytes = files.reduce((n, f) => { try { return n + statSync(join(root, f)).size; } catch { return n; } }, 0);
-  const plan = startPlan({ root, typed: flag("--start"), onPath });
   const rel = (f) => relative(root, f) || ".";
   console.log([
     `cortad --explain  (nothing is sent or started by this)`,
     ``,
-    `talks to        ${origin.origin}, localhost (your app's port only), and your own model providers, to ask each which models your key can use`,
+    `talks to        ${origin.origin}, and localhost on your app's port only`,
     `would send      ${files.length} source files, ${Math.round(bytes / 1024)} KB, once${listed ? " (what git would commit)" : ""}`,
     ...(kept.length ? [`kept here       ${kept.length} file${kept.length === 1 ? " that holds" : "s that hold"} keys: ${kept.slice(0, 6).join(", ")}${kept.length > 6 ? ", ..." : ""}`] : []),
     ...(left.length ? [`also not sent   ${left.length} tracked media or lock file${left.length === 1 ? "" : "s"}: ${left.slice(0, 6).join(", ")}${left.length > 6 ? ", ..." : ""}`] : []),
     `not sent        anything git ignores, env files (${envFiles.length} here: ${envFiles.slice(0, 6).map(rel).join(", ") || "none"}), key files, node_modules`,
-    `env files       values read here only: to hide them in replies, to sign in a test account, and to ask your providers what your keys reach. Variable names and whether a switch is on or off go up; no value does`,
-    `would start     ${flag("--port") ? `nothing: uses your app on port ${flag("--port")}` : plan?.cmd ? `${plan.cmd}   (in ${rel(plan.cwd)})` : plan?.noServer ? "nothing: this repository has no server to run" : "asks you how your app starts"}`,
-    `would raise     ${flag("--port") ? "nothing: your app's own request limits stay as they are" : `${Object.keys(liftedLimits(envFiles, files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (only after your yes, for this session only)`}`,
+    `env files       read here only, to hide their values in what leaves and to know where your app's model settings point; nothing in them is handed to your app or sent`,
+    `would start     ${wantedPort ? `nothing: uses your app on port ${wantedPort}, replies seen and model calls not` : typed ? `${typed}   (your command, as typed, in ${rel(appDir)})` : "nothing: run again with your start command after --"}`,
+    `would raise     ${wantedPort || !typed ? "nothing" : `${Object.keys(liftedLimits(files.map((f) => join(root, f)))).join(", ") || "no request limits found"}   (your app's own limits, for this session only; who it lets in is never touched)`}`,
     `loads into app  lib/trace.cjs (Node, Bun) or lib/pyhook/sitecustomize.py (Python): records each request during which your app calls a model, what it answered and the model calls on the way; header values stay here`,
     `other apps      a local proxy on 127.0.0.1 in front of your app's port and where its model settings point (OPENAI_BASE_URL and the others), recording the same; it passes each call on to the provider your settings name`,
     `your files      never written by this program; your own coding agent edits them`,
-    `your database   a database file your env or code names is copied to this program's temp folder; a Postgres, Redis or MongoDB database or a Qdrant collection on this machine is copied on its own server under a name of ours, and a MongoDB or Elasticsearch server whose databases your code names is copied whole into a Docker container of ours; all are deleted at the end, and your app is started on the copies. A store with no copy holds Run until you say yes to writing into it`,
-    `choose data     ${dataFile ? `the databases ${relative(root, dataFile) || dataFile} names are the ones copied` : "--data <settings file> copies the databases that file names instead of the ones your app's settings name; your app keeps the rest of its settings"}`,
-    `your services   a store your compose file runs, or a second service of this repository, is started when your app reaches for it and nothing answers there, and stopped at the end`,
+    `your data       nothing is copied, started or pointed elsewhere: your app uses the databases and services your command gives it, and test conversations write where it writes, after your yes on the card`,
     `test shell      confined by the OS: your project and toolchains only, writes to temp and build folders, localhost only`,
     `for your agent  an MCP entry and a skill in each coding agent's own home folder (Claude Code, Codex, Cursor), and a key in ~/.cortad for later runs`,
     ``,
@@ -1230,7 +906,6 @@ if (explain) {
 }
 if (kept.length) say(`left on this machine because it holds a key: ${kept.join(", ")}`);
 const keepSecret = (v) => { if (v && v.length >= 12 && !secrets.includes(v)) secrets.push(v); };
-identities = makeIdentities({ root, work, envFiles, sourceFiles: () => files, say, keepSecret, appDir: () => appDir });
 // A real request that reached their model proves its door (lib/proof.mjs). What it proved goes up,
 // masked like everything else, and nothing goes up that the mask could not read; the sign-in each
 // request carried stays here.
@@ -1377,43 +1052,15 @@ function sourceChanged() {
     } catch { setTimeout(done, 15_000); }
   });
 }
-// `watching` says whether a message sent to this app can be seen arriving: only an app this command
-// started carries the hook, and only a runtime the hook exists for. `proves`: each request seen
-// reaching the model is posted as its door's proof, so the run waits for those.
-// `blocked`: each store off this machine no copy could be made of, which holds Run until the person
-// says yes in the browser. The answer carries that yes (setup.consent), and the hosts it names are
-// written where the hook reads which outbound writes of a trial may leave.
+// `proves`: each request seen reaching the model is posted as its door's proof, so the run waits for
+// those; false for an app seen through the proxy alone. `reached`: the servers the app has connected
+// to so far, by address, so the card can say where test conversations write before the person's yes.
+// `watching` and `metered` say the same as `proves` to a server from before this version.
 const announce = async () => {
-  // Through the proxy, a message is seen arriving at its front, and its model calls once the app was started with its settings on the proxy.
   const hooked = Boolean(proxy ? launched || proxy.seen() : launched && capture?.watching(app.port));
-  const started = Boolean(launched);
-  const told = await call("POST", `/local/${box}/app`, { port: doorPort(), cmd: shownCommand(app.cmd, mask), origins: envOrigins(envFiles), lifted: app.lifted ?? [], data: (await keeping.lines(started)).map(mask), blocked: await keeping.blocked(started), watching: hooked, metered: hooked, proves: hooked });
-  if (told.ok) await allowOutbound(told.data?.consent);
-  return told;
+  return call("POST", `/local/${box}/app`, { port: doorPort(), cmd: shownCommand(app.cmd, mask), lifted: app.lifted ?? [], watching: hooked, metered: hooked, proves: hooked, reached: reachedNow() });
 };
-
-// What the person said yes to, as the hook reads it: the hosts a trial's writes may reach.
-async function allowOutbound(given) {
-  if (given && typeof given === "object") {
-    const list = (v, re) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && re.test(x)).slice(0, 50) : []);
-    consent = { hosts: list(given.hosts, /^[a-z0-9.-]{1,253}$/i).map((h) => h.toLowerCase()), stores: list(given.stores, /^[a-f0-9]{16}$/) };
-    await liftWith(given.limits === true);
-  }
-  try { writeFileSync(outboundFile, JSON.stringify({ pass: await keeping.outbound(consent) }), { mode: 0o600 }); } catch { /* every write of a trial stays held */ }
-}
-
-// A yes given or taken back in the browser restarts an app this command started with its guards
-// raised or restored; an app raised by the terminal's own yes keeps that.
-async function liftWith(yes) {
-  if (yes === limitsYes) return;
-  limitsYes = yes;
-  if (!launched || !child || launched.byTerminal) return;
-  const lifted = sessionLifts(yes, envFiles, files.map((f) => join(root, f)));
-  if (JSON.stringify(lifted) === JSON.stringify(launched.lifted ?? {})) return;
-  launched = { ...launched, lifted };
-  if (app) app.lifted = Object.keys(lifted);
-  void restartApp(yes ? `starting your app again with its own limits raised for this session: ${Object.keys(lifted).join(", ")}` : "starting your app again with its own limits as they are");
-}
+const reachedNow = () => (capture?.connections() ?? []).map((c) => `${c.host}:${c.port}`).slice(0, 40);
 
 // Your app's life beside this connection. It is started; if it stops, or never comes up, this stays
 // and starts it again the moment you save a fix, and the browser is told each time it answers, so a
@@ -1438,11 +1085,10 @@ async function appLife(firstStart) {
   machineOf = () => (app ? {
     cmd: shownCommand(app.cmd, mask) ?? "", dir: relative(root, appDir) || ".", port: app.port, started: Boolean(launched),
     hooked: Boolean(launched && !proxy && capture?.watching(app.port)), proxy: proxy?.port ?? null,
-    changed: [...new Set([...(app.lifted ?? []), ...Object.keys(keeping.envNow())])],
-    copies: Object.keys(keeping.envNow()).length ? "made" : "none",
+    changed: [...(app.lifted ?? [])],
   } : null);
   become("up", { ...upAt(), app: launched ? child?.pid ?? null : null });
-  say(`your app is answering on port ${app.port}${app.cmd ? ` · ${app.cmd}` : ""}`);
+  say(`your app is answering on port ${app.port}${app.cmd ? `, started with: ${shownCommand(app.cmd, mask)}` : ""}`);
   if (launched) say(`your app's output for this session is kept in ${bootLog}, with the values from your env files masked`);
   if (proxy) say(`send requests to port ${proxy.port}: it passes them to your app and Cortad sees each one. Requests sent straight to port ${app.port} are not seen`);
   for (const line of connectedText(machineOf())) say(line);
@@ -1450,16 +1096,7 @@ async function appLife(firstStart) {
   let downSince = 0;
   let toldDown = false;
   let appTold = true;
-  // The stores and services its settings name, brought up once the app's own port is known; a
-  // store copied only now is one the app was not started on.
-  if (launched) {
-    try {
-      const got = await keeping.services(app.port).catch(() => ({}));
-      if (got.copied && child) await restartApp(COPIED);
-      if (got.changed) appTold = false;
-    } finally { release(); }
-  }
-  // Only once the app runs on the copies made for this session.
+  let reachedTold = reachedNow().join(",");
   void reachLoop();
   forgetTold = () => { appTold = false; };
   void restartOnSave().catch((e) => say(`could not watch your files for a save: ${e?.message ?? e}`));
@@ -1477,9 +1114,9 @@ async function appLife(firstStart) {
         const now = upAt();
         if (JSON.stringify(now.receipts) !== JSON.stringify(became.fields.receipts)) { const { receipts: _was, ...fields } = became.fields; become("up", { ...fields, ...now }); }
       }
-      const reach = await keeping.watch(app.port).catch(() => ({}));
-      try { if (reach.copied && launched && child) await restartApp(COPIED); } finally { release(); }
-      if (reach.changed) appTold = false;
+      // A server the app reached for the first time is said on the card, where the person's yes is asked.
+      const seen = reachedNow().join(",");
+      if (seen !== reachedTold) { reachedTold = seen; appTold = false; }
       if (!up || !appTold) { up = true; appTold = Boolean((await announce().catch(() => null))?.ok); }
       continue;
     }
@@ -1501,7 +1138,7 @@ async function appLife(firstStart) {
     // load. An app it only attached to is not its to watch, so nothing is said either way.
     if (!toldDown) {
       // Started again below, except an app given by --port, which is picked up when it answers again.
-      if (!launched && flag("--port")) failedWith(`your app stopped answering on port ${app.port}; it is picked up again when it answers`, lastSaid);
+      if (!launched && wantedPort) failedWith(`your app stopped answering on port ${app.port}; it is picked up again when it answers`, lastSaid);
       else become("starting");
       toldDown = Boolean((await call("POST", `/local/${box}/stopped`, { said: mask(lastSaid || "your app stopped answering").slice(-2000), ...(launched ? { exited: Boolean(appGone || crashed) } : {}) }).catch(() => null))?.ok);
     }
@@ -1511,7 +1148,7 @@ async function appLife(firstStart) {
     // terminal, or one left behind by a terminal that was killed) is gone now, and this command
     // knows how it starts. Only an app given by --port is left to you, and picked up when it returns.
     if (launched && !appGone && !crashed && downFor < 25_000) continue;
-    if (!launched && flag("--port")) continue;
+    if (!launched && wantedPort) continue;
     await restartOnce(async () => {
       if (child?.pid) await stopTree(child.pid);
       say(downLine(state, { port: app.port, downMs: downFor, crashed }));
@@ -1539,14 +1176,6 @@ async function appLife(firstStart) {
 }
 void appLife(firstStart).catch((e) => quit(String(e?.message ?? e)));
 
-// The page Cortad's test requests come from: one the env names on the app's port, else one on this
-// machine (a local frontend in front of this API). A hosted address such as a Supabase URL is no page
-// of the app's, so an app whose env names none is asked with no Origin, as a server would ask it.
-const LOCAL_ORIGIN = /^https?:\/\/(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?$/;
-function ownOrigin(port) {
-  const local = envOrigins(envFiles).filter((o) => LOCAL_ORIGIN.test(o));
-  return local.find((o) => new URL(o).port === String(port)) ?? local[0] ?? null;
-}
 // Counted with the run's own requests, so a restart drains them, and sent only through the open gate.
 async function countedFetch(url, init) {
   while (gate) await gate;
@@ -1557,9 +1186,9 @@ async function countedFetch(url, init) {
     return new Response(body.byteLength ? body : null, { status: res.status, statusText: res.statusText, headers: res.headers });
   } finally { answering -= 1; }
 }
-// Cortad's own test request to each endpoint the read lists, sent from here as soon as status lists
-// them (lib/auto-reach.mjs), and the agent's reach the same way. Status is asked every 5 seconds
-// while the code is read, then every minute; an ask from the agent is taken within a second.
+// The agent's `reach`: a request Cortad builds from what it read, sent from here to the app on its
+// port, only when the agent asks for it (lib/auto-reach.mjs). Nothing is sent to the app on Cortad's
+// own account: the one request that proves an endpoint is the one the person or their agent sends.
 const autoReach = makeAutoReach({
   status: async () => {
     const token = readToken(project);
@@ -1567,12 +1196,10 @@ const autoReach = makeAutoReach({
     return res?.ok ? res.data : null;
   },
   runner: () => (became?.state === "up" && !restarting ? { state: "up", ...became.fields } : null),
-  // A test request writes what a run's turn writes: it waits while a copy is being made, and while a
-  // store with no copy waits for the person's yes. Sent anyway, the test requests to a twin of a legal
-  // research API wrote into its own MongoDB and Elasticsearch while both held Run.
-  waiting: async () => (gate ? "Your app's data is being copied for this session." : writesHeld() ? WRITES_HELD : null),
-  origin: () => (app ? ownOrigin(app.port) : null),
-  signIn: async (m) => { const role = typeof m.as === "string" ? m.as : identities?.roles()[0]; return role ? identities.headerFor(role) : null; },
+  waiting: async () => (gate ? "Your app is being started again." : null),
+  origin: () => null,
+  // Sent as the person's own request was, when one was seen: the sign-in it carried, kept here.
+  signIn: async () => { const theirs = capture?.headers(CAPTURED); const name = theirs && Object.keys(theirs).find((k) => /^(?:authorization|cookie)$/i.test(k)); return name ? { name: name.toLowerCase(), value: theirs[name] } : null; },
   stampOf: (m) => { try { return m.file ? String(statSync(join(root, m.file)).mtimeMs) : ""; } catch { return ""; } },
   asked: () => existsSync(join(homeOf(project), ASK)),
   report: async (answers) => {
@@ -1586,15 +1213,14 @@ const autoReach = makeAutoReach({
   say,
   fetchImpl: countedFetch,
 });
-// The connection the server last heard sends its test requests itself; a reattach is a new one.
+// The connection the server last heard what the agent's requests met; a reattach is a new one.
 let reachedBox = "";
 async function reachLoop() {
-  for (let dueAt = 0; !closing; await new Promise((r) => setTimeout(r, 1000))) {
+  for (; !closing; await new Promise((r) => setTimeout(r, 1000))) {
     const ask = takeAsk(homeOf(project));
-    if (!ask && Date.now() < dueAt) continue;
+    if (!ask) continue;
     const out = await autoReach(ask).catch(() => null);
-    if (ask) { try { answerAsk(homeOf(project), ask.id, out?.text ?? "Nothing was sent.\nnext: status"); } catch { /* the agent's wait runs out */ } }
-    dueAt = Date.now() + (out?.wait ?? 30_000);
+    try { answerAsk(homeOf(project), ask.id, out?.text ?? "Nothing was sent.\nnext: status"); } catch { /* the agent's wait runs out */ }
   }
 }
 

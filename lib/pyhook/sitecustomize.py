@@ -11,9 +11,6 @@ _FILE = os.environ.get("CORTAD_TRACE_FILE")
 _RULES = os.environ.get("CORTAD_RULES_FILE")
 _WRITES = os.environ.get("CORTAD_WRITES_DIR")
 _APP_ROOT = os.environ.get("CORTAD_APP_ROOT")
-_OUTBOUND = os.environ.get("CORTAD_OUTBOUND_FILE")
-# The port this hook answers held writes on: its own server, never a store the app reached.
-_held_ports = []
 
 
 # What the app writes into its own folder while a run is on: each file copied once before its first
@@ -1272,388 +1269,6 @@ def _install():
         if req and is_model_call(url):
             req["heard"] = True
 
-    # Outbound writes a trial makes are held in the app, never sent: a trial that books, charges,
-    # emails or deletes would otherwise do it for real. Held: a call made inside a request the run
-    # tagged, with a writing method, to a host that is not a model, a retrieval, this machine, a copy
-    # of ours or a host the person said yes to. A call carrying a provider's test key goes to that
-    # provider's own sandbox as sent. The app is answered with a success shaped like what it sent,
-    # and the run is told by a dep row with `held` and the clipped call (lib/trace.cjs does the same).
-    import base64
-    from urllib.parse import parse_qsl
-
-    passed = {"at": -1, "hosts": []}
-    # When the run last sent a request: a write made outside every request (a queue's worker, a
-    # thread) is held while a run is live, since it may be carrying out a trial's ask.
-    # ponytail: while a run is live, a person's own queued write is held too; per-ask pinning of
-    # background writes is the upgrade when that matters.
-    run_seen = {"at": None}
-    run_live_s = 600
-    this_machine = re.compile(r"^(?:localhost|127(?:\.\d+){3}|::1|0\.0\.0\.0)$", re.I)
-    # ponytail: a sign-in's token refresh is a POST that changes nothing, told apart by its path only.
-    token_path = re.compile(r"/(?:oauth2?/)?token(?:[/?]|$)", re.I)
-    # A provider's own sandbox, named so in the host: api.sandbox.paypal.com, sandbox-api.polar.sh.
-    sandbox_host = re.compile(r"(?:^|[.-])(?:sandbox|sbox)[.-]", re.I)
-    test_setting = re.compile(r"(?:^|_)TEST(?:_|$)", re.I)
-    # An API where every call is a POST names what a call does in its last segment, as
-    # resource.verb_words (customers.get, billing.preview_attach) or as a gRPC or Connect method
-    # (acme.v1.UserService/GetUser). A POST so named that starts with a reading word, and holds no word
-    # that makes the read a write (get_or_create, check_in, GetLease), goes out.
-    # ponytail: decided on the name alone, so a POST named as a read whose body writes goes out: a
-    # check that also records usage, or a file created under a name such as allow.list.
-    dot_call = re.compile(r"[A-Za-z][\w-]*\.[a-z][a-z_]*", re.A)
-    dot_read = {"get", "list", "check", "search", "query", "find", "lookup", "retrieve", "describe", "count", "preview"}
-    # A preview commits nothing whatever it previews; any other reading word reads only while no word
-    # after it writes: credits.check_deduct and usage.count_increment went out as reads.
-    write_word = set("create|update|delete|remove|set|add|put|insert|upsert|write|save|store|record|track|log|send|deduct|increment|decrement|consume|use|spend|charge|pay|refund|cancel|reserve|lock|unlock|commit|apply|attach|detach|start|stop|run|trigger|reset|rotate|revoke|grant|issue|mint|transfer|move|merge|sync|import|export|upload|publish|enqueue|push|pop|ack|touch|mark|close|approve|reject|submit|confirm|redeem|claim".split("|"))
-    dot_not = {"or", "and", "in", "out", "next"} | write_word
-    rpc_call = re.compile(r"(?:[A-Z][a-z0-9]*)+")
-    rpc_read = {"Get", "List", "Search", "Query", "Find", "Lookup", "Describe"}
-    rpc_not = {"or", "and", "next", "lease"} | write_word
-    service_name = re.compile(r"\.[A-Z]\w*\Z", re.A)
-
-    def reads_by_name(method, path):
-        if str(method or "").upper() != "POST":
-            return False
-        parts = [p for p in (path or "").split("/") if p]
-        last = parts[-1] if parts else ""
-        before = parts[-2] if len(parts) > 1 else ""
-        if dot_call.fullmatch(last):
-            words = last.split(".")[1].split("_")
-            return words[0] in dot_read and (words[0] == "preview" or not any(w in dot_not for w in words[1:]))
-        if service_name.search(before) and rpc_call.fullmatch(last):
-            words = re.findall(r"[A-Z][a-z0-9]*", last)
-            return words[0] in rpc_read and not any(w.lower() in rpc_not for w in words[1:])
-        return False
-
-    def pass_now():
-        try:
-            at = os.stat(_OUTBOUND).st_mtime_ns
-            if at != passed["at"]:
-                passed["at"] = at
-                with open(_OUTBOUND, encoding="utf-8") as f:
-                    got = json.load(f).get("pass")
-                passed["hosts"] = [h for h in got if isinstance(h, str) and h] if isinstance(got, list) else []
-        except Exception:
-            pass
-        return passed["hosts"]
-
-    # A provider's test-mode key, named so in the key itself whatever comes before it (Stripe's
-    # sk_test_, am_sk_test_, pdl_sdbx_), or a value of a setting the app keeps as a test one.
-    def test_key(auth):
-        # `requests` takes a header value as bytes, and str() of one is "b'...'", which no key matches.
-        a = auth.decode("utf-8", "replace") if isinstance(auth, (bytes, bytearray)) else str(auth or "")
-        m = re.match(r"^Basic\s+(\S+)$", a, re.I)
-        if m:
-            try:
-                a = base64.b64decode(m.group(1)).decode("utf-8", "replace")
-            except Exception:
-                pass
-        # In the prefix of the key itself, set off by underscores: a Basic user named test-admin and a
-        # live key holding "-Test-" are not test keys.
-        return bool(a) and (any(re.fullmatch(r"(?:[a-z0-9]{2,8}_){0,3}(?:test|sandbox|sbox|sdbx)_[\w-]{4,}", piece, re.I | re.A) for piece in re.split(r"[\s:]+", a)) or any(v and len(v) >= 8 and v in a for k, v in os.environ.items() if test_setting.search(k)))
-
-    # The headers a key travels in.
-    key_headers = ("authorization", "x-api-key", "api-key", "apikey", "x-auth-token")
-
-    def keys_in(headers):
-        return [headers.get(n) for n in key_headers]
-
-    # `keys_of()`: the values of the headers a key travels in, read only for a call that is otherwise
-    # held. Once a tagged write is being decided, a failure to decide holds it.
-    def held_here(url, method, keys_of):
-        req = ctx.get()
-        if str(method or "").upper() not in ("POST", "PUT", "PATCH", "DELETE"):
-            return False
-        if req:
-            if not req.get("turn"):
-                return False
-        elif run_seen["at"] is None or time.monotonic() - run_seen["at"] > run_live_s:
-            return False
-        # A read of a Qdrant collection, however its server is named, and any call to a copy this
-        # hook made (copy_of below), go out.
-        q = qdrant_call(url, method)
-        if q and (not q["write"] or (q["collection"] and our_copy.search(q["collection"]))):
-            return False
-        try:
-            parts = urlsplit(str(url))
-            host = (parts.hostname or "").lower()
-            if this_machine.match(host) or sandbox_host.search(host) or is_model_call(url) or is_retrieval(url) or token_path.search(parts.path or "") or reads_by_name(method, parts.path) or any(test_key(k) for k in keys_of()):
-                return False
-            return not any(host == p or host.endswith("." + p) for p in pass_now())
-        except Exception:
-            return True
-
-    # A write to a Qdrant collection made inside a run goes to a copy of that collection on the same
-    # server, made at the first such write: the collection is read page by page and written under
-    # `<name>_cortad_<pid>`, and from then on every call a run makes to that collection, reads too,
-    # goes to the copy, so the app finds what it wrote. The original is never written. A copy that
-    # cannot be made (over the size a run copies, a server that refused) leaves the write held like
-    # any other. Each copy is reported as a `copy` row and the command deletes them when it ends.
-    # The person's own calls, outside a run, go where they were sent (lib/trace.cjs does the same).
-    import threading
-    our_copy = re.compile(r"_cortad_\d+$")
-    copies = {}
-    copies_lock = threading.Lock()
-    qdrant_cap = 200000
-    # What one process copies at most: collections, and points across them; past it a write is held.
-    copies_max = 8
-    points_max = 300000
-    copied = {"collections": 0, "points": 0}
-    copy_said = set()
-
-    def copy_say(host, collection, why):
-        if (host, collection) in copy_said:
-            return
-        copy_said.add((host, collection))
-        try:
-            sys.stderr.write("cortad: a request Cortad sent made this app write into the Qdrant collection %s at %s. Cortad could not copy that collection on its server (%s), so the write was kept on this machine and answered with a stand-in success.\n" % (collection, host, why))
-        except Exception:
-            pass
-
-    def in_run():
-        req = ctx.get()
-        if req:
-            return bool(req.get("turn"))
-        return run_seen["at"] is not None and time.monotonic() - run_seen["at"] <= run_live_s
-
-    # None to leave the call alone; hold for a write of the server itself; else the collection's
-    # copy when there is one, or none yet for a write, which makes it.
-    def guarded(url, method):
-        call = qdrant_call(url, method)
-        if not call:
-            return None
-        if not call["collection"]:
-            return {"hold": True} if call["write"] and in_run() else None
-        if our_copy.search(call["collection"]) or not in_run():
-            return None
-        key = "%s|%s" % (call["parts"].netloc, call["collection"])
-        copy = copies.get(key)
-        if copy:
-            return {"key": key, "call": call, "copy": copy}
-        if not call["write"]:
-            return None
-        if call["kind"] == "schema":
-            return {"hold": True}
-        if copied["collections"] >= copies_max or copied["points"] >= points_max:
-            copy_say(call["parts"].netloc, call["collection"], "this run already copied %d collections, %d points" % (copied["collections"], copied["points"]))
-            return {"hold": True}
-        return {"key": key, "call": call, "copy": None}
-
-    # Qdrant's own API over urllib, which this file leaves unpatched: never through the app's clients.
-    def qdrant_http(base, key, method, path, body=None):
-        import urllib.error
-        import urllib.request
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        headers = {"content-type": "application/json"}
-        if key:
-            headers["api-key"] = key
-        req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return json.loads(r.read().decode("utf-8", "replace") or "null"), r.status
-        except urllib.error.HTTPError as e:
-            return None, e.code
-
-    # The copy made: "empty" when the server holds no such collection yet (the app makes it, under
-    # the copy's name), "points" once every point is across, None when none could be made.
-    def clone_qdrant(base, key, source, clone):
-        at = lambda name: "/collections/" + quote(name, safe="")
-        info, status = qdrant_http(base, key, "GET", at(source))
-        if status == 404:
-            return ("empty", 0)
-        result = (info or {}).get("result") if status == 200 else None
-        if not result:
-            return None
-        if (result.get("points_count") or 0) > qdrant_cap:
-            return None
-        params = (result.get("config") or {}).get("params") or {}
-        made = {"vectors": params.get("vectors")}
-        if params.get("sparse_vectors"):
-            made["sparse_vectors"] = params["sparse_vectors"]
-        if "on_disk_payload" in params:
-            made["on_disk_payload"] = params["on_disk_payload"]
-        if qdrant_http(base, key, "PUT", at(clone), made)[1] != 200:
-            return None
-        try:
-            for field, schema in (result.get("payload_schema") or {}).items():
-                qdrant_http(base, key, "PUT", at(clone) + "/index?wait=true", {"field_name": field, "field_schema": schema.get("params") or schema.get("data_type")})
-            offset = None
-            while True:
-                page, status = qdrant_http(base, key, "POST", at(source) + "/points/scroll", {"limit": 256, "with_payload": True, "with_vector": True, **({"offset": offset} if offset is not None else {})})
-                if status != 200:
-                    raise RuntimeError(status)
-                got = (page or {}).get("result") or {}
-                points = got.get("points") or []
-                if points and qdrant_http(base, key, "PUT", at(clone) + "/points?wait=true", {"points": [{"id": p.get("id"), "vector": p.get("vector"), "payload": p.get("payload")} for p in points]})[1] != 200:
-                    raise RuntimeError("upsert")
-                offset = got.get("next_page_offset")
-                if offset is None:
-                    return ("points", result.get("points_count") or 0)
-        except Exception:
-            qdrant_http(base, key, "DELETE", at(clone))
-            return None
-
-    # The copy's name, made now when none exists; None when none could be made. The key the app
-    # sent is the key the copy is made with, and never leaves this process.
-    def copy_of(g, header_of):
-        with copies_lock:
-            have = copies.get(g["key"])
-            if have:
-                return have
-            parts = g["call"]["parts"]
-            base = "%s://%s" % (parts.scheme, parts.netloc)
-            auth = str(header_of("authorization") or "")
-            bearer = re.match(r"^Bearer\s+(\S+)", auth, re.I)
-            key = str(header_of("api-key") or "") or (bearer.group(1) if bearer else "")
-            clone = "%s_cortad_%d" % (g["call"]["collection"][:40], os.getpid())
-            made = clone_qdrant(base, key, g["call"]["collection"], clone)
-            if not made:
-                copy_say(parts.netloc, g["call"]["collection"], "the copy did not go through")
-                return None
-            copied["collections"] += 1
-            copied["points"] += made[1]
-            copies[g["key"]] = clone
-            write({"copy": {"host": parts.hostname or "", "base": base, "collection": g["call"]["collection"], "clone": clone}})
-            return clone
-
-    def to_copy(url, clone, call):
-        parts = call["parts"]
-        return urlunsplit((parts.scheme, parts.netloc, "/collections/" + quote(clone, safe="") + call["rest"], parts.query, parts.fragment))
-
-    # The copy a call goes to, waited for off the event loop: None to hold the call instead.
-    async def copy_for(g, header_of):
-        import asyncio
-        if g.get("hold"):
-            return None
-        return g["copy"] or await asyncio.get_running_loop().run_in_executor(None, copy_of, g, header_of)
-
-    # A GraphQL query reads; a mutation writes. A `query` in JSON that is not GraphQL (SQL over HTTP,
-    # where a SELECT can write through a function) is held.
-    # ClickHouse, Trino and Presto take every query as a POST of its text, a SELECT too, and a SELECT
-    # there cannot write: one statement that starts as a read and holds no word that writes, sent to
-    # what its address or its headers show is one of them, goes out (lib/trace.cjs does the same).
-    sql_quoted = re.compile(r"""'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`[^`]*`|--[^\n]*|/\*[\s\S]*?\*/""")
-    sql_shows = re.compile(r"^(?:show|describe|desc|exists)\b", re.I | re.A)
-    sql_selects = re.compile(r"^(?:select|with|explain)\b", re.I | re.A)
-    sql_writes = re.compile(r"(?<![.\w])(?:insert|update|delete|merge|into|create|alter|drop|truncate|refresh|call|execute)(?![.\w])", re.I | re.A)
-    sql_hands_on = re.compile(r"\b(?:table|query|jdbc|odbc|executable)\s*\(", re.I | re.A)
-    sql_open = re.compile(r"""[;'"`]|/\*|\$\$""")
-    analytics_name = re.compile(r"clickhouse|trino|presto", re.I)
-    analytics_headers = ("x-clickhouse-user", "x-clickhouse-key", "x-clickhouse-database", "x-clickhouse-format", "x-trino-user", "x-presto-user")
-
-    def statement_of(sql):
-        bare = sql_quoted.sub(lambda m: "''" if m.group(0)[0] == "'" else "x" if m.group(0)[0] in '"`' else " ", str(sql or "")).strip()
-        return re.sub(r";\s*$", "", bare)
-
-    # A quote or a comment left open, a second statement or a dollar-quoted body is not read as a read.
-    def selects(bare):
-        if sql_open.search(bare.replace("''", "")):
-            return False
-        return bool(sql_shows.match(bare)) or bool(sql_selects.match(bare) and not sql_writes.search(bare) and not sql_hands_on.search(bare))
-
-    def analytics(parts, header_of):
-        try:
-            port = parts.port
-        except ValueError:
-            port = None
-        return port in (8123, 8443) or bool(analytics_name.search(parts.hostname or "")) or bool(analytics_name.search(str(header_of("user-agent") or ""))) \
-            or any(header_of(name) for name in analytics_headers) or parts.path == "/v1/statement"
-
-    def reads_only(raw, url=None, header_of=None):
-        sent = str(raw or "").strip()
-        b = parsed(sent) if sent else None
-        if b is not None:
-            q = b.get("query") if isinstance(b, dict) else None
-            return isinstance(q, str) and bool(re.match(r"^\s*(?:\{|query\b|fragment\b)", q)) and not re.search(r"\bmutation\b", q)
-        try:
-            parts = urlsplit(str(url)) if url else None
-            if parts is None or not analytics(parts, header_of or (lambda name: None)):
-                return False
-            # ClickHouse joins a `query` in the address to the body: both are read as the one statement.
-            asked = "%s %s" % (dict(parse_qsl(parts.query)).get("query", ""), sent)
-            # ClickHouse reads a backslash before a quote as part of the string and Trino as its end,
-            # so where a string stops is not known here: held.
-            return not re.search(r"""\\['"`]""", asked) and selects(statement_of(asked))
-        except Exception:
-            return False
-
-    held_count = itertools.count(1)
-
-    def fields_of(raw, kind):
-        try:
-            b = dict(parse_qsl(raw)) if "form" in (kind or "") else json.loads(raw)
-        except Exception:
-            return {}
-        return b if isinstance(b, dict) else {}
-
-    def held_reply(raw, kind):
-        return json.dumps({**fields_of(raw, kind), "id": "cortad-held-%d" % next(held_count), "status": "ok"}).encode("utf-8")
-
-    # Said once per method and host in the app's own output, where the error that follows is read:
-    # a stand-in an SDK cannot parse otherwise reads as a bug in the app. It holds no word that marks
-    # an error, so it is never quoted back as the app's own.
-    held_said = set()
-
-    def held_say(method, host):
-        if (method, host) in held_said:
-            return
-        held_said.add((method, host))
-        try:
-            sys.stderr.write("cortad: a request Cortad sent made this app send %s to %s. Cortad kept that call on this machine and answered it with a stand-in success, since it could change something real. A failure right after this line may come from that stand-in rather than from your code. With that service's test key the call goes out as sent.\n" % (method, host))
-        except Exception:
-            pass
-
-    # Named by method and host only: a webhook's path is its credential.
-    def held_row(url, method, raw, kind, req):
-        try:
-            parts = urlsplit(str(url))
-            held_say(str(method).upper(), (parts.hostname or "")[:253])
-            write({"dep": {"at": int(time.time() * 1000), "host": (parts.hostname or "")[:253], "status": 200, "held": True, **inside_of(req),
-                           "called": [{"name": ("%s %s" % (str(method).upper(), parts.hostname))[:80], "arguments": args_text(fields_of(raw, kind))}]}})
-        except Exception:
-            pass
-
-    # aiohttp builds its own response from a connection, so a held call is sent to a server of this
-    # hook's own on this machine, which answers it.
-    held_server = {"port": None}
-    held_waiting = {}
-    held_sent = itertools.count(1)
-
-    def held_port():
-        if held_server["port"] is None:
-            try:
-                import threading
-                from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-                class Answer(BaseHTTPRequestHandler):
-                    def answer(self):
-                        size = int(self.headers.get("content-length") or 0)
-                        raw = self.rfile.read(min(size, limit)).decode("utf-8", "replace") if size else ""
-                        kind = self.headers.get("content-type", "")
-                        waiting = held_waiting.pop(self.headers.get("x-cortad-held", ""), None)
-                        if waiting:
-                            held_row(waiting[0], waiting[1], raw, kind, waiting[2])
-                        out = held_reply(raw, kind)
-                        self.send_response(200)
-                        self.send_header("content-type", "application/json")
-                        self.send_header("content-length", str(len(out)))
-                        self.end_headers()
-                        self.wfile.write(out)
-
-                    do_POST = do_PUT = do_PATCH = do_DELETE = answer
-
-                    def log_message(self, *a):
-                        pass
-
-                server = ThreadingHTTPServer(("127.0.0.1", 0), Answer)
-                server.daemon_threads = True
-                _held_ports.append(server.server_address[1])
-                threading.Thread(target=server.serve_forever, daemon=True).start()
-                held_server["port"] = server.server_address[1]
-            except Exception:
-                return None
-        return held_server["port"]
-
     def said_of(req, name):
         return [v for k, v in req.get("reply_headers") or [] if k == name]
 
@@ -2181,8 +1796,6 @@ def _install():
         req = {"id": "%d.%d" % (os.getpid(), next(serial)), "at": int(time.time() * 1000), "method": method, "path": path, "headers": headers,
                "chunks": [], "size": 0, "noted": False, "kept": False, "sent": [], "reply": [], "reply_size": 0, "writes": 0,
                "turn": turn if isinstance(turn, str) and turn_ok.match(turn) else None}
-        if req["turn"]:
-            run_seen["at"] = time.monotonic()
         if tied:
             tied.opened(req)
         return req
@@ -2642,37 +2255,11 @@ def _install():
                 dep(request.url, response.status_code, req=req, caller=caller)
             return response
 
-        def held_answer(request, sent):
-            kind = request.headers.get("content-type", "")
-            held_row(request.url, request.method, sent, kind, ctx.get())
-            return module.Response(200, headers={"content-type": "application/json"}, content=held_reply(sent, kind), request=request)
-
-        # A held call that cannot be answered fails in the app; it is never sent instead.
-        def held_httpx(request, sent):
-            if not held_here(request.url, request.method, lambda: keys_in(request.headers)) or reads_only(sent, request.url, request.headers.get):
-                return None
-            return held_answer(request, sent)
-
-        # A call to a Qdrant collection goes to the run's copy of it, `clone`; with none, it is held.
-        def routed_httpx(request, g, clone, sent):
-            if clone is None:
-                return held_answer(request, sent)
-            request.url = module.URL(to_copy(request.url, clone, g["call"]))
-            return None
-
         for cls in (module.Client, module.AsyncClient):
             send = cls.send
             if cls is module.Client:
                 def sync_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
-                    g = guarded(request.url, request.method)
-                    if g is not None:
-                        answered = routed_httpx(request, g, None if g.get("hold") else (g["copy"] or copy_of(g, request.headers.get)), sent)
-                        if answered is not None:
-                            return answered
-                    held = held_httpx(request, sent)
-                    if held is not None:
-                        return held
                     caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
                     t0 = time.time()
                     req = noted(request.url, sent)
@@ -2693,14 +2280,6 @@ def _install():
             else:
                 async def async_send(self, request, *a, _send=send, **k):
                     sent = sent_of(request)
-                    g = guarded(request.url, request.method)
-                    if g is not None:
-                        answered = routed_httpx(request, g, await copy_for(g, request.headers.get), sent)
-                        if answered is not None:
-                            return answered
-                    held = held_httpx(request, sent)
-                    if held is not None:
-                        return held
                     caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
                     t0 = time.time()
                     req = noted(request.url, sent)
@@ -2722,36 +2301,7 @@ def _install():
     def patch_requests(module):
         send = module.Session.send
 
-        # A held call that cannot be answered fails in the app; it is never sent instead.
-        def held(request):
-            if not held_here(request.url, request.method, lambda: keys_in(request.headers)):
-                return None
-            raw = text(request.body, reply_max)
-            if reads_only(raw, request.url, request.headers.get):
-                return None
-            return held_answer(request, raw)
-
-        def held_answer(request, raw):
-            import datetime
-            models, structures = sys.modules["requests.models"], sys.modules["requests.structures"]
-            kind = request.headers.get("content-type", "")
-            held_row(request.url, request.method, raw, kind, ctx.get())
-            response = models.Response()
-            response.status_code, response.reason, response.url, response.request, response.encoding = 200, "OK", request.url, request, "utf-8"
-            response.headers = structures.CaseInsensitiveDict({"content-type": "application/json"})
-            response._content, response._content_consumed, response.elapsed = held_reply(raw, kind), True, datetime.timedelta(0)
-            return response
-
         def sent(self, request, *a, **k):
-            g = guarded(request.url, request.method)
-            if g is not None:
-                clone = None if g.get("hold") else (g["copy"] or copy_of(g, request.headers.get))
-                if clone is None:
-                    return held_answer(request, text(request.body, reply_max))
-                request.url = to_copy(request.url, clone, g["call"])
-            answered = held(request)
-            if answered is not None:
-                return answered
             caller = callers_now(request.url) if is_model_call(request.url) or is_retrieval(request.url) else None
             t0 = time.time()
             req = noted(request.url, request.body)
@@ -2781,57 +2331,8 @@ def _install():
     def patch_aiohttp(module):
         request = module.ClientSession._request
 
-        def keys_of(self, k):
-            given = {str(n).lower(): v for n, v in dict(k.get("headers") or {}).items()}
-            defaults = {str(n).lower(): v for n, v in dict(getattr(self, "_default_headers", None) or {}).items()}
-            basic = k.get("auth") or getattr(self, "_default_auth", None)
-            return [given.get(n) or defaults.get(n) for n in key_headers] + [basic.encode() if basic else None]
-
-        def header_of(self, k, name):
-            for headers in (k.get("headers"), getattr(self, "_default_headers", None)):
-                for n, v in dict(headers or {}).items():
-                    if str(n).lower() == name:
-                        return v
-            return None
-
-        # A path relative to the session's base address is decided on the whole address.
-        def whole(self, str_or_url):
-            try:
-                return str(self._build_url(str_or_url))
-            except Exception:
-                return str(str_or_url)
-
         async def requested(self, method, str_or_url, *a, **k):
             body = k.get("json") if k.get("json") is not None else k.get("data")
-            url = whole(self, str_or_url)
-            g = guarded(url, method)
-            hold = False
-            if g is not None:
-                clone = await copy_for(g, lambda name: header_of(self, k, name))
-                if clone is None:
-                    hold = True
-                else:
-                    parts = g["call"]["parts"]
-                    url = to_copy(url, clone, g["call"])
-                    # A session with a base address takes the path alone.
-                    str_or_url = url if getattr(self, "_base_url", None) is None else url[len("%s://%s" % (parts.scheme, parts.netloc)):]
-            if hold or (held_here(url, method, lambda: keys_of(self, k)) and not reads_only(text(body, reply_max), url, lambda name: header_of(self, k, name))):
-                port = held_port()
-                if port is None:
-                    raise module.ClientConnectionError("this write was kept from leaving and could not be answered")
-                parts = urlsplit(url)
-                n = str(next(held_sent))
-                held_waiting[n] = (url, method, ctx.get())
-                k = {**k, "headers": {**dict(k.get("headers") or {}), "x-cortad-held": n}}
-                target = "http://127.0.0.1:%d%s%s" % (port, parts.path or "/", "?" + parts.query if parts.query else "")
-                if getattr(self, "_base_url", None) is None:
-                    return await request(self, method, target, *a, **k)
-                # A session with a base address refuses a whole one on older aiohttp: the held call is
-                # answered through a session of its own, read before that session closes.
-                async with module.ClientSession() as own:
-                    answered = await request(own, method, target, *a, **k)
-                    await answered.read()
-                return answered
             caller = callers_now(str_or_url) if is_model_call(str_or_url) or is_retrieval(str_or_url) else None
             t0 = time.time()
             req = noted(str_or_url, body)
@@ -2974,7 +2475,7 @@ def _install_connects():
             if not isinstance(address, tuple) or len(address) < 2 or len(seen) >= 64:
                 return
             host, port = str(address[0]).lower()[:253], int(address[1])
-            if (host, port) in seen or port in _held_ports:
+            if (host, port) in seen:
                 return
             seen.add((host, port))
             fd = os.open(_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)

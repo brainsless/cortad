@@ -18,7 +18,7 @@ Free: 1 of 1 run left this month; 60 verify conversations left. Pro $99 a month:
 App: Your app is starting on this machine.
 ```
 
-Once each endpoint that reaches the model has answered a test request, two messages on the chat, and before any run:
+Once a request of your own has reached the model through an endpoint, two messages on the chat, and before any run:
 
 ```
 Repository: tutor-app.
@@ -34,15 +34,15 @@ Endpoints that answered (1):
 Endpoints found in your code that have not answered yet (2):
   POST /api/homework/explain  apps/api/src/routes/homework.ts:18  Cortad's test request was answered with HTTP 500.
   POST /api/progress/summary  apps/api/src/routes/progress.ts:9  Needs a signed-in user.
-Cortad sends each of them a test request.
+Send each one message as a user would, signed in where your app needs it, or call reach to send the request Cortad read for them.
 A run plays 36 simulated users in about 6 minutes. About $0.38 on your OpenAI key.
 A run starts when the person presses Run on the card in the browser or asks you for one; if they say they pressed it, call run rather than ask them again.
 ```
 
-When the app keeps its data in a hosted store no copy was made of, the decision is the person's, said once as the last line before the link:
+Before the person has said yes on the card, the last line before the link is the one question asked of them:
 
 ```
-DATABASE_URL points at the Postgres database shop that is not on this machine, and no migrations were found to build a copy on this machine from, so test conversations would save into it. Point DATABASE_URL at a database on this machine, then run the connect command again. Or the person allows it on the card in the browser: one press lets test conversations save into it.
+Test conversations use your app as it is: they write where it wrote during your own request (127.0.0.1:5432, 127.0.0.1:27017) and reach what it reached (api.openai.com). Nothing is copied. The person allows it on the card in the browser, with one press.
 The person sees this at https://cortad.com/lab
 ```
 
@@ -95,7 +95,7 @@ Rules in the code: 16, in 5 files.
 
 ## reach
 
-Sends Cortad's test request again, from the connect command on this machine, after a fix:
+Sends the request Cortad read from your code to an endpoint no request of yours has reached, from the connect command on this machine, with the sign-in you pass it:
 
 ```
 Sent 1 request to your app on port 3100, up to four at a time:

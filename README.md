@@ -6,11 +6,16 @@ Runs Cortad's test conversations against the AI app on your machine, and gives y
 npx cortad <code>
 ```
 
-Run it in your app's folder with the code from cortad.com. It starts your app, connects it to Cortad, and adds Cortad to Claude Code, Codex, Cursor and Copilot on this machine. Cortad sends each AI endpoint it finds a test request, and the first run starts by itself once they have answered; later runs start when you press Run in the browser or ask your agent for one. Ctrl-C disconnects.
+Run it in your app's folder with the code from cortad.com and your own start command after `--`: Cortad runs that command as you typed it, with its hook inside and nothing else added, connects the app, and adds Cortad to Claude Code, Codex, Cursor and Copilot on this machine. Then send your AI one message the way a user would; that one request is what Cortad learns the endpoint from. Runs start when you press Run in the browser or ask your agent for one. Ctrl-C disconnects.
+
+```
+npx cortad <code> -- npm run dev           your command, as you start it, from the terminal that holds its settings
+npx cortad <code> --port 3000              an app already running: its replies are seen, its model calls are not
+```
 
 ## Your coding agent
 
-After that, your agent has ten tools: `status`, `reach`, `run`, `run_status`, `findings`, `verify`, `dispute`, `feedback`, `field_connect`, `field`. The same ten work as commands:
+After that, your agent has the tools `status`, `reach`, `run`, `run_status`, `findings`, `verify`, `dispute`, `feedback`, `field_connect`, `field`, `world`, `world_status`, `test`, `connect`, `intelligence`, `incidents`, `outcomes`, `subscribe` and `query`. The same work as commands:
 
 ```
 npx cortad status
@@ -22,7 +27,7 @@ npx cortad verify <findingId>
 
 `npx cortad wait` returns when the next run ends, with what it found; an agent starts it in the background so the run's end wakes it.
 
-A run needs your app up. If nothing on this machine is holding it, the command starts it with the key in `~/.cortad` and stops it ten minutes after the last run.
+A run needs your app up. If nothing on this machine is holding it, the command starts it with the key and the start command kept in `~/.cortad`, and stops it ten minutes after the last run.
 
 To make checking with Cortad part of the repository:
 
@@ -36,19 +41,17 @@ The hooks run after an edit and on your next message: the first names the prompt
 ## Flags
 
 ```
+-- <command>         how your app starts; everything after -- is run as typed (--start "cmd" says the same)
+--port 3000          use an app that is already running, as it is
 --explain            show what would be sent and started, then exit
---port 3000          use an app that is already running
---start "make dev"   how your app starts
---data .env.staging  copy the databases this settings file names, not the ones your app's settings name
 --verbose            print your app's output
 ```
 
-Your app runs on copies of its databases, made when it starts and deleted when the command ends; the originals are only read. A database it uses that cannot be copied holds Run until you say yes to writing into it.
+Nothing about your environment is guessed or changed. Your app gets this terminal's environment and its own request limits raised for the session, by name; its env files are read only to hide their values in what leaves this machine. Nothing is copied or started beside it: test conversations write where your app writes, after your yes in the browser.
 
 ## Files it creates
 
-- `~/.cortad/<project>/`     the key, the last tree digest, which process holds your app up, your app's output in `app.log`, the run it asked for last, in `news.txt` the line a finished run left for your agent, removed once the agent has it, and in `heard.txt` the ids of the runs your agent has read
-- `~/.cortad/identity.key`   the seed for the session's test accounts
+- `~/.cortad/<project>/`     the key, the start command, the last tree digest, which process holds your app up, your app's output in `app.log`, the sign-in your own request carried, the run it asked for last, in `news.txt` the line a finished run left for your agent, removed once the agent has it, and in `heard.txt` the ids of the runs your agent has read
 - `$TMPDIR/cortad-<pid>/`    removed on exit
 
 macOS and Linux, Node 20 or later. No dependencies. What is sent and what stays on your machine: `npx cortad --explain`, and cortad.com/privacy.

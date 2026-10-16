@@ -30,24 +30,26 @@ The person owns the product. They may not be reading the code with you, so every
 
 ## Connecting
 
-`npx {{cortad}}` in the repository's folder connects it, with nothing to copy. Run it as a background command (in Claude Code: Bash with run_in_background) and leave it running: it starts the app and keeps it reachable from the browser until it is stopped.
-- A folder connected before reconnects at once with the key it kept.
-- A folder connected for the first time prints a link and four characters, good for ten minutes. Give the person both as printed; they approve the link in their browser, signed in to Cortad, and the command goes on by itself.
-- When a result says no connect command is running, run `npx {{cortad}}` again in this folder. No code is needed from the person.
-- The app runs on copies of the databases its settings name, deleted when the command ends. When the person wants a run on other data, such as their staging databases instead of the test ones, stop the command and run `npx {{cortad}} --data <settings file>`: the databases that file names are copied instead, under the names the app reads them by, and the app keeps the rest of its own settings. The choice holds for later runs until the next connect, and every setting the app needs stays in place.
+Cortad does not guess how the app runs: you tell it, in one line, from the repository's folder, run as a background command (in Claude Code: Bash with run_in_background) and left running.
 
-The connect command prints "Go back to the browser" once it is connected. Cortad then finds the AI endpoints in the app's code and sends each one a test request itself, from this machine to the app on its port.
+- `npx {{cortad}} -- <how you start your app>`: your start command, as you or the person would type it, from a terminal that holds the app's settings. Cortad runs it as written with its hook inside and nothing else added: no env file is read into the app, no database is copied, no service is started. Use the environment the person wants tested (their staging settings, their existing databases): whatever the command gives the app is what the run plays against.
+- `npx {{cortad}} --port <port>`: an app that is already running and should stay as it is. Cortad sees its replies and not its model calls, and says so.
+- Run with neither and Cortad prints the one start command the repository makes obvious and stops; run again with it after `--`, or with the right one.
+- A folder connected before reconnects with the key and the start command it kept. A first connect prints a link and four characters, good for ten minutes: give the person both as printed; they approve the link in their browser, signed in to Cortad.
+- When a result says no connect command is running, run the same line again in this folder.
+
+Once it prints "Go back to the browser", Cortad lists the AI endpoints it found in the code. Send each one message the way a user would: through the app's own page, or a request from this machine, signed in as a real test account where the app needs one (ask the person which account; Cortad makes none). That one request is what Cortad learns the endpoint from: its route, its body, its sign-in and where the answer comes back. Cortad sends nothing to the app before that, and nothing of its own before the person's yes on the card.
 
 1. Call `status` and tell the person, in three or four short lines:
-   - that their app is connected, or the one line that says why it did not start;
+   - that their app is connected, or the one line that says why it did not start (what the app printed is the app's own output);
    - what Cortad's audit of their AI code found: how many problems, and the one that matters most, in plain words. `status` with show `reviews` holds up to 45 seconds a call while the code is still being read;
    - the line on what a run plays and costs, as printed;
    - what happens next: they press Run on the card in the browser, or tell you to start it.
 
    The endpoints, the files and the audit's rows are yours to work from. They go to the person when they ask, or when you propose a fix.
-2. When `status` lists an endpoint as `Needs a signed-in user`, Cortad could not make a sign-in for it on this machine. Tell the person; when they ask for it, sign in a test account through the app's own sign-in on this machine, send that endpoint one request in that session, then call `status` again. That is the only sign-in this needs, and only for the endpoints listed that way.
-3. A failure on the app's side that every conversation would repeat, such as a model provider refusing, a retrieval with no answer or a tool returning an error: say what you would change, change it when the person agrees, then call `reach` to send Cortad's test request to that endpoint again.
-4. A question for the person on the card in the browser is said to them once, in one line. The first run starts when the person presses Run on the card, or asks you, and then you call `run`. Before you stop, start `npx -y {{cortad}} wait` as a background command (in Claude Code: Bash with run_in_background). It returns when the next run or verify ends, with what it found, and its ending wakes you. Then follow "After a run".
+2. An endpoint `status` lists as not answered yet is waiting for your one message to it. One it lists as `Needs a signed-in user` was refused: send it again signed in as a test account the person names, and call `status` again.
+3. A failure on the app's side that every conversation would repeat, such as a model provider refusing, a retrieval with no answer or a tool returning an error: say what you would change, change it when the person agrees, then send that endpoint one message again, or call `reach` to have Cortad send the request it read for it.
+4. The one question on the card in the browser is where test conversations will write: into the databases the app wrote into for your message, named there, with nothing copied. Say it to the person once, in one line. The first run starts when the person presses Run on the card, or asks you, and then you call `run`. Before you stop, start `npx -y {{cortad}} wait` as a background command (in Claude Code: Bash with run_in_background). It returns when the next run or verify ends, with what it found, and its ending wakes you. Then follow "After a run".
 
 `status` with `show` lists one section in full: `rules`, `standards`, `journeys`, `endpoints`, `trials`, `records` or `reviews` (in a shell, `npx {{cortad}} status rules`). `status` with show `machine` says what Cortad does on this machine; hand the person its lines when they ask.
 
