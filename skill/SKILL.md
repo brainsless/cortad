@@ -33,7 +33,7 @@ The person owns the product. They may not be reading the code with you, so every
 Cortad does not guess how the app runs: you tell it, in one line, from the repository's folder, run as a background command (in Claude Code: Bash with run_in_background) and left running.
 
 - `npx {{cortad}} -- <how you start your app>`: your start command, as you or the person would type it, from a terminal that holds the app's settings. Cortad runs it as written with its hook inside and nothing else added: no env file is read into the app, no database is copied, no service is started. Use the environment the person wants tested (their staging settings, their existing databases): whatever the command gives the app is what the run plays against.
-- `npx {{cortad}} --port <port>`: an app that is already running and should stay as it is. Cortad sees its replies and not its model calls, and says so.
+- `npx {{cortad}} --port <port>`: an app that is already running and should stay as it is; Cortad sees its replies and not its model calls, and says so. With `-- <how you start your app>` beside it, an app in a container: Cortad starts it, watches the port you name, and prints the model setting to give the container so its model calls are seen too.
 - Run with neither and Cortad prints the one start command the repository makes obvious and stops; run again with it after `--`, or with the right one.
 - A folder connected before reconnects with the key and the start command it kept. A first connect prints a link and four characters, good for ten minutes: give the person both as printed; they approve the link in their browser, signed in to Cortad.
 - When a result says no connect command is running, run the same line again in this folder.

@@ -103,9 +103,11 @@ const root = process.cwd();
 const MANIFEST = ["package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml", "docker-compose.yml", "docker-compose.yaml", "Gemfile", "mix.exs"];
 // A repository whose root carries no manifest of its own is still a repository: crewai-examples
 // keeps one project per folder under crews/, and the whole of it was refused at the door. The root
-// is accepted when a project lives below it.
-if (!MANIFEST.some((f) => existsSync(join(root, f))) && !workspaces(root).length) {
-  fail(`no project here: this folder has no package.json or pyproject.toml, and neither does any folder in it. Run it from your repository's root: ${root}`);
+// is accepted when a project lives below it, and whenever the person says how the app starts or
+// where it answers: a single file with no manifest is an app too, and nothing here needs the manifest.
+const startSaid = argv.includes("--") || argv.includes("--start") || argv.includes("--port") || argv.includes("--token");
+if (!startSaid && !MANIFEST.some((f) => existsSync(join(root, f))) && !workspaces(root).length) {
+  fail(`no project here: this folder has no package.json or pyproject.toml, and neither does any folder in it. Run it from your repository's root, or say how your app starts: npx cortad <code> -- <your start command>`);
 }
 // Which project this is, as a hash of where it lives: the same folder coming back resumes the same
 // connection, and the path itself never leaves this machine.
@@ -114,8 +116,13 @@ const project = projectOf(root);
 // for the next connect: the command typed after `--`, or the port of an app already running.
 const startFile = join(homeOf(project), "start.json");
 const keptStart = (() => { try { return JSON.parse(readFileSync(startFile, "utf8")); } catch { return {}; } })();
-const typed = dash >= 0 ? own.length === argv.length ? "" : argv.slice(dash + 1).join(" ").trim() : flag("--start") ?? (viaToken ? keptStart.cmd ?? "" : "");
-const wantedPort = Number(flag("--port")) || (viaToken && !typed ? Number(keptStart.port) || 0 : 0);
+// Typed after --, or with --start, or saved from the last connect of this folder: a person who
+// reconnects types the code alone, and the runner a run starts is given nothing at all.
+const typedNow = dash >= 0 ? own.length === argv.length ? "" : argv.slice(dash + 1).join(" ").trim() : flag("--start") ?? "";
+const typed = typedNow || (flag("--port") ? "" : keptStart.cmd ?? "");
+const fromSaved = !typedNow && Boolean(typed);
+// A port saved beside the command (a container's) is watched again on a reconnect with the code alone.
+const wantedPort = Number(flag("--port")) || (!typedNow ? Number(keptStart.port) || 0 : 0);
 const onPath = (bin) => (process.env.PATH ?? "").split(":").some((dir) => dir && existsSync(join(dir, bin)));
 // Nothing was said about how the app starts: the one suggestion the repository makes obvious is
 // printed, never run. A guess shown to a person is fine; a guess acted on at runtime is what put an
@@ -369,6 +376,7 @@ async function verb(job) {
       // Every request of ours is tagged, a knock or a revisit as much as a trial, so the hook never
       // takes one for the person's: it would become the request trials copy and the sign-in they carry.
       if (!turn) headers["x-cortad-turn"] = `cortad-${String(job.id).replace(/[^\w.-]/g, "").slice(0, 64)}`;
+      if (verbose) say(`$ ${String(b.method ?? "GET").toUpperCase()} ${path.split("?")[0]} as ${headers[AS_HEADER] ?? headers[AS_HEADER.toLowerCase()] ?? "nobody"}, turn ${headers["x-cortad-turn"]}`);
       const letGo = held.hold(job.id, turn || headers["x-cortad-turn"]);
       // An endpoint your app answers later: it takes the message and its model answers afterwards,
       // outside the request (a queue's worker). Its own reply only says it took the message.
@@ -604,7 +612,7 @@ let child = null;
 // An app this command did not start carries nothing that counts its model calls: its replies are seen
 // through the proxy, and the person is told so, as what they chose.
 const UNSEEN = "your app was already running, so Cortad sees its replies and not the calls it makes to its model.";
-const keepStart = (record) => { try { mkdirSync(homeOf(project), { recursive: true, mode: 0o700 }); writeFileSync(startFile, JSON.stringify(record), { mode: 0o600 }); } catch { /* kept for this session only */ } };
+const keepStart = (record) => { Object.assign(keptStart, record); try { mkdirSync(homeOf(project), { recursive: true, mode: 0o700 }); writeFileSync(startFile, JSON.stringify(keptStart), { mode: 0o600 }); } catch { /* kept for this session only */ } };
 async function startApp() {
   // "--port 8106 -- ..." is "start it, it will answer on 8106", not "it is already on 8106".
   if (wantedPort && !typed) {
@@ -620,10 +628,15 @@ async function startApp() {
   const raised = Object.keys(lifted);
   if (raised.length) say(`higher request limits for this session: ${raised.join(", ")}`);
   launched = { cmd: typed, lifted };
-  if (proxyAsked || !hookable(appDir)) await useProxy();
-  step(`starting your app with: ${shownCommand(typed, mask)}${viaToken ? " (saved from your last connect)" : ""}`);
+  if (proxyAsked || !hookable(appDir, typed)) await useProxy();
+  step(`starting your app with: ${shownCommand(typed, mask)}${fromSaved ? " (saved from your last connect)" : ""}`);
   const up = await launch(180_000);
-  if (up.port) { keepStart({ cmd: typed }); return { port: up.port, cmd: launched.cmd, lifted: raised }; }
+  if (up.port) {
+    keepStart({ cmd: typed, ...(wantedPort ? { port: wantedPort } : {}) });
+    // A container never saw the proxy's settings: the one line that makes its model calls visible is said here.
+    if (proxy && IN_CONTAINER.test(typed)) say(containerLine());
+    return { port: up.port, cmd: launched.cmd, lifted: raised };
+  }
   if (up.tail) console.error(up.tail);
   return { port: null, said: up.tail, why: whyNot(up) };
 }
@@ -671,20 +684,31 @@ async function useProxy() {
   const noted = () => { if (became?.state === "up") become("up", { ...became.fields, ...upAt(became.fields.proxied) }); };
   // A first model call seen through it is said to the run, for an app this command did not start.
   proxy = await openProxy({
+    // The same model port on every connect of this folder: a container's settings name it once.
+    modelPort: Number(keptStart.modelPort) || 0,
     file: capture.file, rulesFile: capture.rulesFile, target: () => ({ host: appHost, port: app?.port }),
     onSeen: () => { forgetTold?.(); noted(); },
     onUnseen: (door) => { unseen = door; noted(); say(unseenText(door)); },
   });
+  keepStart({ modelPort: proxy.modelPort });
   say("your app's model calls are seen through a local proxy on this machine, so the line of code that made each call is not known. During a run, its calls to other services go out as they would for a real customer: a conversation that books, charges or emails does it for real");
 }
 // An app run in a container: the proxy's settings never reach it, and 127.0.0.1 inside it is not this machine.
+const containerLine = () => {
+  // Only the settings the app's own environment names, else the OpenAI one: every SDK's would be a list nobody reads.
+  const hints = modelHints();
+  const handed = proxy.env(hints);
+  const named = Object.keys(handed).filter((name) => name in hints);
+  const settings = (named.length ? named : ["OPENAI_BASE_URL"]).map((name) => `${name}=${handed[name].replace("127.0.0.1", "host.docker.internal")}`);
+  return `your app runs in a container, where Cortad's hook cannot load: its replies are seen through the proxy, its model calls are not. To see them, give the container ${settings.length === 1 ? "this setting" : "these settings"} and start it again with this command (the same port on every connect of this folder): ${settings.join(", ")}`;
+};
 const IN_CONTAINER = /^\s*(?:sudo\s+)?(?:docker|podman)(?:-compose)?\b/;
 // The app answered, and the hook is not in it: it is started again with its model settings on the
 // proxy. One in a container would come back the same, so it is left up, seen at the front alone.
 async function startProxied(up, waitMs) {
   await useProxy();
   if (IN_CONTAINER.test(launched?.cmd ?? "")) {
-    say(`your app runs in a container, where Cortad's hook cannot load: its replies are seen through the proxy, its model calls are not. To see them, point the app's model base URL at http://host.docker.internal:${proxy.modelPort} and start it again.`);
+    say(containerLine());
     return up;
   }
   await stopTree(child.pid);
@@ -744,7 +768,7 @@ async function start(waitMs) {
     // The socket can open before the server answers; the log line is the tiebreak among several.
     const plain = withoutStores(seen.replace(/\x1b\[[0-9;]*m/g, ""));
     const said = [...plain.matchAll(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\]):(\d{2,5})\b|\bport\s*[:=]?\s*(\d{4,5})\b/gi)].map((m) => Number(m[1] || m[2]));
-    for (const port of [...new Set([...said.reverse().filter((p) => ports.includes(p)), ...ports])]) {
+    for (const port of [...new Set([...(wantedPort ? [wantedPort] : []), ...said.reverse().filter((p) => ports.includes(p)), ...ports])]) {
       if (await answers(port)) {
         note.answered = true;
         if (loaded === note) noteApp();

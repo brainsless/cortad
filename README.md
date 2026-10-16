@@ -43,6 +43,7 @@ The hooks run after an edit and on your next message: the first names the prompt
 ```
 -- <command>         how your app starts; everything after -- is run as typed (--start "cmd" says the same)
 --port 3000          use an app that is already running, as it is
+--port 3000 -- <command>   start a container and watch the port it publishes; the model base URL to set inside it is printed
 --explain            show what would be sent and started, then exit
 --verbose            print your app's output
 ```
