@@ -572,7 +572,7 @@ async function verb(job) {
     // calls of the `turn` asked about also say what their model was told.
     // `toolsRecorded: false`: the app was started before the read's list of tools, so a tool that ran
     // was not seen; a run says "not recorded", never that none ran.
-    case "usage": return capture ? { ...JSON.parse(mask(JSON.stringify(capture.usage(b.turn) ?? {}))), ...(launched && toolsKnown() ? { toolsRecorded: toolsRecorded() } : {}) } : {};
+    case "usage": return capture ? { ...JSON.parse(mask(JSON.stringify(capture.usage(b.turn, b.totals === true) ?? {}))), ...(launched && toolsKnown() ? { toolsRecorded: toolsRecorded() } : {}) } : {};
     // Every route your app holds, read by the hook off the app itself, masked like the meter.
     case "routes": return capture ? JSON.parse(mask(JSON.stringify(capture.registry(app?.port)))) : {};
     // A world is ended from this terminal, never from the cloud.
